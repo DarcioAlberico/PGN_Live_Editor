@@ -1,6 +1,4 @@
 import re
-from typing import Dict, Optional, Tuple
-
 
 STANDARD_PGN_HEADERS = (
     ("Event", "PGN Live Editor Export"),
@@ -14,12 +12,12 @@ STANDARD_PGN_HEADERS = (
 HEADER_LINE_RE = re.compile(r'^\[(?P<tag>[A-Za-z0-9_]+)\s+"(?P<value>(?:[^"\\]|\\.)*)"\]\s*$')
 
 
-def extract_pgn_headers(raw_text: str) -> Tuple[Dict[str, str], str, int]:
+def extract_pgn_headers(raw_text: str) -> tuple[dict[str, str], str, int]:
     lines = raw_text.splitlines(keepends=True)
     consumed = 0
     index = 0
     found_headers = False
-    headers: Dict[str, str] = {}
+    headers: dict[str, str] = {}
 
     while index < len(lines):
         stripped = lines[index].strip()
@@ -53,9 +51,9 @@ def extract_pgn_headers(raw_text: str) -> Tuple[Dict[str, str], str, int]:
     return (headers, raw_text[consumed:], consumed)
 
 
-def build_header_text(headers: Optional[Dict[str, str]] = None, result: str = "*") -> str:
+def build_header_text(headers: dict[str, str] | None = None, result: str = "*") -> str:
     merged = {tag: value for tag, value in STANDARD_PGN_HEADERS}
-    extras: Dict[str, str] = {}
+    extras: dict[str, str] = {}
 
     for tag, value in (headers or {}).items():
         if tag in merged:

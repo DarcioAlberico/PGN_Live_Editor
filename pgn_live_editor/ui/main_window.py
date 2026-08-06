@@ -1,13 +1,13 @@
+import sys
 from pathlib import Path
 
-import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QApplication, QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QWidget
 
 from ..core.move_tree import render_game_pgn
-from .editor_panel import EditorPanel
 from .chess_panel import ChessPanel
+from .editor_panel import EditorPanel
 
 
 class MainWindow(QMainWindow):
@@ -20,7 +20,7 @@ class MainWindow(QMainWindow):
         # Main Layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
+
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
@@ -30,7 +30,7 @@ class MainWindow(QMainWindow):
 
         # 1. Editor Panel (Left)
         self.editor_panel = EditorPanel()
-        
+
         # 2. Chess Panel (Right)
         self.chess_panel = ChessPanel()
 

@@ -1,15 +1,14 @@
-from dataclasses import dataclass
 import re
 import unicodedata
-from typing import Dict, List, Tuple
+from dataclasses import dataclass
 
 
 @dataclass
 class NormalizedText:
     text: str
-    raw_spans: List[Tuple[int, int]]
+    raw_spans: list[tuple[int, int]]
 
-    def raw_span_for(self, start: int, end: int) -> Tuple[int, int]:
+    def raw_span_for(self, start: int, end: int) -> tuple[int, int]:
         if start >= end or start < 0 or end > len(self.raw_spans):
             return (start, end)
 
@@ -64,11 +63,11 @@ class LiveTextNormalizer:
         self.locale = locale
         self.custom_substitutions = self.OCR_SUBSTITUTIONS.copy()
 
-    def load_custom_dictionary(self, dictionary: Dict[str, str]):
+    def load_custom_dictionary(self, dictionary: dict[str, str]):
         """Load user-defined OCR correction dictionary."""
         self.custom_substitutions.update(dictionary)
 
-    def _expand_spans(self, source_spans: List[Tuple[int, int]], output_length: int) -> List[Tuple[int, int]]:
+    def _expand_spans(self, source_spans: list[tuple[int, int]], output_length: int) -> list[tuple[int, int]]:
         if output_length <= 0:
             return []
 
@@ -80,7 +79,7 @@ class LiveTextNormalizer:
 
         source_length = len(source_spans)
         if output_length <= source_length:
-            spans: List[Tuple[int, int]] = []
+            spans: list[tuple[int, int]] = []
             for index in range(output_length):
                 chunk_start = int(index * source_length / output_length)
                 chunk_end = max(chunk_start + 1, int((index + 1) * source_length / output_length))
@@ -93,11 +92,11 @@ class LiveTextNormalizer:
         spans.extend([(tail_anchor, tail_anchor)] * (output_length - source_length))
         return spans
 
-    def _normalize_unicode(self, text: str, raw_spans: List[Tuple[int, int]]) -> NormalizedText:
-        normalized_chars: List[str] = []
-        normalized_spans: List[Tuple[int, int]] = []
+    def _normalize_unicode(self, text: str, raw_spans: list[tuple[int, int]]) -> NormalizedText:
+        normalized_chars: list[str] = []
+        normalized_spans: list[tuple[int, int]] = []
 
-        for char, raw_span in zip(text, raw_spans):
+        for char, raw_span in zip(text, raw_spans, strict=False):
             translated = self.UNICODE_REPLACEMENTS.get(char, char)
             normalized_char = unicodedata.normalize('NFKC', translated)
             if not normalized_char:
@@ -111,12 +110,12 @@ class LiveTextNormalizer:
     def _replace_pattern(
         self,
         text: str,
-        raw_spans: List[Tuple[int, int]],
+        raw_spans: list[tuple[int, int]],
         pattern: str,
         replacement
     ) -> NormalizedText:
-        parts: List[str] = []
-        spans: List[Tuple[int, int]] = []
+        parts: list[str] = []
+        spans: list[tuple[int, int]] = []
         cursor = 0
 
         for match in re.finditer(pattern, text):
@@ -137,7 +136,7 @@ class LiveTextNormalizer:
     def _replace_literal(
         self,
         text: str,
-        raw_spans: List[Tuple[int, int]],
+        raw_spans: list[tuple[int, int]],
         old: str,
         new: str
     ) -> NormalizedText:
@@ -145,7 +144,7 @@ class LiveTextNormalizer:
             return NormalizedText(text, raw_spans)
         return self._replace_pattern(text, raw_spans, re.escape(old), new)
 
-    def _apply_piece_translation(self, text: str, raw_spans: List[Tuple[int, int]]) -> NormalizedText:
+    def _apply_piece_translation(self, text: str, raw_spans: list[tuple[int, int]]) -> NormalizedText:
         if self.locale == 'en':
             return NormalizedText(text, raw_spans)
 
@@ -162,9 +161,9 @@ class LiveTextNormalizer:
 
         return self._replace_pattern(text, raw_spans, r'\b([A-Z])([a-h\-\+x=#1-8]+)\b', repl)
 
-    def _apply_outside_comments(self, text: str, raw_spans: List[Tuple[int, int]], transform) -> NormalizedText:
-        parts: List[str] = []
-        spans: List[Tuple[int, int]] = []
+    def _apply_outside_comments(self, text: str, raw_spans: list[tuple[int, int]], transform) -> NormalizedText:
+        parts: list[str] = []
+        spans: list[tuple[int, int]] = []
         cursor = 0
         index = 0
 
@@ -202,9 +201,9 @@ class LiveTextNormalizer:
         normalized = self._normalize_unicode(text, raw_spans)
         text, raw_spans = normalized.text, normalized.raw_spans
 
-        glyph_chars: List[str] = []
-        glyph_spans: List[Tuple[int, int]] = []
-        for char, raw_span in zip(text, raw_spans):
+        glyph_chars: list[str] = []
+        glyph_spans: list[tuple[int, int]] = []
+        for char, raw_span in zip(text, raw_spans, strict=False):
             replacement = self.PIECE_GLYPHS.get(char, char)
             if not replacement:
                 continue
@@ -217,7 +216,7 @@ class LiveTextNormalizer:
             normalized = self._apply_outside_comments(
                 text,
                 raw_spans,
-                lambda current_text, current_spans: self._replace_literal(current_text, current_spans, bad_ocr, good_san)
+                lambda current_text, current_spans, old=bad_ocr, new=good_san: self._replace_literal(current_text, current_spans, old, new)
             )
             text, raw_spans = normalized.text, normalized.raw_spans
 

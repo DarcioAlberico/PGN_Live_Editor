@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Union
 
 from .normalizer import NormalizedText
 
@@ -11,8 +10,8 @@ class Token:
     value: str
     start_index: int
     end_index: int
-    normalized_start_index: Optional[int] = None
-    normalized_end_index: Optional[int] = None
+    normalized_start_index: int | None = None
+    normalized_end_index: int | None = None
 
 
 class PGNTokenizer:
@@ -53,7 +52,7 @@ class PGNTokenizer:
         regex_parts = [f'(?P<{name}>{pattern})' for name, pattern in self.TOKEN_PATTERNS]
         self.tokenizer_regex = re.compile('|'.join(regex_parts))
 
-    def tokenize(self, source: Union[str, NormalizedText]) -> List[Token]:
+    def tokenize(self, source: str | NormalizedText) -> list[Token]:
         if isinstance(source, NormalizedText):
             text = source.text
             normalized = source
@@ -61,7 +60,7 @@ class PGNTokenizer:
             text = source
             normalized = None
 
-        tokens: List[Token] = []
+        tokens: list[Token] = []
         for match in self.tokenizer_regex.finditer(text):
             for name, _pattern in self.TOKEN_PATTERNS:
                 value = match.group(name)

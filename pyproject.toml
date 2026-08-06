@@ -7,15 +7,35 @@ name = "pgn-live-editor"
 version = "0.1.0"
 description = "Editor live de texto para PGN com visualizacao de tabuleiro"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 dependencies = [
     "levenshtein>=0.25.1",
     "pyqt6>=6.7.1",
     "python-chess>=1.999",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
 [project.scripts]
-pgn-live-editor = "app.__main__:main"
+pgn-live-editor = "pgn_live_editor.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["pgn_live_editor*"]
+
+[tool.setuptools.package-data]
+pgn_live_editor = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]

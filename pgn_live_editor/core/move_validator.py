@@ -1,13 +1,14 @@
+
 import chess
 import Levenshtein
-from typing import List, Tuple
+
 
 class MoveValidator:
     """
     Validates tokens against the current chess board.
     Incorporates Levenshtein distance to salvage slightly mangled OCR reads.
     """
-    
+
     def __init__(self):
         self.board = chess.Board()
 
@@ -30,11 +31,11 @@ class MoveValidator:
         """Pop the last move."""
         self.board.pop()
 
-    def get_legal_sans(self) -> List[str]:
+    def get_legal_sans(self) -> list[str]:
         """Returns all legal moves in SAN format for the current position."""
         return [self.board.san(move) for move in self.board.legal_moves]
 
-    def attempt_levenshtein_rescue(self, bad_san: str, threshold: int = 2) -> Tuple[bool, str]:
+    def attempt_levenshtein_rescue(self, bad_san: str, threshold: int = 2) -> tuple[bool, str]:
         """
         Calculates distance from bad_san to all legal SANs.
         If a legal SAN is within distance `threshold` AND is the absolute closest
@@ -47,16 +48,16 @@ class MoveValidator:
         # Score them
         scored = [(Levenshtein.distance(bad_san, san), san) for san in legal_sans]
         scored.sort(key=lambda x: x[0])
-        
+
         best_dist, best_san = scored[0]
-        
+
         if best_dist <= threshold:
             # Check for ambiguity (two legal moves equidistant)
             if len(scored) > 1 and scored[1][0] == best_dist:
                 # E.g. OCR is 'Bh4' and both 'Bh3' and 'Bh5' are legal
                 # Too ambiguous to rescue automatically with confidence
                 return False, ""
-                
+
             return True, best_san
-            
+
         return False, ""

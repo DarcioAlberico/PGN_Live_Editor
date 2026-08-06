@@ -1,8 +1,9 @@
+
 import chess
 import chess.svg
-from typing import Dict, List, Optional
-
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal as Signal, pyqtSlot as Slot
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import pyqtSignal as Signal
+from PyQt6.QtCore import pyqtSlot as Slot
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -36,15 +37,15 @@ class ChessPanel(QWidget):
         super().__init__()
 
         self.game_ast = GameAST()
-        self.entries: List[MoveEntry] = []
-        self.entry_by_node_id: Dict[str, MoveEntry] = {}
+        self.entries: list[MoveEntry] = []
+        self.entry_by_node_id: dict[str, MoveEntry] = {}
         self.current_entry_index = -1
-        self.current_selection_key: Optional[str] = None
+        self.current_selection_key: str | None = None
         self.current_last_move = None
         self.board = chess.Board()
-        self.selected_square: Optional[chess.Square] = None
-        self.input_mode: Optional[str] = None
-        self.input_origin_label: Optional[str] = None
+        self.selected_square: chess.Square | None = None
+        self.input_mode: str | None = None
+        self.input_origin_label: str | None = None
         self._suppress_next_editor_sync = False
 
         layout = QVBoxLayout(self)
@@ -125,15 +126,15 @@ class ChessPanel(QWidget):
         ).encode('utf-8')
         self.board_view.set_svg(svg.decode('utf-8'))
 
-    def _board_fill(self) -> Dict[chess.Square, str]:
-        fill: Dict[chess.Square, str] = {}
+    def _board_fill(self) -> dict[chess.Square, str]:
+        fill: dict[chess.Square, str] = {}
         if self.selected_square is not None:
             fill[self.selected_square] = "#f1c75b88"
             for target in self._legal_targets_for(self.selected_square):
                 fill[target] = "#6ecf8b88"
         return fill
 
-    def _current_entry(self) -> Optional[MoveEntry]:
+    def _current_entry(self) -> MoveEntry | None:
         if 0 <= self.current_entry_index < len(self.entries):
             return self.entries[self.current_entry_index]
         return None
@@ -236,7 +237,7 @@ class ChessPanel(QWidget):
 
         self.variant_builder.set_anchor(board.fen(), f"antes de {self._entry_label(current_entry)}")
 
-    def _set_board_from_path(self, path) -> Optional[chess.Move]:
+    def _set_board_from_path(self, path) -> chess.Move | None:
         self.board.reset()
         last_move = None
         for move in path:
@@ -328,25 +329,25 @@ class ChessPanel(QWidget):
         if entry:
             self._apply_entry(entry, focus_editor=True)
 
-    def _legal_targets_for(self, square: chess.Square) -> List[chess.Square]:
+    def _legal_targets_for(self, square: chess.Square) -> list[chess.Square]:
         return [
             move.to_square
             for move in self.board.legal_moves
             if move.from_square == square
         ]
 
-    def _matching_moves(self, from_square: chess.Square, to_square: chess.Square) -> List[chess.Move]:
+    def _matching_moves(self, from_square: chess.Square, to_square: chess.Square) -> list[chess.Move]:
         return [
             move
             for move in self.board.legal_moves
             if move.from_square == from_square and move.to_square == to_square
         ]
 
-    def _select_square(self, square: Optional[chess.Square]):
+    def _select_square(self, square: chess.Square | None):
         self.selected_square = square
         self.render_board(self.current_last_move)
 
-    def _resolve_candidate_move(self, moves: List[chess.Move]) -> chess.Move:
+    def _resolve_candidate_move(self, moves: list[chess.Move]) -> chess.Move:
         if len(moves) == 1:
             return moves[0]
 

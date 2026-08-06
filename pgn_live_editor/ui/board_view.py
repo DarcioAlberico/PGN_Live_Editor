@@ -1,6 +1,6 @@
 import chess
-
-from PyQt6.QtCore import QByteArray, QRectF, Qt, pyqtSignal as Signal
+from PyQt6.QtCore import QByteArray, QRectF, Qt
+from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QWidget

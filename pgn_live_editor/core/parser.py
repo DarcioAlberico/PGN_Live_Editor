@@ -1,4 +1,4 @@
-from typing import Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
 import chess
 
@@ -17,7 +17,7 @@ class ASTNode:
 
 
 class MoveNode(ASTNode):
-    def __init__(self, san: Token, number: Optional[Token] = None):
+    def __init__(self, san: Token, number: Token | None = None):
         super().__init__(san)
         self.number = number.value if number else None
         self.san = san.value
@@ -25,13 +25,13 @@ class MoveNode(ASTNode):
         if number:
             self.start_index = number.start_index
 
-        self.comments_before: List[str] = []
-        self.comments_after: List[str] = []
-        self.variations: List[List["MoveNode"]] = []
-        self.variation_anchor_after: List[bool] = []
-        self.nags: List[str] = []
-        self.corrected_san: Optional[str] = None
-        self.parent_fen: Optional[str] = None
+        self.comments_before: list[str] = []
+        self.comments_after: list[str] = []
+        self.variations: list[list[MoveNode]] = []
+        self.variation_anchor_after: list[bool] = []
+        self.nags: list[str] = []
+        self.corrected_san: str | None = None
+        self.parent_fen: str | None = None
 
     @property
     def display_san(self) -> str:
@@ -47,13 +47,13 @@ class CommentNode(ASTNode):
 
 class GameAST:
     def __init__(self):
-        self.moves: List[MoveNode] = []
-        self.result: Optional[str] = None
-        self.headers: List[Tuple[str, str]] = []
-        self.issues: List[Tuple[int, str, str]] = []
+        self.moves: list[MoveNode] = []
+        self.result: str | None = None
+        self.headers: list[tuple[str, str]] = []
+        self.issues: list[tuple[int, str, str]] = []
 
 
-def iter_moves(moves: List[MoveNode]) -> Iterable[MoveNode]:
+def iter_moves(moves: list[MoveNode]) -> Iterable[MoveNode]:
     for move in moves:
         yield move
         for variation in move.variations:
@@ -69,9 +69,9 @@ class TolerantParser:
     def __init__(self):
         self.validator = MoveValidator()
         self.ast = GameAST()
-        self.issues: List[Tuple[int, str, str]] = []
+        self.issues: list[tuple[int, str, str]] = []
 
-    def _is_legal_in_fen(self, fen: Optional[str], san: str) -> bool:
+    def _is_legal_in_fen(self, fen: str | None, san: str) -> bool:
         if not fen:
             return False
 
@@ -82,12 +82,12 @@ class TolerantParser:
             return False
         return True
 
-    def _side_to_move(self, fen: Optional[str]) -> Optional[chess.Color]:
+    def _side_to_move(self, fen: str | None) -> chess.Color | None:
         if not fen:
             return None
         return chess.Board(fen).turn
 
-    def _append_comment(self, comments: List[str], value: str, token_type: str):
+    def _append_comment(self, comments: list[str], value: str, token_type: str):
         if not value:
             return
 
@@ -97,7 +97,7 @@ class TolerantParser:
 
         comments.append(value)
 
-    def _fen_after_move(self, move: MoveNode) -> Optional[str]:
+    def _fen_after_move(self, move: MoveNode) -> str | None:
         if not move.parent_fen or not move.is_valid:
             return None
 
@@ -108,8 +108,8 @@ class TolerantParser:
             return None
         return board.fen()
 
-    def _collect_variant_preview_tokens(self, tokens: List[Token], start_index: int, max_san_tokens: int = 8) -> List[Token]:
-        preview_tokens: List[Token] = []
+    def _collect_variant_preview_tokens(self, tokens: list[Token], start_index: int, max_san_tokens: int = 8) -> list[Token]:
+        preview_tokens: list[Token] = []
         nested_depth = 0
         san_count = 0
 
@@ -135,7 +135,7 @@ class TolerantParser:
 
         return preview_tokens
 
-    def _variation_has_leading_annotation(self, preview_tokens: List[Token]) -> bool:
+    def _variation_has_leading_annotation(self, preview_tokens: list[Token]) -> bool:
         for token in preview_tokens:
             if token.type in {'COMMENT', 'TEXT'}:
                 return True
@@ -143,7 +143,7 @@ class TolerantParser:
                 return False
         return False
 
-    def _score_variant_candidate(self, fen: Optional[str], preview_tokens: List[Token]) -> Tuple[int, int]:
+    def _score_variant_candidate(self, fen: str | None, preview_tokens: list[Token]) -> tuple[int, int]:
         if not fen:
             return (-10_000, 0)
 
@@ -188,16 +188,16 @@ class TolerantParser:
 
     def _choose_variation_anchor(
         self,
-        active_list: List[MoveNode],
-        tokens: List[Token],
+        active_list: list[MoveNode],
+        tokens: list[Token],
         start_index: int
-    ) -> Tuple[MoveNode, bool, Optional[str]]:
+    ) -> tuple[MoveNode, bool, str | None]:
         preview_tokens = self._collect_variant_preview_tokens(tokens, start_index)
         if not preview_tokens:
             last_move = active_list[-1]
             return (last_move, True, self._fen_after_move(last_move))
 
-        candidates: List[Tuple[MoveNode, bool, Optional[str], int]] = []
+        candidates: list[tuple[MoveNode, bool, str | None, int]] = []
 
         first_move = active_list[0]
         if first_move.parent_fen:
@@ -218,7 +218,7 @@ class TolerantParser:
 
         return (best_candidate[0], best_candidate[1], best_candidate[2])
 
-    def _parse_move_number_value(self, value: Optional[str]) -> Optional[Tuple[int, bool]]:
+    def _parse_move_number_value(self, value: str | None) -> tuple[int, bool] | None:
         if not value:
             return None
 
@@ -228,7 +228,7 @@ class TolerantParser:
 
         return (int(digits), '...' in value)
 
-    def _move_identity(self, move: MoveNode) -> Optional[Tuple[int, bool]]:
+    def _move_identity(self, move: MoveNode) -> tuple[int, bool] | None:
         parsed_number = self._parse_move_number_value(move.number)
         if parsed_number:
             return parsed_number
@@ -239,7 +239,7 @@ class TolerantParser:
         board = chess.Board(move.parent_fen)
         return (board.fullmove_number, board.turn == chess.BLACK)
 
-    def _is_backward_reference(self, active_list: List[MoveNode], token: Token) -> bool:
+    def _is_backward_reference(self, active_list: list[MoveNode], token: Token) -> bool:
         token_identity = self._parse_move_number_value(token.value)
         if not token_identity or not active_list:
             return False
@@ -257,8 +257,8 @@ class TolerantParser:
             return True
         return False
 
-    def _collect_backward_reference_comment(self, tokens: List[Token], start_index: int) -> Tuple[str, int]:
-        parts: List[str] = []
+    def _collect_backward_reference_comment(self, tokens: list[Token], start_index: int) -> tuple[str, int]:
+        parts: list[str] = []
         index = start_index
 
         while index < len(tokens):
@@ -273,17 +273,17 @@ class TolerantParser:
 
         return (" ".join(parts).strip(), index)
 
-    def parse(self, tokens: List[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
+    def parse(self, tokens: list[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
         self.validator.set_board_fen(start_fen)
         self.ast = GameAST()
         self.issues = []
 
-        current_move_number_token: Optional[Token] = None
-        pending_comments: List[str] = []
-        comments_since_last_move: List[str] = []
+        current_move_number_token: Token | None = None
+        pending_comments: list[str] = []
+        comments_since_last_move: list[str] = []
 
         active_list = self.ast.moves
-        stack: List[Tuple[List[MoveNode], str, List[str], List[str], Optional[Token]]] = []
+        stack: list[tuple[list[MoveNode], str, list[str], list[str], Token | None]] = []
 
         index = 0
         while index < len(tokens):
@@ -298,14 +298,14 @@ class TolerantParser:
                         index + 1
                     )
 
-                    var_line: List[MoveNode] = []
+                    var_line: list[MoveNode] = []
                     anchor_move.variations.append(var_line)
                     anchor_move.variation_anchor_after.append(anchor_after_current)
 
                     # After the first sibling variation opens, these comments should stay
                     # attached to the parent move unless explicitly transferred now.
-                    parent_comments_since_last_move: List[str] = []
-                    transferred_comments: List[str] = []
+                    parent_comments_since_last_move: list[str] = []
+                    transferred_comments: list[str] = []
 
                     if not (anchor_move is active_list[-1] and anchor_after_current):
                         if not self._variation_has_leading_annotation(preview_tokens):

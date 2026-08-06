@@ -1,8 +1,8 @@
+
 import chess
 import chess.svg
-from typing import List
-
-from PyQt6.QtCore import Qt, pyqtSignal as Signal
+from PyQt6.QtCore import Qt
+from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -27,7 +27,7 @@ class VariantBuilderPanel(QWidget):
 
         self.start_fen = chess.STARTING_FEN
         self.board = chess.Board(self.start_fen)
-        self.moves_san: List[str] = []
+        self.moves_san: list[str] = []
         self.selected_square = None
         self.current_last_move = None
 

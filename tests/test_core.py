@@ -2,7 +2,7 @@ import unittest
 
 import chess
 
-from app.core.move_tree import (
+from pgn_live_editor.core.move_tree import (
     build_move_entries,
     find_entry_for_insertion_position,
     render_game_html,
@@ -10,12 +10,12 @@ from app.core.move_tree import (
     render_game_pgn,
     resolve_selection_key,
 )
-from app.core.normalizer import LiveTextNormalizer
-from app.core.parser import TolerantParser
-from app.core.pgn_headers import build_header_text, extract_pgn_headers, insert_or_replace_headers
-from app.core.text_insertion import build_board_move_insertion
-from app.core.tokenizer import PGNTokenizer
-from app.core.variation_builder import build_variation_text
+from pgn_live_editor.core.normalizer import LiveTextNormalizer
+from pgn_live_editor.core.parser import TolerantParser
+from pgn_live_editor.core.pgn_headers import extract_pgn_headers, insert_or_replace_headers
+from pgn_live_editor.core.text_insertion import build_board_move_insertion
+from pgn_live_editor.core.tokenizer import PGNTokenizer
+from pgn_live_editor.core.variation_builder import build_variation_text
 
 
 class CorePipelineTests(unittest.TestCase):

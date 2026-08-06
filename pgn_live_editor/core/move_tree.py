@@ -1,14 +1,13 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from html import escape
-from typing import Dict, List, Optional, Sequence, Tuple
 
 import chess
 
-from .pgn_headers import STANDARD_PGN_HEADERS
 from .parser import GameAST, MoveNode
+from .pgn_headers import STANDARD_PGN_HEADERS
 
-
-CANONICAL_NAG_MAP: Dict[str, str] = {
+CANONICAL_NAG_MAP: dict[str, str] = {
     "!": "$1",
     "?": "$2",
     "!!": "$3",
@@ -28,7 +27,7 @@ CANONICAL_NAG_MAP: Dict[str, str] = {
 @dataclass
 class MoveEntry:
     node: MoveNode
-    path: Tuple[MoveNode, ...]
+    path: tuple[MoveNode, ...]
     depth: int
     node_id: str
     selection_key: str
@@ -43,14 +42,14 @@ def _selection_key_for(path: Sequence[MoveNode]) -> str:
     return "|".join(parts)
 
 
-def build_move_entries(ast: GameAST) -> List[MoveEntry]:
-    entries: List[MoveEntry] = []
+def build_move_entries(ast: GameAST) -> list[MoveEntry]:
+    entries: list[MoveEntry] = []
 
     def walk(
-        moves: List[MoveNode],
-        base_path: Tuple[MoveNode, ...],
+        moves: list[MoveNode],
+        base_path: tuple[MoveNode, ...],
         depth: int,
-        structural_path: Tuple[int, ...]
+        structural_path: tuple[int, ...]
     ):
         running_path = list(base_path)
         for move_index, move in enumerate(moves):
@@ -78,13 +77,13 @@ def build_move_entries(ast: GameAST) -> List[MoveEntry]:
     return entries
 
 
-def build_entry_maps(entries: Sequence[MoveEntry]) -> Tuple[Dict[str, MoveEntry], Dict[int, MoveEntry]]:
+def build_entry_maps(entries: Sequence[MoveEntry]) -> tuple[dict[str, MoveEntry], dict[int, MoveEntry]]:
     by_node_id = {entry.node_id: entry for entry in entries}
     by_move_identity = {id(entry.node): entry for entry in entries}
     return by_node_id, by_move_identity
 
 
-def resolve_selection_key(entries: Sequence[MoveEntry], selection_key: Optional[str]) -> Optional[MoveEntry]:
+def resolve_selection_key(entries: Sequence[MoveEntry], selection_key: str | None) -> MoveEntry | None:
     if not selection_key:
         return None
 
@@ -93,12 +92,12 @@ def resolve_selection_key(entries: Sequence[MoveEntry], selection_key: Optional[
         return exact_match
 
     requested_parts = selection_key.split("|")
-    best_match: Optional[MoveEntry] = None
+    best_match: MoveEntry | None = None
     best_score = -1
     for entry in entries:
         current_parts = entry.selection_key.split("|")
         score = 0
-        for requested, current in zip(requested_parts, current_parts):
+        for requested, current in zip(requested_parts, current_parts, strict=False):
             if requested != current:
                 break
             score += 1
@@ -110,7 +109,7 @@ def resolve_selection_key(entries: Sequence[MoveEntry], selection_key: Optional[
     return best_match
 
 
-def find_entry_for_position(entries: Sequence[MoveEntry], position: int) -> Optional[MoveEntry]:
+def find_entry_for_position(entries: Sequence[MoveEntry], position: int) -> MoveEntry | None:
     containing_entries = [
         entry for entry in entries
         if entry.start_index <= position <= entry.end_index
@@ -121,7 +120,7 @@ def find_entry_for_position(entries: Sequence[MoveEntry], position: int) -> Opti
     return min(containing_entries, key=lambda entry: (entry.end_index - entry.start_index, entry.depth))
 
 
-def find_entry_for_insertion_position(entries: Sequence[MoveEntry], position: int) -> Optional[MoveEntry]:
+def find_entry_for_insertion_position(entries: Sequence[MoveEntry], position: int) -> MoveEntry | None:
     containing_entries = [
         entry for entry in entries
         if entry.start_index < position <= entry.end_index
@@ -141,14 +140,14 @@ def find_entry_for_insertion_position(entries: Sequence[MoveEntry], position: in
 
 def render_game_movetext(
     ast: GameAST,
-    result_override: Optional[str] = None,
+    result_override: str | None = None,
     canonical_nags: bool = False
 ) -> str:
-    def render_comments(comments: Sequence[str]) -> List[str]:
+    def render_comments(comments: Sequence[str]) -> list[str]:
         return [f"{{{comment}}}" for comment in comments if comment]
 
-    def render_nags(move: MoveNode, nags: Sequence[str]) -> List[str]:
-        rendered_nags: List[str] = []
+    def render_nags(move: MoveNode, nags: Sequence[str]) -> list[str]:
+        rendered_nags: list[str] = []
         for nag in nags:
             if canonical_nags:
                 if nag in {"\u2a00", "\u2299"} and move.parent_fen and move.is_valid:
@@ -166,8 +165,8 @@ def render_game_movetext(
                 rendered_nags.append(nag)
         return rendered_nags
 
-    def _variations_for_anchor(move: MoveNode, anchor_after: bool) -> List[List[MoveNode]]:
-        variations: List[List[MoveNode]] = []
+    def _variations_for_anchor(move: MoveNode, anchor_after: bool) -> list[list[MoveNode]]:
+        variations: list[list[MoveNode]] = []
         for variation_index, variation in enumerate(move.variations):
             current_anchor_after = True
             if variation_index < len(move.variation_anchor_after):
@@ -176,8 +175,8 @@ def render_game_movetext(
                 variations.append(variation)
         return variations
 
-    def render_variation_lines(variations: Sequence[Sequence[MoveNode]]) -> List[str]:
-        parts: List[str] = []
+    def render_variation_lines(variations: Sequence[Sequence[MoveNode]]) -> list[str]:
+        parts: list[str] = []
         for variation in variations:
             variation_text = render_line(variation)
             if variation_text:
@@ -185,7 +184,7 @@ def render_game_movetext(
         return parts
 
     def render_move(move: MoveNode) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         parts.extend(render_comments(move.comments_before))
 
         move_label = " ".join(part for part in [move.number, move.display_san] if part)
@@ -199,8 +198,8 @@ def render_game_movetext(
         return " ".join(parts)
 
     def render_line(moves: Sequence[MoveNode]) -> str:
-        rendered_parts: List[str] = []
-        pending_after_variations: List[List[MoveNode]] = []
+        rendered_parts: list[str] = []
+        pending_after_variations: list[list[MoveNode]] = []
 
         for move in moves:
             if not move:
@@ -227,7 +226,7 @@ def render_game_pgn(ast: GameAST) -> str:
 
     result = ast.result or dict(ast.headers).get("Result") or "*"
     merged_headers = {tag: value for tag, value in STANDARD_PGN_HEADERS}
-    extra_headers: List[Tuple[str, str]] = []
+    extra_headers: list[tuple[str, str]] = []
 
     for tag, value in ast.headers:
         if tag in merged_headers:
@@ -243,7 +242,7 @@ def render_game_pgn(ast: GameAST) -> str:
     return "\n".join(header_lines + ["", movetext])
 
 
-def render_game_html(ast: GameAST, entries: Sequence[MoveEntry], current_node_id: Optional[str] = None) -> str:
+def render_game_html(ast: GameAST, entries: Sequence[MoveEntry], current_node_id: str | None = None) -> str:
     _by_node_id, by_move_identity = build_entry_maps(entries)
 
     def render_comments(comments: Sequence[str]) -> str:

@@ -1,0 +1,135 @@
+"""Exportacao de PGN com validacao obrigatoria de round-trip.
+
+Regra do projeto (SPEC 2.7): nenhum PGN e gravado sem antes ser relido pelo
+`python-chess` e comparado com a AST que o gerou. Se a contagem de nos ou a
+linha principal divergirem, o usuario e avisado antes de salvar.
+"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import chess
+import chess.pgn
+
+from ..core.move_tree import render_game_pgn
+from ..core.parser import GameAST, MoveNode
+
+
+@dataclass
+class RoundTripReport:
+    """Comparacao entre a AST e o PGN relido pelo python-chess."""
+
+    ok: bool = True
+    expected_nodes: int = 0
+    actual_nodes: int = 0
+    expected_mainline: list[str] = field(default_factory=list)
+    actual_mainline: list[str] = field(default_factory=list)
+    invalid_moves: list[str] = field(default_factory=list)
+    reader_errors: list[str] = field(default_factory=list)
+    problems: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        if self.ok:
+            return f"Round-trip conferido: {self.actual_nodes} lances relidos sem erro."
+        return "\n".join(f"- {problem}" for problem in self.problems)
+
+
+def _iter_all_moves(moves: list[MoveNode]):
+    for move in moves:
+        yield move
+        for variation in move.variations:
+            yield from _iter_all_moves(variation)
+
+
+def _mainline_uci(ast: GameAST, start_fen: str) -> list[str]:
+    board = chess.Board(start_fen)
+    ucis: list[str] = []
+    for move in ast.moves:
+        if not move.is_valid:
+            break
+        try:
+            ucis.append(board.push_san(move.display_san).uci())
+        except ValueError:
+            break
+    return ucis
+
+
+def _count_game_nodes(game: chess.pgn.Game | None) -> int:
+    if game is None:
+        return 0
+    total = 0
+    stack = list(game.variations)
+    while stack:
+        node = stack.pop()
+        total += 1
+        stack.extend(node.variations)
+    return total
+
+
+def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.STARTING_FEN) -> RoundTripReport:
+    """Rele o PGN gerado e confronta com a AST de origem."""
+    report = RoundTripReport()
+
+    all_moves = list(_iter_all_moves(ast.moves))
+    report.expected_nodes = sum(1 for move in all_moves if move.is_valid)
+    report.invalid_moves = [move.san for move in all_moves if not move.is_valid]
+    report.expected_mainline = _mainline_uci(ast, start_fen)
+
+    game = chess.pgn.read_game(io.StringIO(pgn_text))
+    if game is None:
+        report.ok = False
+        report.problems.append("O PGN gerado nao pode ser lido de volta pelo python-chess.")
+        return report
+
+    report.reader_errors = [str(error) for error in game.errors]
+    report.actual_nodes = _count_game_nodes(game)
+    report.actual_mainline = [move.uci() for move in game.mainline_moves()]
+
+    if report.reader_errors:
+        report.ok = False
+        report.problems.append(
+            f"O leitor de PGN acusou {len(report.reader_errors)} erro(s): {report.reader_errors[0]}"
+        )
+
+    if report.expected_nodes != report.actual_nodes:
+        report.ok = False
+        report.problems.append(
+            f"Contagem de lances divergente: a analise entendeu {report.expected_nodes}, "
+            f"o PGN relido tem {report.actual_nodes}."
+        )
+
+    if report.expected_mainline != report.actual_mainline:
+        report.ok = False
+        divergence = next(
+            (
+                index
+                for index, (expected, actual) in enumerate(
+                    zip(report.expected_mainline, report.actual_mainline, strict=False)
+                )
+                if expected != actual
+            ),
+            min(len(report.expected_mainline), len(report.actual_mainline)),
+        )
+        report.problems.append(f"A linha principal diverge a partir do lance {divergence + 1}.")
+
+    if report.invalid_moves:
+        report.ok = False
+        preview = ", ".join(report.invalid_moves[:5])
+        report.problems.append(f"{len(report.invalid_moves)} lance(s) nao reconhecido(s) ficaram de fora: {preview}")
+
+    return report
+
+
+def build_pgn(ast: GameAST, start_fen: str = chess.STARTING_FEN) -> tuple[str, RoundTripReport]:
+    """Gera o PGN e o laudo de round-trip correspondente."""
+    pgn_text = render_game_pgn(ast)
+    return pgn_text, validate_roundtrip(ast, pgn_text, start_fen)
+
+
+def write_pgn(path: Path, pgn_text: str) -> None:
+    if not pgn_text.endswith("\n"):
+        pgn_text += "\n"
+    path.write_text(pgn_text, encoding="utf-8")

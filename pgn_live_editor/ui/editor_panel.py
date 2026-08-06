@@ -1,10 +1,9 @@
-import os
 import re
-import sys
-from typing import Callable, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import chess
-from PyQt6.QtCore import QTimer, pyqtSignal as Signal
+from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QDialog,
@@ -19,17 +18,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-# Appending to path to allow direct tests
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+from ..core.normalizer import LiveTextNormalizer
+from ..core.parser import GameAST, TolerantParser
+from ..core.pgn_headers import extract_pgn_headers, insert_or_replace_headers
+from ..core.text_insertion import build_board_move_insertion
+from ..core.tokenizer import PGNTokenizer
 
-from app.core.normalizer import LiveTextNormalizer
-from app.core.parser import GameAST, TolerantParser
-from app.core.pgn_headers import extract_pgn_headers, insert_or_replace_headers
-from app.core.text_insertion import build_board_move_insertion
-from app.core.tokenizer import PGNTokenizer
-
-
-SYMBOL_PALETTE: Sequence[Tuple[str, str, str]] = (
+SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = (
     ("!", "$1", "Bom lance"),
     ("?", "$2", "Lance fraco"),
     ("!!", "$3", "Lance excelente"),
@@ -47,7 +42,7 @@ SYMBOL_PALETTE: Sequence[Tuple[str, str, str]] = (
 
 
 class SymbolPaletteDialog(QDialog):
-    def __init__(self, insert_symbol: Callable[[str], None], parent: Optional[QWidget] = None):
+    def __init__(self, insert_symbol: Callable[[str], None], parent: QWidget | None = None):
         super().__init__(parent)
         self._insert_symbol = insert_symbol
 
@@ -96,7 +91,7 @@ class EditorPanel(QWidget):
         self.current_ast = GameAST()
         self.current_move_span = None
         self._suspend_cursor_sync = False
-        self._symbol_palette_dialog: Optional[SymbolPaletteDialog] = None
+        self._symbol_palette_dialog: SymbolPaletteDialog | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -212,7 +207,7 @@ class EditorPanel(QWidget):
         self.set_current_move_span(start_index, end_index)
         self.cursor_position_changed_signal.emit(self.text_edit.textCursor().position())
 
-    def set_current_move_span(self, start_index: Optional[int], end_index: Optional[int]):
+    def set_current_move_span(self, start_index: int | None, end_index: int | None):
         if start_index is None or end_index is None or start_index < 0 or end_index < start_index:
             self.current_move_span = None
         else:
