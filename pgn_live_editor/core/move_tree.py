@@ -5,7 +5,7 @@ from html import escape
 import chess
 
 from .parser import GameAST, MoveNode
-from .pgn_headers import STANDARD_PGN_HEADERS
+from .pgn_headers import STANDARD_PGN_HEADERS, normalize_pgn_date, normalize_pgn_result
 
 CANONICAL_NAG_MAP: dict[str, str] = {
     "!": "$1",
@@ -183,11 +183,15 @@ def render_game_movetext(
                 parts.append(f"( {variation_text} )")
         return parts
 
-    def render_move(move: MoveNode) -> str:
+    def render_move(move: MoveNode, force_number: bool = False) -> str:
         parts: list[str] = []
         parts.extend(render_comments(move.comments_before))
 
-        move_label = " ".join(part for part in [move.number, move.display_san] if part)
+        number = move.number
+        if not number and (force_number or move.comments_before):
+            number = _synthetic_move_number(move)
+
+        move_label = " ".join(part for part in [number, move.display_san] if part)
         if move_label:
             parts.append(move_label)
 
@@ -200,14 +204,23 @@ def render_game_movetext(
     def render_line(moves: Sequence[MoveNode]) -> str:
         rendered_parts: list[str] = []
         pending_after_variations: list[list[MoveNode]] = []
+        # Depois de fechar uma variante, o proximo lance da linha principal
+        # precisa reafirmar o numero (`) 12... Be6`), senao leitores como o
+        # ChessBase podem se perder.
+        force_number = False
 
         for move in moves:
             if not move:
                 continue
 
-            rendered_parts.append(render_move(move))
-            rendered_parts.extend(render_variation_lines(_variations_for_anchor(move, anchor_after=False)))
-            rendered_parts.extend(render_variation_lines(pending_after_variations))
+            rendered_parts.append(render_move(move, force_number=force_number))
+
+            before_variations = render_variation_lines(_variations_for_anchor(move, anchor_after=False))
+            pending_rendered = render_variation_lines(pending_after_variations)
+            rendered_parts.extend(before_variations)
+            rendered_parts.extend(pending_rendered)
+            force_number = bool(before_variations or pending_rendered)
+
             pending_after_variations = _variations_for_anchor(move, anchor_after=True)
 
         rendered_parts.extend(render_variation_lines(pending_after_variations))
@@ -220,23 +233,43 @@ def render_game_movetext(
     return result
 
 
+def _synthetic_move_number(move: MoveNode) -> str | None:
+    """Numero de lance deduzido da posicao, para quando o texto nao trouxe um."""
+    if not move.parent_fen:
+        return None
+
+    board = chess.Board(move.parent_fen)
+    if board.turn == chess.WHITE:
+        return f"{board.fullmove_number}."
+    return f"{board.fullmove_number}..."
+
+
 def render_game_pgn(ast: GameAST) -> str:
     def escape_tag_value(value: str) -> str:
         return value.replace("\\", "\\\\").replace('"', '\\"')
 
-    result = ast.result or dict(ast.headers).get("Result") or "*"
+    header_values = dict(ast.headers)
+    result = normalize_pgn_result(ast.result or header_values.get("Result") or "*")
+
     merged_headers = {tag: value for tag, value in STANDARD_PGN_HEADERS}
     extra_headers: list[tuple[str, str]] = []
 
     for tag, value in ast.headers:
         if tag in merged_headers:
             merged_headers[tag] = value
-        elif tag != "Result":
+        elif tag not in {"Result", "SetUp"}:
             extra_headers.append((tag, value))
 
+    merged_headers["Date"] = normalize_pgn_date(merged_headers["Date"])
+
+    # `SetUp` e derivado, nunca copiado: sem isso o PGN sai incoerente com o FEN.
+    fen = header_values.get("FEN", "").strip()
+    if fen:
+        extra_headers.append(("SetUp", "1"))
+
     header_lines = [f'[{tag} "{escape_tag_value(merged_headers[tag])}"]' for tag, _default in STANDARD_PGN_HEADERS]
-    header_lines.extend(f'[{tag} "{escape_tag_value(value)}"]' for tag, value in extra_headers)
     header_lines.append(f'[Result "{escape_tag_value(result)}"]')
+    header_lines.extend(f'[{tag} "{escape_tag_value(value)}"]' for tag, value in extra_headers)
 
     movetext = render_game_movetext(ast, result_override=result, canonical_nags=True)
     return "\n".join(header_lines + ["", movetext])

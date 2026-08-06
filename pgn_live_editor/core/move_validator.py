@@ -1,12 +1,12 @@
 
 import chess
-import Levenshtein
 
 
 class MoveValidator:
-    """
-    Validates tokens against the current chess board.
-    Incorporates Levenshtein distance to salvage slightly mangled OCR reads.
+    """Valida tokens contra o tabuleiro corrente.
+
+    O resgate por semelhanca deixou de morar aqui: a geracao de hipoteses,
+    com confianca e explicacao, e responsabilidade de `candidates.py`.
     """
 
     def __init__(self):
@@ -35,29 +35,6 @@ class MoveValidator:
         """Returns all legal moves in SAN format for the current position."""
         return [self.board.san(move) for move in self.board.legal_moves]
 
-    def attempt_levenshtein_rescue(self, bad_san: str, threshold: int = 2) -> tuple[bool, str]:
-        """
-        Calculates distance from bad_san to all legal SANs.
-        If a legal SAN is within distance `threshold` AND is the absolute closest
-        (and hopefully unique at that distance), return True and the best SAN.
-        """
-        legal_sans = self.get_legal_sans()
-        if not legal_sans:
-            return False, ""
-
-        # Score them
-        scored = [(Levenshtein.distance(bad_san, san), san) for san in legal_sans]
-        scored.sort(key=lambda x: x[0])
-
-        best_dist, best_san = scored[0]
-
-        if best_dist <= threshold:
-            # Check for ambiguity (two legal moves equidistant)
-            if len(scored) > 1 and scored[1][0] == best_dist:
-                # E.g. OCR is 'Bh4' and both 'Bh3' and 'Bh5' are legal
-                # Too ambiguous to rescue automatically with confidence
-                return False, ""
-
-            return True, best_san
-
-        return False, ""
+    def push_null(self) -> chess.Move:
+        """Lance nulo (`--`), usado em posicoes de estudo."""
+        return self.board.push(chess.Move.null())

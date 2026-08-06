@@ -20,12 +20,15 @@ from pgn_live_editor.core.variation_builder import build_variation_text
 
 class CorePipelineTests(unittest.TestCase):
     def test_normalized_tokens_map_back_to_raw_spans(self):
+        """O normalizador nao toca na prosa; quem resolve `Cf3` e o parser, com o tabuleiro."""
         raw_text = "1.e4 e5 mate 2.Cf3 Cc6"
 
         normalized = LiveTextNormalizer(locale='pt').normalize_with_mapping(raw_text)
         tokens = PGNTokenizer().tokenize(normalized)
 
-        self.assertEqual(normalized.text, "1. e4 e5 # 2. Nf3 Nc6")
+        # `mate` e uma palavra de prosa aqui: nao vira mais '#'.
+        # `Cf3`/`Cc6` chegam intactos ao tokenizador, como candidatos a lance.
+        self.assertEqual(normalized.text, "1. e4 e5 mate 2. Cf3 Cc6")
 
         interesting = [(token.type, token.value, raw_text[token.start_index:token.end_index]) for token in tokens]
         self.assertEqual(
@@ -34,12 +37,28 @@ class CorePipelineTests(unittest.TestCase):
                 ('MOVE_NUMBER', '1.', '1.'),
                 ('SAN_MOVE', 'e4', 'e4'),
                 ('SAN_MOVE', 'e5', 'e5'),
-                ('TEXT', '#', 'mate'),
+                ('TEXT', 'mate', 'mate'),
                 ('MOVE_NUMBER', '2.', '2.'),
-                ('SAN_MOVE', 'Nf3', 'Cf3'),
-                ('SAN_MOVE', 'Nc6', 'Cc6'),
+                ('MOVE_CANDIDATE', 'Cf3', 'Cf3'),
+                ('MOVE_CANDIDATE', 'Cc6', 'Cc6'),
             ]
         )
+
+    def test_locale_candidates_are_resolved_against_the_board(self):
+        """O span continua apontando para o texto bruto original (`Cf3`)."""
+        raw_text = "1.e4 e5 2.Cf3 Cc6 3.Bb5"
+
+        normalized = LiveTextNormalizer(locale='pt').normalize_with_mapping(raw_text)
+        ast = TolerantParser(locale='pt').parse(PGNTokenizer().tokenize(normalized))
+
+        self.assertEqual(['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'], [move.display_san for move in ast.moves])
+        self.assertTrue(all(move.is_valid for move in ast.moves))
+
+        knight = ast.moves[2]
+        self.assertEqual('Cf3', knight.san)
+        self.assertEqual('Nf3', knight.corrected_san)
+        self.assertEqual('2.Cf3', raw_text[knight.start_index:knight.end_index])
+        self.assertEqual([], [issue for issue in ast.issues if issue.severity != 'info'])
 
     def test_normalizer_preserves_comment_text(self):
         raw_text = (
@@ -277,8 +296,10 @@ class CorePipelineTests(unittest.TestCase):
 
         self.assertEqual(
             rendered,
+            # `5... d5` depois do fecha-parenteses: o numero e reafirmado para
+            # que o PGN nao dependa de o leitor contar lances (defeito D13).
             "1. e4 e5 2. Nf3 Nc6 3. Nc3 Nf6 ( 4. Bc4 {contra a qual} 4... Nxe4 {e uma boa resposta. Por exemplo:} "
-            "5. Nxe4 ( {ou} 5. Bxf7+ Kxf7 6. Nxd4 d5 ) d5 {em ambos os casos com boa partida.} ) *"
+            "5. Nxe4 ( {ou} 5. Bxf7+ Kxf7 6. Nxd4 d5 ) 5... d5 {em ambos os casos com boa partida.} ) *"
         )
 
     def test_render_game_pgn_includes_standard_headers(self):

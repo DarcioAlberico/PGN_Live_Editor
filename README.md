@@ -49,6 +49,25 @@ uv run python main.py
 O texto bruto e a fonte da verdade; o PGN e uma saida derivada. Por isso *Salvar projeto*
 e *Exportar PGN* sao acoes diferentes.
 
+### Nada e corrigido em segredo
+
+O painel de alertas na parte de baixo mostra tudo que o parser fez com o texto:
+
+| Marca no editor | Significado |
+|---|---|
+| azul | lance entendido sem nenhuma duvida |
+| verde sublinhado | corrigido com alta confianca (ex.: `Cf3` -> `Nf3`, `4Jf3` -> `Nf3`) |
+| amarelo pontilhado | corrigido **em carater provisorio** -- precisa de conferencia |
+| vermelho ondulado | nao reconhecido; nenhum lance foi aplicado |
+
+Cada alerta tem quatro acoes: **Aceitar correcao** (grava no texto bruto), **Virar comentario**,
+**Aprender** (guarda a correcao no dicionario do projeto) e **Ignorar**.
+`F8` percorre os alertas, `F4` aceita o selecionado, `F9` mostra/oculta o painel.
+
+Prosa nunca e alterada: `chances`, `Cada`, `Chega` e `mate` continuam exatamente como voce
+escreveu. A troca de letra de peca so acontece sobre um token com cara de lance **e** so se o
+resultado for legal na posicao.
+
 ### Seguranca do trabalho
 
 - **Autosave** a cada 30 s ou a cada 200 caracteres digitados.
@@ -65,6 +84,9 @@ e *Exportar PGN* sao acoes diferentes.
 | `Ctrl+Shift+E` | exportar PGN |
 | `Ctrl+Left` / `Ctrl+Right` | lance anterior / proximo |
 | `Ctrl+F` | inverter tabuleiro |
+| `F8` / `Shift+F8` | proximo / anterior alerta |
+| `F4` | aceitar a correcao do alerta selecionado |
+| `F9` | mostrar/ocultar o painel de alertas |
 | `Ctrl+Z` | desfazer (funciona tambem em *Join Lines* e *Inserir Headers*) |
 
 ## Desenvolvimento

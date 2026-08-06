@@ -103,6 +103,64 @@ class MainWindowSmokeTests(unittest.TestCase):
         panel.flip_board()
         self.assertTrue(panel.board_flipped)
 
+    def test_issues_panel_shows_what_the_parser_did(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.4Jf3 Cc6 3.Bh5")
+        panel = self.window.issues_panel
+
+        codes = [issue.code for issue in panel.issues]
+        self.assertIn("AUTO_CORRECTED", codes)
+        self.assertIn("AMBIGUOUS_MOVE", codes)
+        self.assertGreater(panel.table.rowCount(), 0)
+        self.assertIn("aviso", panel.lbl_summary.text())
+
+    def test_accepting_a_correction_rewrites_the_raw_text_and_clears_the_alert(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5")
+        panel = self.window.issues_panel
+
+        issue = next(issue for issue in panel.issues if issue.code == "AMBIGUOUS_MOVE")
+        self.window._accept_issue(issue)
+
+        self.assertEqual("1.e4 e5 2.Nf3 Nc6 3.Bb5", self.window.editor_panel.document_text())
+        self.assertEqual([], panel.issues)
+
+    def test_turning_an_unrecognized_token_into_a_comment(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Xf6z")
+        panel = self.window.issues_panel
+
+        issue = next(issue for issue in panel.issues if issue.code == "UNRECOGNIZED_MOVE")
+        self.window._comment_issue(issue)
+
+        self.assertEqual("1.e4 e5 2.Nf3 {Xf6z}", self.window.editor_panel.document_text())
+        self.assertEqual([], panel.issues)
+
+    def test_learning_a_correction_applies_it_from_then_on(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5")
+        panel = self.window.issues_panel
+
+        issue = next(issue for issue in panel.issues if issue.code == "AMBIGUOUS_MOVE")
+        self.window._learn_issue(issue)
+
+        self.assertEqual({"Bh5": "Bb5"}, self.window.project.dictionary)
+        # Agora a mesma leitura entra com confianca de dicionario, sem pedir revisao.
+        self.assertEqual([], [i for i in panel.issues if i.severity == "warning"])
+        self.assertFalse(self.window.editor_panel.current_ast.moves[-1].needs_review)
+
+    def test_ignoring_a_token_silences_it_for_the_project(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Xf6z")
+        panel = self.window.issues_panel
+
+        issue = next(issue for issue in panel.issues if issue.code == "UNRECOGNIZED_MOVE")
+        self.window._ignore_issue(issue)
+
+        self.assertIn("Xf6z", self.window.project.state.ignored_issue_tokens)
+        self.assertEqual([], panel.issues)
+
+    def test_invalid_date_header_is_reported(self):
+        self.window.editor_panel.load_document_text('[Date "1945"]\n\n1.e4 e5')
+
+        codes = [issue.code for issue in self.window.issues_panel.issues]
+        self.assertIn("INVALID_DATE", codes)
+
     def test_dirty_flag_tracks_unsaved_work(self):
         self.assertFalse(self.window._is_dirty())
 

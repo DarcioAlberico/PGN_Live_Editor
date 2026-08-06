@@ -1,3 +1,19 @@
+"""Normalizacao **so do que e inequivoco**.
+
+O que sai daqui e o que nao depende de contexto: Unicode, glifos de peca,
+variantes de traco, roque com zeros, simbolos de avaliacao e espacamento de
+numero de lance. Nenhuma dessas transformacoes pode mudar o sentido de uma
+palavra de prosa.
+
+Tudo que depende de contexto -- letra de peca por idioma (`C`->`N`), ruido de
+OCR (`tD`->`N`), `ch`->`+`, `mate`->`#` -- mudou-se para `candidates.py`, onde
+so e tentado sobre um token com cara de lance e so e aceito se der um lance
+legal na posicao. Era esse acoplamento que transformava `chances` em `+ances`
+e `Cada` em `Nada`.
+"""
+
+from __future__ import annotations
+
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -5,6 +21,8 @@ from dataclasses import dataclass
 
 @dataclass
 class NormalizedText:
+    """Texto normalizado + o intervalo de origem de cada caractere no texto bruto."""
+
     text: str
     raw_spans: list[tuple[int, int]]
 
@@ -17,55 +35,54 @@ class NormalizedText:
 
 
 class LiveTextNormalizer:
-    """
-    Cleans up common OCR artifacts and normalizes chess pieces
-    to standard English algebraic notation, with support for locales.
-    """
+    """Limpa o texto sem nunca alterar o sentido de uma palavra."""
 
     PIECE_GLYPHS = {
-        '\u2654': 'K', '\u2655': 'Q', '\u2656': 'R', '\u2657': 'B', '\u2658': 'N', '\u2659': '',
-        '\u265A': 'K', '\u265B': 'Q', '\u265C': 'R', '\u265D': 'B', '\u265E': 'N', '\u265F': ''
-    }
-
-    LOCALE_MAPPINGS = {
-        'pt': {'D': 'Q', 'T': 'R', 'B': 'B', 'C': 'N'},
-        'es': {'D': 'Q', 'T': 'R', 'A': 'B', 'C': 'N'},
-        'de': {'K': 'K', 'D': 'Q', 'T': 'R', 'L': 'B', 'S': 'N'}
-    }
-
-    OCR_SUBSTITUTIONS = {
-        "4J": "N",
-        "tj": "N",
-        "0-0-0": "O-O-O",
-        "0-0": "O-O",
-        "ch": "+",
-        "mate": "#",
-        "++": "#",
-        "=/+": "\u2A71",
-        "+/=": "\u2A72",
-        "+-": "\u00B1",
-        "-+": "\u2213",
-        "=": "="
+        '♔': 'K', '♕': 'Q', '♖': 'R', '♗': 'B', '♘': 'N', '♙': '',
+        '♚': 'K', '♛': 'Q', '♜': 'R', '♝': 'B', '♞': 'N', '♟': '',
     }
 
     UNICODE_REPLACEMENTS = {
-        '\u2013': '-',
-        '\u2014': '-',
-        '\u2212': '-',
-        '\u2032': "'",
+        '–': '-',
+        '—': '-',
+        '−': '-',
+        '′': "'",
         '`': "'",
-        '\u00B4': "'",
-        '\u201C': '"',
-        '\u201D': '"',
+        '´': "'",
+        '“': '"',
+        '”': '"',
+        '­': '',   # hifen condicional herdado do PDF
+        '​': '',   # espaco de largura zero
+        '﻿': '',   # BOM no meio do texto
     }
 
-    def __init__(self, locale: str = 'en'):
-        self.locale = locale
-        self.custom_substitutions = self.OCR_SUBSTITUTIONS.copy()
+    # Substituicoes seguras: ancoradas em pontuacao e em contexto de notacao,
+    # nunca em letras soltas, e por isso incapazes de corromper prosa.
+    SYMBOL_PATTERNS: tuple[tuple[str, str], ...] = (
+        (r'\b0-0-0\b', 'O-O-O'),
+        (r'\b0-0\b', 'O-O'),
+        (r'(?<=[a-h1-8QRBNO])\+\+', '#'),
+        (r'=/\+', '⩱'),
+        (r'\+/=', '⩲'),
+        (r'\+-', '±'),
+        (r'-\+', '∓'),
+    )
 
-    def load_custom_dictionary(self, dictionary: dict[str, str]):
-        """Load user-defined OCR correction dictionary."""
-        self.custom_substitutions.update(dictionary)
+    # Numero de lance: consome **todos** os pontos consecutivos.
+    # A versao anterior parava em 3, e por isso `10. ...` virava `10... .`
+    # -- o ponto orfao que foi parar nos PGN ja exportados.
+    # O lookahead impede que decimais de prosa (`2.5 vezes`) sejam tocados, e
+    # `\d{1,3}` impede que anos (`1945.`) sejam lidos como numero de lance.
+    MOVE_NUMBER_PATTERN = r'\b(\d{1,3})\s*((?:\.\s*)+)(?=[A-Za-z(]|[0O]-[0O]|--|$)'
+
+    def __init__(self, locale: str = 'en'):
+        # `locale` ja nao decide letra de peca aqui (isso e do CandidateResolver),
+        # mas segue registrado para quem monta o pipeline a partir do normalizador.
+        self.locale = locale
+
+    # ------------------------------------------------------------------
+    # Mapeamento de spans (o que permite marcar o lance no texto bruto)
+    # ------------------------------------------------------------------
 
     def _expand_spans(self, source_spans: list[tuple[int, int]], output_length: int) -> list[tuple[int, int]]:
         if output_length <= 0:
@@ -98,6 +115,9 @@ class LiveTextNormalizer:
 
         for char, raw_span in zip(text, raw_spans, strict=False):
             translated = self.UNICODE_REPLACEMENTS.get(char, char)
+            if not translated:
+                continue
+
             normalized_char = unicodedata.normalize('NFKC', translated)
             if not normalized_char:
                 continue
@@ -133,35 +153,13 @@ class LiveTextNormalizer:
         spans.extend(raw_spans[cursor:])
         return NormalizedText("".join(parts), spans)
 
-    def _replace_literal(
-        self,
-        text: str,
-        raw_spans: list[tuple[int, int]],
-        old: str,
-        new: str
-    ) -> NormalizedText:
-        if not old:
-            return NormalizedText(text, raw_spans)
-        return self._replace_pattern(text, raw_spans, re.escape(old), new)
-
-    def _apply_piece_translation(self, text: str, raw_spans: list[tuple[int, int]]) -> NormalizedText:
-        if self.locale == 'en':
-            return NormalizedText(text, raw_spans)
-
-        mapping = self.LOCALE_MAPPINGS.get(self.locale, {})
-        if not mapping:
-            return NormalizedText(text, raw_spans)
-
-        def repl(match):
-            piece = match.group(1)
-            rest = match.group(2)
-            if piece in mapping:
-                return mapping[piece] + rest
-            return match.group(0)
-
-        return self._replace_pattern(text, raw_spans, r'\b([A-Z])([a-h\-\+x=#1-8]+)\b', repl)
-
     def _apply_outside_comments(self, text: str, raw_spans: list[tuple[int, int]], transform) -> NormalizedText:
+        """Executa `transform` so fora de `{...}`.
+
+        Uma chave sem fechamento vale ate o **fim da linha**, nao ate o fim do
+        documento: antes, digitar `{` fazia todo o resto do capitulo parar de
+        ser analisado ate a chave ser fechada.
+        """
         parts: list[str] = []
         spans: list[tuple[int, int]] = []
         cursor = 0
@@ -178,10 +176,12 @@ class LiveTextNormalizer:
                 spans.extend(normalized.raw_spans)
 
             comment_end = text.find('}', index)
-            if comment_end == -1:
-                comment_end = len(text) - 1
+            line_end = text.find('\n', index)
+            if comment_end == -1 or (line_end != -1 and line_end < comment_end):
+                comment_slice_end = line_end if line_end != -1 else len(text)
+            else:
+                comment_slice_end = comment_end + 1
 
-            comment_slice_end = comment_end + 1
             parts.append(text[index:comment_slice_end])
             spans.extend(raw_spans[index:comment_slice_end])
             index = comment_slice_end
@@ -194,11 +194,20 @@ class LiveTextNormalizer:
 
         return NormalizedText("".join(parts), spans)
 
+    # ------------------------------------------------------------------
+    # Pipeline
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_move_number(match: re.Match) -> str:
+        number = match.group(1)
+        dots = match.group(2).count('.')
+        return f"{number}... " if dots >= 2 else f"{number}. "
+
     def normalize_with_mapping(self, raw_text: str, base_offset: int = 0) -> NormalizedText:
-        text = raw_text
         raw_spans = [(base_offset + index, base_offset + index + 1) for index in range(len(raw_text))]
 
-        normalized = self._normalize_unicode(text, raw_spans)
+        normalized = self._normalize_unicode(raw_text, raw_spans)
         text, raw_spans = normalized.text, normalized.raw_spans
 
         glyph_chars: list[str] = []
@@ -212,32 +221,26 @@ class LiveTextNormalizer:
         text = "".join(glyph_chars)
         raw_spans = glyph_spans
 
-        for bad_ocr, good_san in sorted(self.custom_substitutions.items(), key=lambda item: len(item[0]), reverse=True):
+        for pattern, replacement in self.SYMBOL_PATTERNS:
             normalized = self._apply_outside_comments(
                 text,
                 raw_spans,
-                lambda current_text, current_spans, old=bad_ocr, new=good_san: self._replace_literal(current_text, current_spans, old, new)
+                lambda current_text, current_spans, p=pattern, r=replacement: self._replace_pattern(
+                    current_text, current_spans, p, r
+                ),
             )
             text, raw_spans = normalized.text, normalized.raw_spans
 
-        normalized = self._apply_outside_comments(text, raw_spans, self._apply_piece_translation)
-        text, raw_spans = normalized.text, normalized.raw_spans
-
-        normalized = self._apply_outside_comments(
+        return self._apply_outside_comments(
             text,
             raw_spans,
             lambda current_text, current_spans: self._replace_pattern(
                 current_text,
                 current_spans,
-                r'\b(\d+)((?:\s*\.){1,3})\s*',
-                lambda match: (
-                    f"{match.group(1)}... "
-                    if match.group(2).count('.') >= 2
-                    else f"{match.group(1)}. "
-                )
-            )
+                self.MOVE_NUMBER_PATTERN,
+                self._format_move_number,
+            ),
         )
-        return normalized
 
     def normalize(self, raw_text: str) -> str:
         return self.normalize_with_mapping(raw_text).text

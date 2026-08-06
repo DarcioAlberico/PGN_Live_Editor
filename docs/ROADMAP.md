@@ -5,6 +5,21 @@
 
 Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 
+## Status
+
+| Fase | Situação |
+|---|---|
+| Ganhos imediatos | ✅ concluída |
+| 0 · Fundação | ✅ concluída |
+| 1 · Não perder trabalho | ✅ concluída |
+| 2 · Parar a corrupção silenciosa | ✅ concluída |
+| 3 · Gestos de edição | ⬜ próxima |
+| 4 · Escala de livro | ⬜ |
+| 5 · Assistentes | ⬜ |
+| 6 · Polimento | ⬜ |
+
+94 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
+
 ---
 
 ## Ganhos imediatos (menos de 1 hora cada)

@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core.parser import iter_moves
 from ..services.export_service import build_pgn, write_pgn
 from ..services.project_service import (
     PROJECT_SUFFIX,
@@ -29,6 +30,7 @@ from ..services.project_service import (
 )
 from .chess_panel import ChessPanel
 from .editor_panel import EditorPanel
+from .issues_panel import IssuesPanel
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
@@ -50,8 +52,11 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
 
+        self.vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_layout.addWidget(self.vertical_splitter)
+
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(self.splitter)
+        self.vertical_splitter.addWidget(self.splitter)
 
         self.editor_panel = EditorPanel()
         self.chess_panel = ChessPanel()
@@ -60,6 +65,12 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.chess_panel)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
+
+        self.issues_panel = IssuesPanel()
+        self.vertical_splitter.addWidget(self.issues_panel)
+        self.vertical_splitter.setStretchFactor(0, 4)
+        self.vertical_splitter.setStretchFactor(1, 1)
+        self.vertical_splitter.setSizes([640, 180])
 
         self.lbl_autosave = QLabel("")
         self.statusBar().addPermanentWidget(self.lbl_autosave)
@@ -73,6 +84,13 @@ class MainWindow(QMainWindow):
         self.chess_panel.move_focused_signal.connect(self.editor_panel.focus_span)
         self.chess_panel.move_insert_requested_signal.connect(self.editor_panel.insert_board_move)
         self.chess_panel.variant_builder.insert_requested_signal.connect(self.editor_panel.insert_text_at_cursor)
+
+        self.editor_panel.text_parsed_signal.connect(self._on_parsed)
+        self.issues_panel.issue_selected_signal.connect(self.editor_panel.focus_span)
+        self.issues_panel.accept_requested_signal.connect(self._accept_issue)
+        self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
+        self.issues_panel.learn_requested_signal.connect(self._learn_issue)
+        self.issues_panel.comment_requested_signal.connect(self._comment_issue)
 
         self.editor_panel.text_edit.textChanged.connect(self._on_text_changed)
 
@@ -113,6 +131,13 @@ class MainWindow(QMainWindow):
         self._add_action(move_menu, "Proximo lance", "Ctrl+Right", self.chess_panel.go_next)
         move_menu.addSeparator()
         self._add_action(move_menu, "Inverter tabuleiro", "Ctrl+F", self.chess_panel.flip_board)
+
+        review_menu = self.menuBar().addMenu("&Revisao")
+        self._add_action(review_menu, "Proximo alerta", "F8", lambda: self.issues_panel.go_to_next_issue(1))
+        self._add_action(review_menu, "Alerta anterior", "Shift+F8", lambda: self.issues_panel.go_to_next_issue(-1))
+        self._add_action(review_menu, "Aceitar correcao", "F4", self.issues_panel.accept_selected)
+        review_menu.addSeparator()
+        self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
 
     def _add_action(self, menu, title: str, shortcut, slot) -> QAction:
         action = QAction(title, self)
@@ -197,6 +222,11 @@ class MainWindow(QMainWindow):
             return
 
         self.project = project
+        self.editor_panel.locale = project.meta.locale
+        self.editor_panel.normalizer.locale = project.meta.locale
+        self.editor_panel.parser.set_locale(project.meta.locale)
+        self.editor_panel.parser.set_dictionary(project.dictionary)
+        self.editor_panel.parser.set_ignored_tokens(project.state.ignored_issue_tokens)
         self.editor_panel.load_document_text(project.raw_text, project.state.cursor_position)
         self._last_autosaved_text = project.raw_text
         self._chars_since_autosave = 0
@@ -273,6 +303,47 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Importado: {path.name} ({len(text)} caracteres)", 5000)
 
     # ------------------------------------------------------------------
+    # Revisao de alertas
+    # ------------------------------------------------------------------
+
+    def _on_parsed(self, ast):
+        self.issues_panel.set_issues(ast.issues)
+
+    def _toggle_issues_panel(self):
+        self.issues_panel.setVisible(not self.issues_panel.isVisible())
+
+    def _accept_issue(self, issue):
+        """Grava a correcao no texto bruto -- o alerta some porque a causa sumiu."""
+        candidate = issue.best_candidate
+        if not candidate:
+            return
+        self.editor_panel.replace_span(issue.raw_start, issue.raw_end, candidate.san)
+        self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{candidate.san}'.", 4000)
+
+    def _comment_issue(self, issue):
+        self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
+        self.statusBar().showMessage(f"'{issue.raw_text}' virou comentario.", 4000)
+
+    def _ignore_issue(self, issue):
+        token = issue.raw_text
+        if not token or token in self.project.state.ignored_issue_tokens:
+            return
+        self.project.state.ignored_issue_tokens.append(token)
+        self.editor_panel.set_ignored_tokens(self.project.state.ignored_issue_tokens)
+        self.statusBar().showMessage(f"'{token}' passa a ser tratado como texto neste projeto.", 5000)
+
+    def _learn_issue(self, issue):
+        candidate = issue.best_candidate
+        if not candidate or not issue.raw_text:
+            return
+        self.project.dictionary[issue.raw_text] = candidate.san
+        self.editor_panel.set_dictionary(self.project.dictionary)
+        self.statusBar().showMessage(
+            f"Dicionario do projeto: '{issue.raw_text}' -> '{candidate.san}'. Salve o projeto para guardar.",
+            6000,
+        )
+
+    # ------------------------------------------------------------------
     # Exportacao
     # ------------------------------------------------------------------
 
@@ -283,6 +354,21 @@ class MainWindow(QMainWindow):
             return
 
         pgn_text, report = build_pgn(ast, self.editor_panel.current_start_fen)
+
+        pending = [move for move in iter_moves(ast.moves) if move.needs_review]
+        if pending:
+            preview = ", ".join(f"{move.san} -> {move.display_san}" for move in pending[:5])
+            choice = QMessageBox.warning(
+                self,
+                "Correcoes por conferir",
+                f"{len(pending)} lance(s) foram corrigidos automaticamente sem certeza e ainda\n"
+                f"nao foram conferidos:\n\n{preview}\n\n"
+                "Exportar assim mesmo?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice != QMessageBox.StandardButton.Save:
+                return
 
         if not report.ok:
             choice = QMessageBox.warning(

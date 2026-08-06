@@ -4,6 +4,13 @@
 > Todos os defeitos abaixo foram **reproduzidos empiricamente** contra o pipeline real (venv do projeto),
 > não são suposições de leitura de código.
 
+> **Status (fases 0–2 implementadas).** Corrigidos e travados por teste de regressão:
+> **D1, D2, D3, D4, D5, D7, D8, D9, D10, D11, D12** e a validação de cabeçalho de **D13**.
+> `tests/test_regressions.py` tem um caso por defeito. Continuam em aberto para as fases seguintes:
+> **D6** (várias partidas na mesma colagem — fase 4) e o restante de **D13/D14** (diálogo de promoção,
+> empacotamento, i18n — fase 6). Os 9 pontos órfãos `10... .` dos arquivos em `Trabalhos Salvos/`
+> desaparecem ao reabrir e reexportar.
+
 ---
 
 ## 1. O que já existe e é bom

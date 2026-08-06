@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 
 from ..core.normalizer import LiveTextNormalizer
 from ..core.parser import GameAST, TolerantParser
-from ..core.pgn_headers import extract_pgn_headers, insert_or_replace_headers
+from ..core.pgn_headers import extract_pgn_headers, insert_or_replace_headers, validate_headers
 from ..core.text_insertion import build_board_move_insertion
 from ..core.tokenizer import PGNTokenizer
 
@@ -84,9 +84,10 @@ class EditorPanel(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.normalizer = LiveTextNormalizer(locale='pt')
+        self.locale = 'pt'
+        self.normalizer = LiveTextNormalizer(locale=self.locale)
         self.tokenizer = PGNTokenizer()
-        self.parser = TolerantParser()
+        self.parser = TolerantParser(locale=self.locale)
 
         self.current_ast = GameAST()
         self.current_start_fen = chess.STARTING_FEN
@@ -308,11 +309,37 @@ class EditorPanel(QWidget):
         tokens = self.tokenizer.tokenize(normalized)
         ast = self.parser.parse(tokens, start_fen=start_fen)
         ast.headers = list(headers.items())
+        ast.issues.extend(validate_headers(headers, raw_text))
 
         self.current_ast = ast
         self.current_start_fen = start_fen
         self._apply_highlights(ast)
         self.text_parsed_signal.emit(ast)
+
+    # ------------------------------------------------------------------
+    # Configuracao do reconhecimento
+    # ------------------------------------------------------------------
+
+    def set_locale(self, locale: str):
+        self.locale = locale
+        self.normalizer.locale = locale
+        self.parser.set_locale(locale)
+        self.reparse_now()
+
+    def set_dictionary(self, dictionary: dict[str, str]):
+        self.parser.set_dictionary(dictionary)
+        self.reparse_now()
+
+    def set_ignored_tokens(self, tokens):
+        self.parser.set_ignored_tokens(tokens)
+        self.reparse_now()
+
+    def wrap_span_as_comment(self, start_index: int, end_index: int):
+        """Envolve um trecho do texto bruto em chaves, de forma undoavel."""
+        text = self.text_edit.toPlainText()
+        if start_index < 0 or end_index > len(text) or end_index <= start_index:
+            return
+        self.replace_span(start_index, end_index, "{" + text[start_index:end_index] + "}")
 
     def reparse_now(self) -> GameAST:
         if self.debounce_timer.isActive():
@@ -354,6 +381,16 @@ class EditorPanel(QWidget):
         fmt_fixed_variation = QTextCharFormat(fmt_fixed)
         fmt_fixed_variation.setFontWeight(QFont.Weight.Normal)
 
+        # Amarelo pontilhado: aplicado em carater provisorio, pendente de conferencia.
+        fmt_review = QTextCharFormat()
+        fmt_review.setForeground(QColor("#f0c05a"))
+        fmt_review.setUnderlineStyle(QTextCharFormat.UnderlineStyle.DotLine)
+        fmt_review.setUnderlineColor(QColor("#f0c05a"))
+        fmt_review.setFontWeight(QFont.Weight.Bold)
+
+        fmt_review_variation = QTextCharFormat(fmt_review)
+        fmt_review_variation.setFontWeight(QFont.Weight.Normal)
+
         fmt_error = QTextCharFormat()
         fmt_error.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
         fmt_error.setUnderlineColor(QColor("#ff6666"))
@@ -369,10 +406,13 @@ class EditorPanel(QWidget):
 
             valid_format = fmt_valid if depth == 0 else fmt_valid_variation
             fixed_format = fmt_fixed if depth == 0 else fmt_fixed_variation
+            review_format = fmt_review if depth == 0 else fmt_review_variation
             error_format = fmt_error if depth == 0 else fmt_error_variation
 
             if not move.is_valid:
                 highlight_ranges.append((move.start_index, move.end_index, error_format))
+            elif move.needs_review:
+                highlight_ranges.append((move.start_index, move.end_index, review_format))
             elif move.corrected_san:
                 highlight_ranges.append((move.start_index, move.end_index, fixed_format))
             else:

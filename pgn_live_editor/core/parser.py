@@ -1,9 +1,39 @@
+"""Parser tolerante: tokens -> arvore anotada da partida.
+
+Mudanca central da Fase 2: nenhum token com cara de lance pode mais desaparecer
+em silencio, e nenhuma correcao automatica acontece sem virar um `Issue`
+visivel com o grau de confianca que a motivou.
+"""
+
+from __future__ import annotations
+
 from collections.abc import Iterable
 
 import chess
 
+from .candidates import (
+    CONFIDENCE_AUTO_APPLY,
+    CONFIDENCE_PROVISIONAL,
+    CandidateResolver,
+)
+from .issues import (
+    ACTION_ACCEPT,
+    ACTION_IGNORE,
+    ACTION_LEARN,
+    ACTION_TO_COMMENT,
+    AMBIGUOUS_MOVE,
+    AUTO_CORRECTED,
+    ORPHAN_VARIATION,
+    UNBALANCED_PAREN,
+    UNCLOSED_BRACE,
+    UNRECOGNIZED_MOVE,
+    Candidate,
+    Issue,
+)
 from .move_validator import MoveValidator
-from .tokenizer import Token
+from .tokenizer import Token, comment_is_unclosed
+
+MOVE_TOKEN_TYPES = {'SAN_MOVE', 'MOVE_CANDIDATE'}
 
 
 class ASTNode:
@@ -33,6 +63,12 @@ class MoveNode(ASTNode):
         self.corrected_san: str | None = None
         self.parent_fen: str | None = None
 
+        # Fase 2: rastreio de confianca.
+        self.confidence: float = 1.0
+        self.needs_review: bool = False
+        self.candidates: list[Candidate] = []
+        self.is_null_move: bool = False
+
     @property
     def display_san(self) -> str:
         return self.corrected_san or self.san
@@ -50,7 +86,7 @@ class GameAST:
         self.moves: list[MoveNode] = []
         self.result: str | None = None
         self.headers: list[tuple[str, str]] = []
-        self.issues: list[tuple[int, str, str]] = []
+        self.issues: list[Issue] = []
 
 
 def iter_moves(moves: list[MoveNode]) -> Iterable[MoveNode]:
@@ -61,26 +97,57 @@ def iter_moves(moves: list[MoveNode]) -> Iterable[MoveNode]:
 
 
 class TolerantParser:
-    """
-    Consumes tokens and runs them through MoveValidator to build an annotated
-    AST representing the game. Includes basic variation recovery and OCR rescue.
-    """
+    """Consome tokens, valida contra o tabuleiro e monta a arvore da partida."""
 
-    def __init__(self):
+    def __init__(self, locale: str = 'pt', dictionary: dict[str, str] | None = None):
         self.validator = MoveValidator()
+        self.resolver = CandidateResolver(locale=locale, dictionary=dictionary)
         self.ast = GameAST()
-        self.issues: list[tuple[int, str, str]] = []
+        self.issues: list[Issue] = []
+        self._desynchronized = False
+        self._ignored_tokens: set[str] = set()
 
-    def _is_legal_in_fen(self, fen: str | None, san: str) -> bool:
-        if not fen:
-            return False
+    # ------------------------------------------------------------------
+    # Configuracao
+    # ------------------------------------------------------------------
 
-        board = chess.Board(fen)
-        try:
-            board.parse_san(san)
-        except ValueError:
-            return False
-        return True
+    def set_locale(self, locale: str) -> None:
+        self.resolver.set_locale(locale)
+
+    def set_dictionary(self, dictionary: dict[str, str]) -> None:
+        self.resolver.dictionary = dict(dictionary)
+
+    def set_ignored_tokens(self, tokens: Iterable[str]) -> None:
+        self._ignored_tokens = set(tokens)
+
+    # ------------------------------------------------------------------
+    # Alertas
+    # ------------------------------------------------------------------
+
+    def _add_issue(
+        self,
+        severity: str,
+        code: str,
+        message: str,
+        token: Token,
+        candidates: list[Candidate] | None = None,
+        actions: list[str] | None = None,
+    ) -> None:
+        self.issues.append(Issue(
+            severity=severity,
+            code=code,
+            message=message,
+            raw_start=token.start_index,
+            raw_end=token.end_index,
+            raw_text=token.value,
+            candidates=list(candidates or []),
+            actions=list(actions or []),
+            is_cascade=self._desynchronized,
+        ))
+
+    # ------------------------------------------------------------------
+    # Heuristicas de variante
+    # ------------------------------------------------------------------
 
     def _side_to_move(self, fen: str | None) -> chess.Color | None:
         if not fen:
@@ -102,13 +169,19 @@ class TolerantParser:
             return None
 
         board = chess.Board(move.parent_fen)
+        if move.is_null_move:
+            board.push(chess.Move.null())
+            return board.fen()
+
         try:
             board.push_san(move.display_san)
         except ValueError:
             return None
         return board.fen()
 
-    def _collect_variant_preview_tokens(self, tokens: list[Token], start_index: int, max_san_tokens: int = 8) -> list[Token]:
+    def _collect_variant_preview_tokens(
+        self, tokens: list[Token], start_index: int, max_san_tokens: int = 8
+    ) -> list[Token]:
         preview_tokens: list[Token] = []
         nested_depth = 0
         san_count = 0
@@ -156,7 +229,7 @@ class TolerantParser:
         legal_san_count = 0
 
         for token in preview_tokens:
-            if token.type in {'COMMENT', 'TEXT', 'NAG'}:
+            if token.type in {'COMMENT', 'TEXT', 'NAG', 'MOVE_CANDIDATE', 'NULL_MOVE'}:
                 continue
 
             if token.type == 'MOVE_NUMBER':
@@ -273,10 +346,106 @@ class TolerantParser:
 
         return (" ".join(parts).strip(), index)
 
+    # ------------------------------------------------------------------
+    # Resolucao de um token de lance
+    # ------------------------------------------------------------------
+
+    def _build_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
+        node = MoveNode(san=token, number=number_token)
+        node.parent_fen = self.validator.board.fen()
+
+        if self.validator.is_legal(token.value):
+            self.validator.push_san(token.value)
+            node.confidence = 1.0
+            self._desynchronized = False
+            return node
+
+        candidates = self.resolver.resolve(token.value, self.validator.board)
+        node.candidates = candidates
+        best = candidates[0] if candidates else None
+
+        if best is not None and best.confidence >= CONFIDENCE_AUTO_APPLY:
+            node.corrected_san = best.san
+            node.confidence = best.confidence
+            self.validator.push_san(best.san)
+            self._add_issue(
+                'info',
+                AUTO_CORRECTED,
+                f"'{token.value}' foi lido como '{best.san}' ({best.rationale}).",
+                token,
+                candidates,
+                [ACTION_ACCEPT, ACTION_IGNORE, ACTION_LEARN],
+            )
+            self._desynchronized = False
+            return node
+
+        if best is not None and best.confidence >= CONFIDENCE_PROVISIONAL:
+            # Aplicado em carater provisorio: sem isso, toda a linha depois daqui
+            # viraria erro em cascata. Fica amarelo e pendente de revisao.
+            node.corrected_san = best.san
+            node.confidence = best.confidence
+            node.needs_review = True
+            self.validator.push_san(best.san)
+            self._add_issue(
+                'warning',
+                AMBIGUOUS_MOVE,
+                f"'{token.value}' provavelmente e '{best.san}', mas nao ha certeza ({best.rationale}). Confira.",
+                token,
+                candidates,
+                [ACTION_ACCEPT, ACTION_IGNORE, ACTION_LEARN, ACTION_TO_COMMENT],
+            )
+            self._desynchronized = False
+            return node
+
+        node.is_valid = False
+        node.confidence = best.confidence if best else 0.0
+        if best is not None:
+            message = f"'{token.value}' nao foi reconhecido. Hipotese fraca: {best.san} ({best.confidence:.0%})."
+        else:
+            message = f"'{token.value}' nao e um lance legal nesta posicao e nao foi possivel adivinhar."
+        self._add_issue(
+            'error',
+            UNRECOGNIZED_MOVE,
+            message,
+            token,
+            candidates,
+            [ACTION_ACCEPT, ACTION_IGNORE, ACTION_TO_COMMENT] if best else [ACTION_IGNORE, ACTION_TO_COMMENT],
+        )
+        self._desynchronized = True
+        return node
+
+    def _build_null_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
+        node = MoveNode(san=token, number=number_token)
+        node.parent_fen = self.validator.board.fen()
+        node.is_null_move = True
+        node.corrected_san = "--"
+        self.validator.push_null()
+        return node
+
+    def _absorb_as_text(
+        self,
+        value: str,
+        active_list: list[MoveNode],
+        pending_comments: list[str],
+        comments_since_last_move: list[str],
+    ) -> None:
+        if not value:
+            return
+        if not active_list:
+            self._append_comment(pending_comments, value, 'TEXT')
+        else:
+            self._append_comment(active_list[-1].comments_after, value, 'TEXT')
+            self._append_comment(comments_since_last_move, value, 'TEXT')
+
+    # ------------------------------------------------------------------
+    # Parse
+    # ------------------------------------------------------------------
+
     def parse(self, tokens: list[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
         self.validator.set_board_fen(start_fen)
         self.ast = GameAST()
         self.issues = []
+        self._desynchronized = False
 
         current_move_number_token: Token | None = None
         pending_comments: list[str] = []
@@ -302,8 +471,8 @@ class TolerantParser:
                     anchor_move.variations.append(var_line)
                     anchor_move.variation_anchor_after.append(anchor_after_current)
 
-                    # After the first sibling variation opens, these comments should stay
-                    # attached to the parent move unless explicitly transferred now.
+                    # Depois que a primeira variante irma abre, estes comentarios
+                    # seguem colados ao lance pai, salvo transferencia explicita.
                     parent_comments_since_last_move: list[str] = []
                     transferred_comments: list[str] = []
 
@@ -327,17 +496,29 @@ class TolerantParser:
 
                     if anchor_fen:
                         self.validator.set_board_fen(anchor_fen)
+                        self._desynchronized = False
 
                     active_list = var_line
                 else:
-                    self.issues.append((token.start_index, "Ignorando variante: nao ha lance anterior.", 'warning'))
+                    self._add_issue(
+                        'warning',
+                        ORPHAN_VARIATION,
+                        "Variante ignorada: nao ha lance anterior para ancora-la.",
+                        token,
+                    )
 
             elif token.type == 'VARIANT_CLOSE':
                 if stack:
                     active_list, old_fen, pending_comments, comments_since_last_move, current_move_number_token = stack.pop()
                     self.validator.set_board_fen(old_fen)
+                    self._desynchronized = False
                 else:
-                    self.issues.append((token.start_index, "Encontrado ')' sem variante aberta.", 'warning'))
+                    self._add_issue(
+                        'warning',
+                        UNBALANCED_PAREN,
+                        "Encontrado ')' sem variante aberta.",
+                        token,
+                    )
 
             elif token.type == 'MOVE_NUMBER':
                 if self._is_backward_reference(active_list, token):
@@ -351,6 +532,14 @@ class TolerantParser:
                 current_move_number_token = token
 
             elif token.type in {'COMMENT', 'TEXT'}:
+                if token.type == 'COMMENT' and comment_is_unclosed(token.value):
+                    self._add_issue(
+                        'warning',
+                        UNCLOSED_BRACE,
+                        "Comentario sem '}' de fechamento; vale ate o fim da linha.",
+                        token,
+                    )
+
                 value = token.value.strip('{}').strip()
                 if value:
                     if not active_list:
@@ -366,34 +555,33 @@ class TolerantParser:
             elif token.type == 'RESULT':
                 self.ast.result = token.value
 
-            elif token.type == 'SAN_MOVE':
-                node = MoveNode(san=token, number=current_move_number_token)
-                node.parent_fen = self.validator.board.fen()
+            elif token.type in MOVE_TOKEN_TYPES:
+                # Candidato solto no meio da prosa, ou silenciado pelo usuario:
+                # segue como texto, sem virar alerta.
+                if token.type == 'MOVE_CANDIDATE' and (
+                    not token.in_notation_context or token.value in self._ignored_tokens
+                ):
+                    self._absorb_as_text(
+                        token.value.strip(), active_list, pending_comments, comments_since_last_move
+                    )
+                    index += 1
+                    continue
 
-                if self.validator.is_legal(token.value):
-                    self.validator.push_san(token.value)
-                else:
-                    success, rescued_san = self.validator.attempt_levenshtein_rescue(token.value)
-                    if success:
-                        node.corrected_san = rescued_san
-                        self.issues.append((
-                            token.start_index,
-                            f"O lance '{token.value}' foi corrigido para '{rescued_san}'.",
-                            'info'
-                        ))
-                        self.validator.push_san(rescued_san)
-                    else:
-                        node.is_valid = False
-                        self.issues.append((
-                            token.start_index,
-                            f"O lance '{token.value}' eh ilegal ou ambiguo demais.",
-                            'error'
-                        ))
+                node = self._build_move_node(token, current_move_number_token)
 
                 if pending_comments:
                     node.comments_before.extend(pending_comments)
                     pending_comments = []
 
+                active_list.append(node)
+                current_move_number_token = None
+                comments_since_last_move = []
+
+            elif token.type == 'NULL_MOVE':
+                node = self._build_null_move_node(token, current_move_number_token)
+                if pending_comments:
+                    node.comments_before.extend(pending_comments)
+                    pending_comments = []
                 active_list.append(node)
                 current_move_number_token = None
                 comments_since_last_move = []
