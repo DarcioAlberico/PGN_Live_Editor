@@ -20,8 +20,18 @@ from PyQt6.QtWidgets import (
 
 from ..core.normalizer import LiveTextNormalizer
 from ..core.parser import GameAST, TolerantParser
+from ..core.paste_cleanup import clean_pdf_text
 from ..core.pgn_headers import extract_pgn_headers, insert_or_replace_headers, validate_headers
 from ..core.text_insertion import build_board_move_insertion
+from ..core.text_ops import (
+    OperationResult,
+    check_balance,
+    paragraph_to_comment,
+    renumber_document,
+    unwrap_at,
+    wrap_as_comment,
+    wrap_as_variation,
+)
 from ..core.tokenizer import PGNTokenizer
 
 SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = (
@@ -77,6 +87,60 @@ class SymbolPaletteDialog(QDialog):
         layout.addWidget(close_button_box)
 
 
+class PGNTextEdit(QPlainTextEdit):
+    """Editor com auto-fechamento de `{}` e `()`.
+
+    Com texto selecionado, digitar o delimitador **envolve a selecao** -- e o
+    caminho mais curto do fluxo: selecionar a prosa e apertar `{`.
+    """
+
+    PAIRS = {"{": "}", "(": ")"}
+
+    def __init__(self):
+        super().__init__()
+        self.auto_close_enabled = True
+
+    def keyPressEvent(self, event):
+        if not self.auto_close_enabled:
+            super().keyPressEvent(event)
+            return
+
+        typed = event.text()
+        cursor = self.textCursor()
+
+        if typed in self.PAIRS:
+            closing = self.PAIRS[typed]
+            if cursor.hasSelection():
+                start, end = cursor.selectionStart(), cursor.selectionEnd()
+                body = cursor.selectedText()
+                cursor.beginEditBlock()
+                cursor.insertText(f"{typed}{body}{closing}")
+                cursor.endEditBlock()
+                selection = self.textCursor()
+                selection.setPosition(start)
+                selection.setPosition(end + 2, QTextCursor.MoveMode.KeepAnchor)
+                self.setTextCursor(selection)
+                return
+
+            cursor.beginEditBlock()
+            cursor.insertText(typed + closing)
+            cursor.endEditBlock()
+            cursor.setPosition(cursor.position() - 1)
+            self.setTextCursor(cursor)
+            return
+
+        if typed in self.PAIRS.values() and not cursor.hasSelection():
+            position = cursor.position()
+            text = self.toPlainText()
+            # Ja existe o fechamento logo a frente: so passa por cima dele.
+            if position < len(text) and text[position] == typed:
+                cursor.setPosition(position + 1)
+                self.setTextCursor(cursor)
+                return
+
+        super().keyPressEvent(event)
+
+
 class EditorPanel(QWidget):
     text_parsed_signal = Signal(object)
     cursor_position_changed_signal = Signal(int)
@@ -121,7 +185,7 @@ class EditorPanel(QWidget):
         toolbar.addWidget(btn_clean)
         layout.addLayout(toolbar)
 
-        self.text_edit = QPlainTextEdit()
+        self.text_edit = PGNTextEdit()
         editor_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         editor_font.setPointSize(11)
         self.text_edit.setFont(editor_font)
@@ -340,6 +404,67 @@ class EditorPanel(QWidget):
         if start_index < 0 or end_index > len(text) or end_index <= start_index:
             return
         self.replace_span(start_index, end_index, "{" + text[start_index:end_index] + "}")
+
+    # ------------------------------------------------------------------
+    # Gestos de edicao estrutural (Fase 3)
+    # ------------------------------------------------------------------
+
+    def apply_operation(self, result: OperationResult) -> str:
+        """Aplica um gesto inteiro num unico bloco de desfazer."""
+        if not result.ok:
+            return result.message
+
+        cursor = self.text_edit.textCursor()
+        cursor.beginEditBlock()
+        for edit in sorted(result.edits, key=lambda item: item.start, reverse=True):
+            cursor.setPosition(edit.start)
+            cursor.setPosition(edit.end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText(edit.replacement)
+        cursor.endEditBlock()
+
+        if result.select_start is not None and result.select_end is not None:
+            selection = self.text_edit.textCursor()
+            selection.setPosition(result.select_start)
+            selection.setPosition(result.select_end, QTextCursor.MoveMode.KeepAnchor)
+            self.text_edit.setTextCursor(selection)
+
+        self.text_edit.setFocus()
+        self.reparse_now()
+        return result.message
+
+    def _selection(self) -> tuple[int, int]:
+        cursor = self.text_edit.textCursor()
+        return (cursor.selectionStart(), cursor.selectionEnd())
+
+    def action_wrap_comment(self) -> str:
+        start, end = self._selection()
+        return self.apply_operation(wrap_as_comment(self.document_text(), start, end))
+
+    def action_wrap_variation(self) -> str:
+        start, end = self._selection()
+        return self.apply_operation(wrap_as_variation(self.document_text(), start, end, self.current_ast))
+
+    def action_unwrap(self) -> str:
+        return self.apply_operation(unwrap_at(self.document_text(), self.cursor_position()))
+
+    def action_paragraph_to_comment(self) -> str:
+        return self.apply_operation(
+            paragraph_to_comment(self.document_text(), self.cursor_position(), self.current_ast)
+        )
+
+    def action_renumber(self) -> str:
+        return self.apply_operation(renumber_document(self.document_text(), self.current_ast))
+
+    def action_clean_paste(self, options) -> str:
+        report = clean_pdf_text(self.document_text(), options)
+        if report.text == self.document_text():
+            return "Nada a limpar."
+        self.replace_all_text(report.text)
+        self.reparse_now()
+        return report.summary()
+
+    def balance_problems(self):
+        return check_balance(self.document_text())
 
     def reparse_now(self) -> GameAST:
         if self.debounce_timer.isActive():

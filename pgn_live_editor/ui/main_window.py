@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.parser import iter_moves
+from ..core.text_ops import promote_variation
+from ..services.clipboard_service import COPY_FORMATS
 from ..services.export_service import build_pgn, write_pgn
 from ..services.project_service import (
     PROJECT_SUFFIX,
@@ -29,6 +31,7 @@ from ..services.project_service import (
     write_recovery_snapshot,
 )
 from .chess_panel import ChessPanel
+from .cleanup_dialog import CleanupDialog
 from .editor_panel import EditorPanel
 from .issues_panel import IssuesPanel
 
@@ -125,6 +128,27 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
         self._add_action(file_menu, "Sair", QKeySequence.StandardKey.Quit, self.close)
+
+        structure_menu = self.menuBar().addMenu("&Estrutura")
+        self._add_action(structure_menu, "Envolver em comentario", "Ctrl+K", self._wrap_comment)
+        self._add_action(structure_menu, "Envolver em variante", "Ctrl+9", self._wrap_variation)
+        self._add_action(structure_menu, "Desenvolver (tirar delimitador)", "Ctrl+Shift+K", self._unwrap)
+        self._add_action(structure_menu, "Paragrafo vira comentario", "Ctrl+Shift+C", self._paragraph_to_comment)
+        structure_menu.addSeparator()
+        self._add_action(structure_menu, "Renumerar documento", "Ctrl+R", self._renumber)
+        self._add_action(structure_menu, "Promover variante", "Ctrl+Shift+Up", self._promote_variation)
+        structure_menu.addSeparator()
+        self._add_action(structure_menu, "Limpar texto colado...", "Ctrl+Shift+V", self._clean_paste)
+        self._add_action(structure_menu, "Conferir delimitadores", "Ctrl+Shift+B", self._check_balance)
+
+        copy_menu = self.menuBar().addMenu("&Copiar")
+        for copy_format in COPY_FORMATS:
+            self._add_action(
+                copy_menu,
+                copy_format.label,
+                None,
+                lambda _checked=False, key=copy_format.key: self._copy_excerpt(key),
+            )
 
         move_menu = self.menuBar().addMenu("&Lances")
         self._add_action(move_menu, "Lance anterior", "Ctrl+Left", self.chess_panel.go_prev)
@@ -308,6 +332,75 @@ class MainWindow(QMainWindow):
 
     def _on_parsed(self, ast):
         self.issues_panel.set_issues(ast.issues)
+        self.chess_panel.start_fen = self.editor_panel.current_start_fen
+
+    # ------------------------------------------------------------------
+    # Gestos de edicao estrutural
+    # ------------------------------------------------------------------
+
+    def _report(self, message: str):
+        if message:
+            self.statusBar().showMessage(message, 5000)
+
+    def _wrap_comment(self):
+        self._report(self.editor_panel.action_wrap_comment())
+
+    def _wrap_variation(self):
+        self._report(self.editor_panel.action_wrap_variation())
+
+    def _unwrap(self):
+        self._report(self.editor_panel.action_unwrap())
+
+    def _paragraph_to_comment(self):
+        self._report(self.editor_panel.action_paragraph_to_comment())
+
+    def _renumber(self):
+        self._report(self.editor_panel.action_renumber())
+
+    def _promote_variation(self):
+        entry = self.chess_panel.current_entry()
+        if entry is None or len(entry.path) < 2:
+            self._report("Selecione um lance de variante para promove-la.")
+            return
+
+        owner, variation_index = self.chess_panel.variation_owner_of(entry)
+        if owner is None:
+            self._report("Este lance ja esta na linha principal.")
+            return
+
+        result = promote_variation(self.editor_panel.document_text(), self.editor_panel.current_ast, owner, variation_index)
+        self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _clean_paste(self):
+        text = self.editor_panel.document_text()
+        if not text.strip():
+            self._report("Nao ha texto para limpar.")
+            return
+
+        dialog = CleanupDialog(text, self)
+        if dialog.exec() == CleanupDialog.DialogCode.Accepted:
+            self._report(self.editor_panel.action_clean_paste(dialog.options()))
+
+    def _check_balance(self):
+        problems = self.editor_panel.balance_problems()
+        if not problems:
+            self._report("Delimitadores balanceados.")
+            return
+
+        self.editor_panel.focus_span(problems[0].position, problems[0].position + 1)
+        detail = "\n".join(f"- posicao {problem.position}: {problem.message}" for problem in problems[:12])
+        QMessageBox.warning(
+            self,
+            "Delimitadores",
+            f"{len(problems)} problema(s) encontrado(s):\n\n{detail}",
+        )
+
+    def _copy_excerpt(self, key: str):
+        text = self.chess_panel.copy_excerpt(key)
+        if text:
+            first_line = text.splitlines()[0]
+            preview = first_line[:60] + ("..." if len(first_line) > 60 else "")
+            self._report(f"Copiado: {preview}")
 
     def _toggle_issues_panel(self):
         self.issues_panel.setVisible(not self.issues_panel.isVisible())

@@ -52,6 +52,12 @@ class MoveNode(ASTNode):
         self.number = number.value if number else None
         self.san = san.value
 
+        # O span do SAN e guardado a parte porque `start_index` passa a apontar
+        # para o numero de lance. A regiao [start_index, san_start_index) e
+        # exatamente o que a renumeracao reescreve.
+        self.san_start_index = san.start_index
+        self.san_end_index = san.end_index
+
         if number:
             self.start_index = number.start_index
 
@@ -59,6 +65,9 @@ class MoveNode(ASTNode):
         self.comments_after: list[str] = []
         self.variations: list[list[MoveNode]] = []
         self.variation_anchor_after: list[bool] = []
+        # Span bruto de cada variante, dos parenteses inclusive: e o que permite
+        # promover, rebaixar e copiar uma linha sem reescrever o documento.
+        self.variation_spans: list[tuple[int, int]] = []
         self.nags: list[str] = []
         self.corrected_san: str | None = None
         self.parent_fen: str | None = None
@@ -452,7 +461,7 @@ class TolerantParser:
         comments_since_last_move: list[str] = []
 
         active_list = self.ast.moves
-        stack: list[tuple[list[MoveNode], str, list[str], list[str], Token | None]] = []
+        stack: list[tuple[list[MoveNode], str, list[str], list[str], Token | None, tuple[MoveNode, int]]] = []
 
         index = 0
         while index < len(tokens):
@@ -470,6 +479,8 @@ class TolerantParser:
                     var_line: list[MoveNode] = []
                     anchor_move.variations.append(var_line)
                     anchor_move.variation_anchor_after.append(anchor_after_current)
+                    anchor_move.variation_spans.append((token.start_index, token.end_index))
+                    open_variation = (anchor_move, len(anchor_move.variations) - 1)
 
                     # Depois que a primeira variante irma abre, estes comentarios
                     # seguem colados ao lance pai, salvo transferencia explicita.
@@ -487,7 +498,8 @@ class TolerantParser:
                         self.validator.board.fen(),
                         pending_comments,
                         parent_comments_since_last_move,
-                        current_move_number_token
+                        current_move_number_token,
+                        open_variation
                     ))
 
                     pending_comments = transferred_comments
@@ -509,7 +521,17 @@ class TolerantParser:
 
             elif token.type == 'VARIANT_CLOSE':
                 if stack:
-                    active_list, old_fen, pending_comments, comments_since_last_move, current_move_number_token = stack.pop()
+                    (
+                        active_list,
+                        old_fen,
+                        pending_comments,
+                        comments_since_last_move,
+                        current_move_number_token,
+                        open_variation,
+                    ) = stack.pop()
+                    owner, variation_index = open_variation
+                    open_start = owner.variation_spans[variation_index][0]
+                    owner.variation_spans[variation_index] = (open_start, token.end_index)
                     self.validator.set_board_fen(old_fen)
                     self._desynchronized = False
                 else:

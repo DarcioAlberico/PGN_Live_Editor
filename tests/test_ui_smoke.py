@@ -7,6 +7,8 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6.QtGui import QTextCursor  # noqa: E402
+from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from pgn_live_editor.ui.editor_panel import EditorPanel  # noqa: E402
@@ -73,6 +75,113 @@ class EditorPanelEditingTests(unittest.TestCase):
         self.panel.load_document_text('[FEN "isto nao e um fen"]\n\n1.e4 e5')
 
         self.assertEqual(["e4", "e5"], [move.display_san for move in self.panel.current_ast.moves])
+
+
+class EditorGestureTests(unittest.TestCase):
+    """Fase 3: transcrever sem digitar delimitador nenhum."""
+
+    def setUp(self):
+        self.panel = EditorPanel()
+        self.addCleanup(self.panel.deleteLater)
+
+    def _select(self, start: int, end: int):
+        cursor = self.panel.text_edit.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.panel.text_edit.setTextCursor(cursor)
+
+    def _place(self, position: int):
+        cursor = self.panel.text_edit.textCursor()
+        cursor.setPosition(position)
+        self.panel.text_edit.setTextCursor(cursor)
+
+    def test_wrap_comment_gesture(self):
+        text = "1.e4 e5 as brancas ficam melhor 2.Nf3"
+        self.panel.load_document_text(text)
+        self._select(text.index("as brancas"), text.index(" 2.Nf3"))
+
+        self.panel.action_wrap_comment()
+
+        self.assertEqual("1.e4 e5 {as brancas ficam melhor} 2.Nf3", self.panel.document_text())
+
+    def test_wrap_variation_gesture_adds_the_move_number(self):
+        text = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6"
+        self.panel.load_document_text(text)
+        self._select(text.index("Nc6"), text.index(" 3.Bb5"))
+
+        self.panel.action_wrap_variation()
+
+        self.assertEqual("1.e4 e5 2.Nf3 (2... Nc6) 3.Bb5 a6", self.panel.document_text())
+
+    def test_a_gesture_is_a_single_undo_step(self):
+        text = "1.e4 e5 2.Nf3 Nc6 Bb5"
+        self.panel.load_document_text(text)
+        self._select(text.index("Nc6"), text.index("Nc6") + 3)
+
+        self.panel.action_wrap_variation()
+        self.assertNotEqual(text, self.panel.document_text())
+
+        self.panel.text_edit.undo()
+        self.assertEqual(text, self.panel.document_text())
+
+    def test_unwrap_gesture(self):
+        text = "1.e4 e5 {um comentario} 2.Nf3"
+        self.panel.load_document_text(text)
+        self._place(text.index("comentario"))
+
+        self.panel.action_unwrap()
+
+        self.assertEqual("1.e4 e5 um comentario 2.Nf3", self.panel.document_text())
+
+    def test_paragraph_to_comment_gesture(self):
+        text = "1.e4 e5 2.Nf3 recurso tatico fortissimo 3.Bb5"
+        self.panel.load_document_text(text)
+        self._place(text.index("tatico"))
+
+        self.panel.action_paragraph_to_comment()
+
+        self.assertEqual("1.e4 e5 2.Nf3 {recurso tatico fortissimo} 3.Bb5", self.panel.document_text())
+
+    def test_renumber_gesture_repairs_the_whole_document(self):
+        self.panel.load_document_text("1.e4 e5 7.Nf3 Nc6 3.Bb5 (9.Bc4 d6)")
+
+        self.panel.action_renumber()
+
+        self.assertEqual("1. e4 e5 2. Nf3 Nc6 3. Bb5 (3. Bc4 d6)", self.panel.document_text())
+
+    def test_typing_an_opening_brace_wraps_the_selection(self):
+        text = "1.e4 e5 comentario solto 2.Nf3"
+        self.panel.load_document_text(text)
+        self._select(text.index("comentario"), text.index(" 2.Nf3"))
+
+        QTest.keyClicks(self.panel.text_edit, "{")
+
+        self.assertEqual("1.e4 e5 {comentario solto} 2.Nf3", self.panel.document_text())
+
+    def test_typing_an_opening_brace_auto_closes_it(self):
+        self.panel.load_document_text("1.e4 e5 ")
+        self._place(len("1.e4 e5 "))
+
+        QTest.keyClicks(self.panel.text_edit, "{")
+
+        self.assertEqual("1.e4 e5 {}", self.panel.document_text())
+        self.assertEqual(len("1.e4 e5 {"), self.panel.cursor_position())
+
+    def test_typing_the_closing_brace_steps_over_it(self):
+        self.panel.load_document_text("1.e4 e5 ")
+        self._place(len("1.e4 e5 "))
+
+        QTest.keyClicks(self.panel.text_edit, "{nota}")
+
+        self.assertEqual("1.e4 e5 {nota}", self.panel.document_text())
+
+    def test_balance_check_finds_the_unclosed_paren(self):
+        self.panel.load_document_text("1.e4 (2.Nf3 Nc6")
+
+        problems = self.panel.balance_problems()
+
+        self.assertEqual(1, len(problems))
+        self.assertEqual(5, problems[0].position)
 
 
 class MainWindowSmokeTests(unittest.TestCase):

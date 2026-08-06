@@ -13,12 +13,12 @@ Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 | 0 · Fundação | ✅ concluída |
 | 1 · Não perder trabalho | ✅ concluída |
 | 2 · Parar a corrupção silenciosa | ✅ concluída |
-| 3 · Gestos de edição | ⬜ próxima |
-| 4 · Escala de livro | ⬜ |
+| 3 · Gestos de edição | ✅ concluída |
+| 4 · Escala de livro | ⬜ próxima |
 | 5 · Assistentes | ⬜ |
 | 6 · Polimento | ⬜ |
 
-94 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
+144 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
 
 ---
 

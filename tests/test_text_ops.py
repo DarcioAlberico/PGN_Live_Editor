@@ -1,0 +1,358 @@
+"""Fase 3: gestos de edicao estrutural sobre o texto bruto."""
+
+from __future__ import annotations
+
+import unittest
+
+import chess
+
+from pgn_live_editor.core.normalizer import LiveTextNormalizer
+from pgn_live_editor.core.parser import TolerantParser
+from pgn_live_editor.core.paste_cleanup import CleanupOptions, clean_pdf_text
+from pgn_live_editor.core.text_ops import (
+    apply_edits,
+    check_balance,
+    paragraph_to_comment,
+    promote_variation,
+    renumber_document,
+    unwrap_at,
+    wrap_as_comment,
+    wrap_as_variation,
+)
+from pgn_live_editor.core.tokenizer import PGNTokenizer
+
+
+def parse(text: str, locale: str = "pt"):
+    normalized = LiveTextNormalizer(locale=locale).normalize_with_mapping(text)
+    return TolerantParser(locale=locale).parse(PGNTokenizer().tokenize(normalized))
+
+
+def run(text: str, operation) -> str:
+    result = operation(text, parse(text))
+    return apply_edits(text, result.edits) if result.ok else text
+
+
+class WrapAsCommentTests(unittest.TestCase):
+    def test_selection_becomes_a_comment(self):
+        text = "1.e4 e5 as brancas ficam melhor 2.Nf3"
+        start = text.index("as brancas")
+        end = text.index(" 2.Nf3")
+
+        result = wrap_as_comment(text, start, end)
+
+        self.assertEqual("1.e4 e5 {as brancas ficam melhor} 2.Nf3", apply_edits(text, result.edits))
+
+    def test_edges_of_the_selection_are_trimmed(self):
+        text = "1.e4 e5   comentario   2.Nf3"
+        result = wrap_as_comment(text, text.index("  comentario"), text.index("  2.Nf3") + 2)
+
+        self.assertEqual("1.e4 e5   {comentario}   2.Nf3", apply_edits(text, result.edits))
+
+    def test_inner_braces_become_parentheses_because_pgn_does_not_nest_them(self):
+        text = "1.e4 texto {com chave} dentro 2.Nf3"
+        result = wrap_as_comment(text, text.index("texto"), text.index(" 2.Nf3"))
+
+        applied = apply_edits(text, result.edits)
+        self.assertEqual("1.e4 {texto (com chave) dentro} 2.Nf3", applied)
+        self.assertEqual(1, applied.count("{"))
+
+    def test_empty_selection_is_refused_with_an_explanation(self):
+        result = wrap_as_comment("1.e4 e5", 3, 3)
+
+        self.assertFalse(result.ok)
+        self.assertIn("Selecione", result.message)
+
+    def test_already_a_comment_is_left_alone(self):
+        text = "1.e4 {ja e comentario} 2.Nf3"
+        result = wrap_as_comment(text, text.index("{"), text.index("}") + 1)
+
+        self.assertFalse(result.ok)
+
+
+class WrapAsVariationTests(unittest.TestCase):
+    def test_selection_becomes_a_variation_with_the_right_move_number(self):
+        text = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6"
+        ast = parse(text)
+        start = text.index("Nc6")
+        end = text.index(" 3.Bb5")
+
+        result = wrap_as_variation(text, start, end, ast)
+        applied = apply_edits(text, result.edits)
+
+        # `Nc6` e o lance 2 das pretas: a variante precisa dizer isso.
+        self.assertEqual("1.e4 e5 2.Nf3 (2... Nc6) 3.Bb5 a6", applied)
+
+    def test_move_number_is_not_duplicated_when_the_selection_already_has_one(self):
+        text = "1.e4 e5 2.Nf3 2... Nc6 3.Bb5"
+        ast = parse(text)
+        start = text.index("2... Nc6")
+        end = start + len("2... Nc6")
+
+        applied = apply_edits(text, wrap_as_variation(text, start, end, ast).edits)
+
+        self.assertEqual("1.e4 e5 2.Nf3 (2... Nc6) 3.Bb5", applied)
+
+    def test_following_mainline_move_recovers_its_number(self):
+        text = "1.e4 e5 2.Nf3 Nc6 Bb5"
+        ast = parse(text)
+        start = text.index("Nc6")
+        end = start + len("Nc6")
+
+        applied = apply_edits(text, wrap_as_variation(text, start, end, ast).edits)
+
+        # Sem o `3.` o leitor teria de contar lances para saber de quem e a vez.
+        self.assertEqual("1.e4 e5 2.Nf3 (2... Nc6) 3. Bb5", applied)
+
+    def test_the_result_still_parses_as_a_variation(self):
+        text = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6"
+        ast = parse(text)
+        start = text.index("3.Bb5")
+
+        applied = apply_edits(text, wrap_as_variation(text, start, len(text), ast).edits)
+
+        self.assertEqual("1.e4 e5 2.Nf3 Nc6 (3.Bb5 a6)", applied)
+
+        reparsed = parse(applied)
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in reparsed.moves])
+        variation = next(move.variations[0] for move in reparsed.moves if move.variations)
+        self.assertEqual(["Bb5", "a6"], [move.display_san for move in variation])
+        self.assertEqual([], [issue for issue in reparsed.issues if issue.severity != "info"])
+
+
+class UnwrapTests(unittest.TestCase):
+    def test_removes_the_braces_around_the_cursor(self):
+        text = "1.e4 e5 {um comentario} 2.Nf3"
+        applied = apply_edits(text, unwrap_at(text, text.index("comentario")).edits)
+
+        self.assertEqual("1.e4 e5 um comentario 2.Nf3", applied)
+
+    def test_removes_the_parentheses_around_the_cursor(self):
+        text = "1.e4 e5 2.Nf3 (2... Nc6 3.Bb5) 3.d4"
+        applied = apply_edits(text, unwrap_at(text, text.index("Nc6")).edits)
+
+        self.assertEqual("1.e4 e5 2.Nf3 2... Nc6 3.Bb5 3.d4", applied)
+
+    def test_innermost_delimiter_wins(self):
+        text = "1.e4 (2.Nf3 (3.Bb5 alvo) fim)"
+        applied = apply_edits(text, unwrap_at(text, text.index("alvo")).edits)
+
+        self.assertEqual("1.e4 (2.Nf3 3.Bb5 alvo fim)", applied)
+
+    def test_cursor_outside_any_delimiter_is_refused(self):
+        result = unwrap_at("1.e4 e5 2.Nf3", 3)
+
+        self.assertFalse(result.ok)
+        self.assertIn("nao esta dentro", result.message)
+
+
+class ParagraphToCommentTests(unittest.TestCase):
+    def test_loose_prose_between_moves_becomes_a_comment(self):
+        text = "1.e4 e5 2.Nf3 recurso tatico fortissimo 3.Bb5 a6"
+        position = text.index("tatico")
+
+        applied = run(text, lambda t, ast: paragraph_to_comment(t, position, ast))
+
+        self.assertEqual("1.e4 e5 2.Nf3 {recurso tatico fortissimo} 3.Bb5 a6", applied)
+
+    def test_prose_at_the_end_of_the_document(self):
+        text = "1.e4 e5 2.Nf3 excelente desenvolvimento"
+        applied = run(text, lambda t, ast: paragraph_to_comment(t, t.index("excelente"), ast))
+
+        self.assertEqual("1.e4 e5 2.Nf3 {excelente desenvolvimento}", applied)
+
+    def test_does_not_cross_an_existing_comment(self):
+        text = "1.e4 {ja comentado} solto 2.Nf3"
+        applied = run(text, lambda t, ast: paragraph_to_comment(t, t.index("solto"), ast))
+
+        self.assertEqual("1.e4 {ja comentado} {solto} 2.Nf3", applied)
+
+
+class RenumberTests(unittest.TestCase):
+    def test_orphan_dot_from_ocr_is_repaired(self):
+        text = "1.e4 e5 2.Nf3 10. ... Nc6"
+        applied = run(text, renumber_document)
+
+        self.assertNotIn("10", applied)
+        self.assertEqual("1. e4 e5 2. Nf3 2... Nc6", applied)
+
+    def test_missing_numbers_are_added_and_wrong_ones_fixed(self):
+        text = "1.e4 e5 7.Nf3 Nc6 3.Bb5"
+        applied = run(text, renumber_document)
+
+        self.assertEqual("1. e4 e5 2. Nf3 Nc6 3. Bb5", applied)
+
+    def test_black_move_after_a_variation_gets_its_number_back(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4) Nc6"
+        applied = run(text, renumber_document)
+
+        self.assertIn("2... Nc6", applied)
+
+    def test_numbering_inside_variations_is_recalculated(self):
+        text = "1.e4 e5 2.Nf3 (9.Bc4 Nc6) 2... Nf6"
+        applied = run(text, renumber_document)
+
+        self.assertIn("(2. Bc4 Nc6)", applied)
+
+    def test_already_correct_text_is_left_alone(self):
+        result = renumber_document("1. e4 e5 2. Nf3 Nc6", parse("1. e4 e5 2. Nf3 Nc6"))
+
+        self.assertFalse(result.ok)
+        self.assertIn("ja esta correta", result.message)
+
+    def test_renumbering_stops_at_an_unrecognized_move(self):
+        """Depois de um lance perdido o tabuleiro nao vale: nada de inventar numeros."""
+        text = "1.e4 e5 2.Nf3 Xf6z 9.Bb5 12.a6"
+        ast = parse(text)
+        applied = run(text, renumber_document)
+
+        self.assertFalse(ast.moves[3].is_valid)
+        # O comeco, que e confiavel, foi corrigido...
+        self.assertTrue(applied.startswith("1. e4 e5 2. Nf3"))
+        # ...e o resto ficou intocado, para o alerta pedir a correcao real.
+        self.assertIn("9.Bb5", applied)
+        self.assertIn("12.a6", applied)
+
+    def test_renumbering_is_idempotent(self):
+        text = "1.e4 e5 7.Nf3 Nc6 3.Bb5 (9.Bc4 d6)"
+        once = run(text, renumber_document)
+        twice = run(once, renumber_document)
+
+        self.assertEqual(once, twice)
+
+
+def owner_of_first_variation(ast):
+    """O parser ancora a variante numa posicao, entao o dono nem sempre e o
+    lance que a variante substitui. Achamos quem realmente a carrega."""
+    from pgn_live_editor.core.parser import iter_moves
+
+    return next(move for move in iter_moves(ast.moves) if move.variations)
+
+
+class PromoteVariationTests(unittest.TestCase):
+    def test_variation_and_mainline_swap_places(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nc6) 2... Nc6 3.Bb5"
+        ast = parse(text)
+
+        result = promote_variation(text, ast, owner_of_first_variation(ast), 0)
+        applied = apply_edits(text, result.edits)
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual("1.e4 e5 2.Bc4 Nc6 (2.Nf3 2... Nc6 3.Bb5)", applied)
+
+    def test_the_promoted_line_becomes_the_mainline_when_reparsed(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nc6) 2... Nc6 3.Bb5"
+        ast = parse(text)
+        applied = apply_edits(text, promote_variation(text, ast, owner_of_first_variation(ast), 0).edits)
+
+        reparsed = parse(applied)
+        self.assertEqual(["e4", "e5", "Bc4", "Nc6"], [move.display_san for move in reparsed.moves])
+        self.assertEqual([], [issue for issue in reparsed.issues if issue.severity != "info"])
+
+    def test_promoting_twice_returns_to_the_original_line(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nc6) 2... Nc6 3.Bb5"
+        ast = parse(text)
+        once = apply_edits(text, promote_variation(text, ast, owner_of_first_variation(ast), 0).edits)
+
+        ast_once = parse(once)
+        twice = apply_edits(once, promote_variation(once, ast_once, owner_of_first_variation(ast_once), 0).edits)
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in parse(twice).moves])
+
+    def test_result_token_is_not_dragged_into_the_variation(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nc6) 2... Nc6 1-0"
+        ast = parse(text)
+        applied = apply_edits(text, promote_variation(text, ast, owner_of_first_variation(ast), 0).edits)
+
+        self.assertTrue(applied.rstrip().endswith("1-0"), applied)
+        self.assertEqual("1-0", parse(applied).result)
+
+
+class BalanceTests(unittest.TestCase):
+    def test_balanced_text_has_no_problems(self):
+        self.assertEqual([], check_balance("1.e4 {ok} (2.Nf3 (3.Bb5))"))
+
+    def test_unclosed_paren_is_reported(self):
+        problems = check_balance("1.e4 (2.Nf3 Nc6")
+
+        self.assertEqual(1, len(problems))
+        self.assertIn("sem ')'", problems[0].message)
+
+    def test_extra_closing_paren_is_reported(self):
+        problems = check_balance("1.e4 2.Nf3) Nc6")
+
+        self.assertEqual(1, len(problems))
+        self.assertIn("sem '('", problems[0].message)
+
+    def test_unclosed_brace_is_reported(self):
+        problems = check_balance("1.e4 {comentario aberto\n2.Nf3")
+
+        self.assertEqual(1, len(problems))
+        self.assertIn("nunca fechado", problems[0].message)
+
+
+class PasteCleanupTests(unittest.TestCase):
+    def test_hyphenated_word_is_reassembled(self):
+        report = clean_pdf_text("uma ma-\nnobra decisiva", CleanupOptions(join_wrapped_lines=False))
+
+        self.assertEqual("uma manobra decisiva", report.text)
+        self.assertEqual(1, report.joined_hyphens)
+
+    def test_compound_names_are_not_glued(self):
+        report = clean_pdf_text("a variante Ruy-\nLopez classica", CleanupOptions(join_wrapped_lines=False))
+
+        self.assertIn("Ruy-", report.text)
+
+    def test_page_numbers_are_removed(self):
+        report = clean_pdf_text("1.e4 e5\n42\n2.Nf3 Nc6\n- 43 -\n3.Bb5", CleanupOptions(join_wrapped_lines=False))
+
+        self.assertNotIn("42", report.text)
+        self.assertNotIn("- 43 -", report.text)
+        self.assertIn("2.Nf3", report.text)
+
+    def test_repeated_running_headers_are_removed(self):
+        source = "\n".join(["ABERTURAS SEMI-ABERTAS", "1.e4 c5", "ABERTURAS SEMI-ABERTAS", "2.Nf3 d6", "ABERTURAS SEMI-ABERTAS", "3.d4"])
+        report = clean_pdf_text(source, CleanupOptions(join_wrapped_lines=False))
+
+        self.assertNotIn("ABERTURAS", report.text)
+        self.assertIn("3.d4", report.text)
+
+    def test_paragraph_breaks_survive_the_line_join(self):
+        report = clean_pdf_text("primeira linha\nquebrada aqui\n\nsegundo paragrafo")
+
+        self.assertEqual("primeira linha quebrada aqui\n\nsegundo paragrafo", report.text)
+
+    def test_footnote_marks_glued_to_moves_are_removed(self):
+        report = clean_pdf_text("1.e4 Nf3¹ e5", CleanupOptions(join_wrapped_lines=False))
+
+        self.assertEqual("1.e4 Nf3 e5", report.text)
+
+    def test_soft_hyphen_and_zero_width_characters_are_dropped(self):
+        report = clean_pdf_text("posi­cao com​ ruido", CleanupOptions(join_wrapped_lines=False))
+
+        self.assertEqual("posicao com ruido", report.text)
+
+    def test_cleanup_keeps_the_moves_parseable(self):
+        source = "1.e4 c5 2.Nf3 uma ma-\nnobra conhecida\n\n17\n3.d4 cxd4"
+        report = clean_pdf_text(source)
+        ast = parse(report.text)
+
+        self.assertEqual(["e4", "c5", "Nf3", "d4", "cxd4"], [move.display_san for move in ast.moves])
+        self.assertIn("manobra", " ".join(ast.moves[2].comments_after))
+
+
+class StartFenGesturesTests(unittest.TestCase):
+    def test_renumber_respects_a_fragment_that_starts_from_a_diagram(self):
+        """Exercicio de livro que comeca no lance 25: a numeracao sai da FEN."""
+        fen = "8/8/8/4k3/8/8/4P3/4K3 w - - 12 25"
+        text = "e4 Kf6 e5+ Kf5"
+        normalized = LiveTextNormalizer(locale="pt").normalize_with_mapping(text)
+        ast = TolerantParser(locale="pt").parse(PGNTokenizer().tokenize(normalized), start_fen=fen)
+
+        applied = apply_edits(text, renumber_document(text, ast).edits)
+
+        self.assertEqual(25, chess.Board(fen).fullmove_number)
+        self.assertEqual("25. e4 Kf6 26. e5+ Kf5", applied)
+
+
+if __name__ == "__main__":
+    unittest.main()

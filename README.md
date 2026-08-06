@@ -40,14 +40,40 @@ uv run python main.py
 
 ## Fluxo de trabalho
 
-1. **Importar** (`Ctrl+I`) um `.pgn`/`.txt`, ou simplesmente colar o texto do PDF no editor.
-2. Ir marcando a estrutura: `{comentarios}`, `(variantes)`, numeros de lance.
-3. Acompanhar no tabuleiro e no preview o que o parser entendeu.
-4. **Salvar o projeto** (`Ctrl+S`) em `.plez` - guarda o **texto bruto**, que e o trabalho de verdade.
-5. **Exportar PGN** (`Ctrl+Shift+E`) quando a partida estiver pronta.
+1. **Colar** o texto do PDF (ou **importar** um `.pgn`/`.txt` com `Ctrl+I`).
+2. **Limpar a colagem** com `Ctrl+Shift+V`: remonta palavras cortadas no fim da linha,
+   junta linhas quebradas, tira numeros de pagina e cabecalhos repetidos. Tem previa.
+3. Ir marcando a estrutura **sem digitar delimitador nenhum**:
+   selecionar a prosa e `Ctrl+K`, selecionar os lances alternativos e `Ctrl+9`.
+4. **Renumerar** com `Ctrl+R` para o programa acertar todos os numeros de lance
+   a partir do tabuleiro.
+5. Conferir os alertas (`F8`) e o tabuleiro.
+6. **Salvar o projeto** (`Ctrl+S`) em `.plez` - guarda o **texto bruto**, que e o trabalho de verdade.
+7. **Exportar PGN** (`Ctrl+Shift+E`) quando a partida estiver pronta.
 
 O texto bruto e a fonte da verdade; o PGN e uma saida derivada. Por isso *Salvar projeto*
 e *Exportar PGN* sao acoes diferentes.
+
+### Marcar a estrutura sem digitar chaves
+
+| Gesto | Atalho | O que faz |
+|---|---|---|
+| Envolver em comentario | `Ctrl+K` | a selecao vira `{...}` |
+| Envolver em variante | `Ctrl+9` | a selecao vira `(...)` **ja com o numero de lance certo**, e o lance seguinte da linha principal recupera o dele |
+| Desenvolver | `Ctrl+Shift+K` | tira o `{}` ou `()` em volta do cursor |
+| Paragrafo vira comentario | `Ctrl+Shift+C` | pega a prosa solta sob o cursor e a envolve em chaves |
+| Renumerar documento | `Ctrl+R` | recalcula todos os numeros a partir do tabuleiro |
+| Promover variante | `Ctrl+Shift+Up` | a variante vira linha principal e vice-versa |
+| Conferir delimitadores | `Ctrl+Shift+B` | lista `{` e `(` sem fechamento |
+
+Digitar `{` ou `(` com texto selecionado tambem envolve a selecao; sem selecao, o
+delimitador ja entra fechado. Cada gesto e **um unico Ctrl+Z**.
+
+### Copiar trechos
+
+O menu **Copiar** e o botao direito sobre a arvore de lances oferecem: esta linha entre
+parenteses, daqui ate o fim, sem comentarios, a FEN da posicao, a linha principal, ou
+um PGN completo com `[FEN]`/`[SetUp]` a partir da posicao atual.
 
 ### Nada e corrigido em segredo
 
@@ -81,6 +107,10 @@ resultado for legal na posicao.
 |---|---|
 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | novo / abrir / salvar projeto |
 | `Ctrl+I` | importar PGN ou texto |
+| `Ctrl+Shift+V` | limpar texto colado do PDF |
+| `Ctrl+K` / `Ctrl+9` | envolver em comentario / variante |
+| `Ctrl+Shift+K` / `Ctrl+Shift+C` | desenvolver / paragrafo vira comentario |
+| `Ctrl+R` | renumerar documento |
 | `Ctrl+Shift+E` | exportar PGN |
 | `Ctrl+Left` / `Ctrl+Right` | lance anterior / proximo |
 | `Ctrl+F` | inverter tabuleiro |

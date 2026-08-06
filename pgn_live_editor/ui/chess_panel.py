@@ -4,10 +4,11 @@ import chess.svg
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
-from PyQt6.QtGui import QResizeEvent
+from PyQt6.QtGui import QGuiApplication, QResizeEvent
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSplitter,
     QTextBrowser,
@@ -24,6 +25,7 @@ from ..core.move_tree import (
     resolve_selection_key,
 )
 from ..core.parser import GameAST
+from ..services.clipboard_service import COPY_FORMATS, copy_text
 from .board_view import InteractiveBoardView
 from .variant_builder_panel import VariantBuilderPanel
 
@@ -32,11 +34,13 @@ class ChessPanel(QWidget):
     current_move_span_signal = Signal(int, int)
     move_focused_signal = Signal(int, int)
     move_insert_requested_signal = Signal(str, bool, int)
+    excerpt_copied_signal = Signal(str)
 
     def __init__(self):
         super().__init__()
 
         self.game_ast = GameAST()
+        self.start_fen = chess.STARTING_FEN
         self.entries: list[MoveEntry] = []
         self.entry_by_node_id: dict[str, MoveEntry] = {}
         self.current_entry_index = -1
@@ -88,6 +92,8 @@ class ChessPanel(QWidget):
         self.pgn_view = QTextBrowser()
         self.pgn_view.setOpenLinks(False)
         self.pgn_view.anchorClicked.connect(self._on_pgn_anchor_clicked)
+        self.pgn_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.pgn_view.customContextMenuRequested.connect(self._show_copy_menu)
         preview_layout.addWidget(self.pgn_view, 1)
 
         self.variant_builder = VariantBuilderPanel()
@@ -145,13 +151,37 @@ class ChessPanel(QWidget):
             return self.entries[self.current_entry_index]
         return None
 
+    def current_entry(self) -> MoveEntry | None:
+        return self._current_entry()
+
+    def variation_owner_of(self, entry: MoveEntry):
+        """(lance dono, indice da variante) do lance selecionado, ou (None, -1).
+
+        O `node_id` alterna indice de lance e indice de variante -- `2.0.1` e o
+        lance 1 da variante 0 do lance 2 da linha principal.
+        """
+        parts = [int(part) for part in entry.node_id.split(".")]
+        if len(parts) < 3:
+            return (None, -1)
+
+        moves = self.game_ast.moves
+        owner = None
+        index = 0
+        while index + 2 < len(parts):
+            owner = moves[parts[index]]
+            variation_index = parts[index + 1]
+            moves = owner.variations[variation_index]
+            index += 2
+
+        return (owner, parts[-2])
+
     def _reset_board_position(self):
         self.current_entry_index = -1
         self.current_selection_key = None
         self.selected_square = None
         self.input_mode = None
         self.input_origin_label = None
-        self.board.reset()
+        self.board.set_fen(self.start_fen)
         self.render_board(None)
         self._restore_status_label()
         self._refresh_preview()
@@ -212,10 +242,10 @@ class ChessPanel(QWidget):
     def _anchor_variant_builder_to_current(self):
         current_entry = self._current_entry()
         if current_entry is None:
-            self.variant_builder.set_anchor(chess.STARTING_FEN, "posicao inicial")
+            self.variant_builder.set_anchor(self.start_fen, "posicao inicial")
             return
 
-        board = chess.Board()
+        board = chess.Board(self.start_fen)
         for move in current_entry.path:
             if not move.is_valid:
                 break
@@ -229,10 +259,10 @@ class ChessPanel(QWidget):
     def _anchor_variant_builder_to_previous(self):
         current_entry = self._current_entry()
         if current_entry is None:
-            self.variant_builder.set_anchor(chess.STARTING_FEN, "posicao inicial")
+            self.variant_builder.set_anchor(self.start_fen, "posicao inicial")
             return
 
-        board = chess.Board()
+        board = chess.Board(self.start_fen)
         for move in current_entry.path[:-1]:
             if not move.is_valid:
                 break
@@ -244,7 +274,7 @@ class ChessPanel(QWidget):
         self.variant_builder.set_anchor(board.fen(), f"antes de {self._entry_label(current_entry)}")
 
     def _set_board_from_path(self, path) -> chess.Move | None:
-        self.board.reset()
+        self.board.set_fen(self.start_fen)
         last_move = None
         for move in path:
             if not move.is_valid:
@@ -266,7 +296,7 @@ class ChessPanel(QWidget):
         else:
             self.current_entry_index = -1
             self.current_selection_key = None
-            self.board.reset()
+            self.board.set_fen(self.start_fen)
             self.selected_square = None
             self.render_board(None)
             self._restore_status_label()
@@ -326,6 +356,36 @@ class ChessPanel(QWidget):
         new_index = 0 if self.current_entry_index < 0 else self.current_entry_index + 1
         if new_index < len(self.entries):
             self._apply_entry(self.entries[new_index], focus_editor=True)
+
+    def _show_copy_menu(self, point):
+        """Menu de contexto na arvore de lances: recortar trechos da partida."""
+        menu = QMenu(self)
+        entry = self._current_entry()
+
+        for copy_format in COPY_FORMATS:
+            action = menu.addAction(copy_format.label)
+            action.setEnabled(entry is not None or not copy_format.needs_entry)
+            action.triggered.connect(
+                lambda _checked=False, key=copy_format.key: self.copy_excerpt(key)
+            )
+
+        menu.exec(self.pgn_view.mapToGlobal(point))
+
+    def copy_excerpt(self, key: str) -> str:
+        text = copy_text(
+            key,
+            self.game_ast,
+            self._current_entry(),
+            self.start_fen,
+            dict(self.game_ast.headers),
+        )
+        if not text:
+            self.lbl_status.setText("Nao ha o que copiar nesta posicao.")
+            return ""
+
+        QGuiApplication.clipboard().setText(text)
+        self.excerpt_copied_signal.emit(text)
+        return text
 
     def _on_pgn_anchor_clicked(self, url):
         node_id = url.toString()
