@@ -43,6 +43,7 @@ class ChessPanel(QWidget):
         self.current_selection_key: str | None = None
         self.current_last_move = None
         self.board = chess.Board()
+        self.board_flipped = False
         self.selected_square: chess.Square | None = None
         self.input_mode: str | None = None
         self.input_origin_label: str | None = None
@@ -112,15 +113,20 @@ class ChessPanel(QWidget):
         height = max(self.board_view.height(), 420)
         return max(280, min(width - 24, height - 24, 560))
 
+    def flip_board(self):
+        self.board_flipped = not self.board_flipped
+        self.render_board(self.current_last_move)
+
     def render_board(self, last_move=None):
         self.current_last_move = last_move
         board_size = self._board_svg_size()
-        self.board_view.set_board_geometry(board_size, flipped=False)
+        self.board_view.set_board_geometry(board_size, flipped=self.board_flipped)
         svg = chess.svg.board(
             self.board,
             size=board_size,
             lastmove=last_move,
-            coordinates=False,
+            orientation=chess.BLACK if self.board_flipped else chess.WHITE,
+            coordinates=True,
             borders=False,
             fill=self._board_fill(),
         ).encode('utf-8')

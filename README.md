@@ -1,6 +1,10 @@
 # PGN Live Editor
 
-Aplicacao desktop em PyQt para editar texto bruto de partidas e exportar PGN.
+Editor de texto assistido para transformar texto de livro de xadrez em PGN confiavel.
+Cole o texto do PDF, va marcando comentarios, variantes e linha principal, e o programa
+reconhece a estrutura em tempo real com tabuleiro sincronizado.
+
+Documentacao do projeto: [analise tecnica](docs/ANALISE.md) - [especificacao](docs/SPEC.md) - [roadmap](docs/ROADMAP.md).
 
 ## Requisitos
 
@@ -34,8 +38,45 @@ Compatibilidade com o launcher antigo:
 uv run python main.py
 ```
 
+## Fluxo de trabalho
+
+1. **Importar** (`Ctrl+I`) um `.pgn`/`.txt`, ou simplesmente colar o texto do PDF no editor.
+2. Ir marcando a estrutura: `{comentarios}`, `(variantes)`, numeros de lance.
+3. Acompanhar no tabuleiro e no preview o que o parser entendeu.
+4. **Salvar o projeto** (`Ctrl+S`) em `.plez` - guarda o **texto bruto**, que e o trabalho de verdade.
+5. **Exportar PGN** (`Ctrl+Shift+E`) quando a partida estiver pronta.
+
+O texto bruto e a fonte da verdade; o PGN e uma saida derivada. Por isso *Salvar projeto*
+e *Exportar PGN* sao acoes diferentes.
+
+### Seguranca do trabalho
+
+- **Autosave** a cada 30 s ou a cada 200 caracteres digitados.
+- **Recuperacao de sessao**: se o programa fechar sem salvar, ao reabrir ele oferece o texto de volta.
+- **Conferencia na exportacao**: todo PGN gerado e relido pelo `python-chess` e comparado
+  com a analise antes de ser gravado. Divergencia gera aviso, nunca um arquivo silenciosamente errado.
+
+### Atalhos
+
+| Atalho | Acao |
+|---|---|
+| `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | novo / abrir / salvar projeto |
+| `Ctrl+I` | importar PGN ou texto |
+| `Ctrl+Shift+E` | exportar PGN |
+| `Ctrl+Left` / `Ctrl+Right` | lance anterior / proximo |
+| `Ctrl+F` | inverter tabuleiro |
+| `Ctrl+Z` | desfazer (funciona tambem em *Join Lines* e *Inserir Headers*) |
+
+## Desenvolvimento
+
 Executar os testes:
 
 ```powershell
 uv run python -m unittest discover -s tests
+```
+
+Lint:
+
+```powershell
+uv run ruff check pgn_live_editor tests
 ```

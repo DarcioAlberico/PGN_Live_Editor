@@ -89,6 +89,7 @@ class EditorPanel(QWidget):
         self.parser = TolerantParser()
 
         self.current_ast = GameAST()
+        self.current_start_fen = chess.STARTING_FEN
         self.current_move_span = None
         self._suspend_cursor_sync = False
         self._symbol_palette_dialog: SymbolPaletteDialog | None = None
@@ -133,10 +134,68 @@ class EditorPanel(QWidget):
         self.text_edit.textChanged.connect(self._on_text_changed)
         self.text_edit.cursorPositionChanged.connect(self._on_cursor_position_changed)
 
+    # ------------------------------------------------------------------
+    # Documento
+    # ------------------------------------------------------------------
+
+    def document_text(self) -> str:
+        return self.text_edit.toPlainText()
+
+    def cursor_position(self) -> int:
+        return self.text_edit.textCursor().position()
+
+    def load_document_text(self, text: str, cursor_position: int = 0):
+        """Carrega um documento novo (abrir/importar). Zera o historico de desfazer."""
+        self.text_edit.setPlainText(text)
+        cursor = self.text_edit.textCursor()
+        cursor.setPosition(max(0, min(cursor_position, len(text))))
+        self.text_edit.setTextCursor(cursor)
+        self.text_edit.document().setModified(False)
+        self.reparse_now()
+
+    def replace_all_text(self, new_text: str):
+        """Substitui todo o texto **preservando o historico de desfazer**.
+
+        Usar sempre isto no lugar de `setPlainText` para transformacoes do
+        proprio usuario: `setPlainText` apaga a pilha de Ctrl+Z e joga o cursor
+        para o inicio, o que ja custou trabalho perdido em capitulos grandes.
+        """
+        if new_text == self.text_edit.toPlainText():
+            return
+
+        previous_position = self.text_edit.textCursor().position()
+        scrollbar = self.text_edit.verticalScrollBar()
+        previous_scroll = scrollbar.value()
+
+        cursor = self.text_edit.textCursor()
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.insertText(new_text)
+        cursor.endEditBlock()
+
+        restored = self.text_edit.textCursor()
+        restored.setPosition(max(0, min(previous_position, len(new_text))))
+        self.text_edit.setTextCursor(restored)
+        scrollbar.setValue(previous_scroll)
+
+    def replace_span(self, start_index: int, end_index: int, replacement: str):
+        """Troca um trecho do texto bruto, de forma undoavel."""
+        if start_index < 0 or end_index < start_index:
+            return
+
+        cursor = self.text_edit.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(start_index)
+        cursor.setPosition(end_index, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(replacement)
+        cursor.endEditBlock()
+        self.text_edit.setTextCursor(cursor)
+        self.reparse_now()
+
     def action_join_lines(self):
         text = self.text_edit.toPlainText()
         clean_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
-        self.text_edit.setPlainText(clean_text)
+        self.replace_all_text(clean_text)
 
     def open_symbol_palette(self):
         if self._symbol_palette_dialog is None:
@@ -168,7 +227,7 @@ class EditorPanel(QWidget):
 
     def insert_default_headers(self):
         updated_text = insert_or_replace_headers(self.text_edit.toPlainText())
-        self.text_edit.setPlainText(updated_text)
+        self.replace_all_text(updated_text)
         self.text_edit.setFocus()
         self.reparse_now()
 
@@ -212,7 +271,10 @@ class EditorPanel(QWidget):
             self.current_move_span = None
         else:
             self.current_move_span = (start_index, end_index)
-        self._apply_highlights(self.current_ast)
+
+        # So a selecao muda aqui. Refazer o realce sintatico do documento
+        # inteiro a cada movimento do cursor custava O(blocos x lances).
+        self._apply_current_selection()
 
     def _on_text_changed(self):
         self.debounce_timer.start(300)
@@ -228,17 +290,27 @@ class EditorPanel(QWidget):
 
         if not raw_text.strip():
             self.current_ast = GameAST()
+            self.current_start_fen = chess.STARTING_FEN
             self.current_move_span = None
             self._apply_highlights(self.current_ast)
             self.text_parsed_signal.emit(self.current_ast)
             return
 
+        # Fragmento de livro que parte de um diagrama: o parser sempre soube
+        # receber uma posicao inicial, mas o editor nunca a repassava.
+        start_fen = headers.get("FEN", chess.STARTING_FEN)
+        try:
+            chess.Board(start_fen)
+        except ValueError:
+            start_fen = chess.STARTING_FEN
+
         normalized = self.normalizer.normalize_with_mapping(body_text, base_offset=body_offset)
         tokens = self.tokenizer.tokenize(normalized)
-        ast = self.parser.parse(tokens)
+        ast = self.parser.parse(tokens, start_fen=start_fen)
         ast.headers = list(headers.items())
 
         self.current_ast = ast
+        self.current_start_fen = start_fen
         self._apply_highlights(ast)
         self.text_parsed_signal.emit(ast)
 
@@ -263,7 +335,6 @@ class EditorPanel(QWidget):
                 yield from self._iter_moves_with_depth(variation, depth + 1)
 
     def _apply_highlights(self, ast: GameAST):
-        selections = []
         highlight_ranges = []
 
         fmt_valid = QTextCharFormat()
@@ -292,9 +363,6 @@ class EditorPanel(QWidget):
         fmt_error_variation = QTextCharFormat(fmt_error)
         fmt_error_variation.setFontWeight(QFont.Weight.Normal)
 
-        fmt_current = QTextCharFormat()
-        fmt_current.setBackground(QColor("#4b5568"))
-
         for move, depth in self._iter_moves_with_depth(ast.moves):
             if move.start_index < 0 or move.end_index <= move.start_index:
                 continue
@@ -311,36 +379,56 @@ class EditorPanel(QWidget):
                 highlight_ranges.append((move.start_index, move.end_index, valid_format))
 
         self.highlighter.set_ranges(highlight_ranges)
+        self._apply_current_selection()
 
-        if self.current_move_span:
-            start_index, end_index = self.current_move_span
-            selections.append(self._make_selection(start_index, end_index, fmt_current))
+    def _apply_current_selection(self):
+        """Realce do lance sob o cursor. Nao mexe no realce sintatico."""
+        if not self.current_move_span:
+            self.text_edit.setExtraSelections([])
+            return
 
-        self.text_edit.setExtraSelections(selections)
+        fmt_current = QTextCharFormat()
+        fmt_current.setBackground(QColor("#4b5568"))
+
+        start_index, end_index = self.current_move_span
+        self.text_edit.setExtraSelections([self._make_selection(start_index, end_index, fmt_current)])
 
 
 class MoveHighlighter(QSyntaxHighlighter):
+    """Realce sintatico com os ranges pre-indexados por bloco.
+
+    A versao anterior varria a lista inteira de lances para cada bloco do
+    documento, o que dava O(blocos x lances) a cada rehighlight.
+    """
+
     def __init__(self, document):
         super().__init__(document)
-        self._ranges = []
+        self._ranges_by_block: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
 
     def set_ranges(self, ranges):
-        self._ranges = sorted(ranges, key=lambda item: item[0])
+        document = self.document()
+        indexed: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
+
+        for start_index, end_index, text_format in ranges:
+            first_block = document.findBlock(start_index)
+            if not first_block.isValid():
+                continue
+
+            block = first_block
+            while block.isValid() and block.position() < end_index:
+                indexed.setdefault(block.blockNumber(), []).append((start_index, end_index, text_format))
+                block = block.next()
+
+        self._ranges_by_block = indexed
         self.rehighlight()
 
     def highlightBlock(self, text: str):
-        if not self._ranges:
+        block_ranges = self._ranges_by_block.get(self.currentBlock().blockNumber())
+        if not block_ranges:
             return
 
         block_start = self.currentBlock().position()
-        block_end = block_start + len(text)
-
-        for start_index, end_index, text_format in self._ranges:
-            if end_index <= block_start:
-                continue
-            if start_index >= block_end:
-                break
-
+        for start_index, end_index, text_format in block_ranges:
             local_start = max(0, start_index - block_start)
             local_end = min(len(text), end_index - block_start)
             if local_end > local_start:
