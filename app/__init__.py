@@ -1,0 +1,1 @@
+"""PGN Live Editor package."""
