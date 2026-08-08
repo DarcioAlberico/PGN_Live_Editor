@@ -205,6 +205,15 @@ class ChessPanel(QWidget):
     def current_entry(self) -> MoveEntry | None:
         return self._current_entry()
 
+    def go_first(self):
+        """Home: volta a posicao inicial da partida."""
+        self._reset_board_position()
+
+    def go_last(self):
+        """End: vai ao ultimo lance da linha que esta sendo percorrida."""
+        if self.entries:
+            self._apply_entry(self.entries[-1], focus_editor=True)
+
     def variation_owner_of(self, entry: MoveEntry):
         """(lance dono, indice da variante) do lance selecionado, ou (None, -1).
 

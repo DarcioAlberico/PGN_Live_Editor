@@ -385,6 +385,140 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
     )
 
 
+def move_variation(text: str, owner: MoveNode, variation_index: int, delta: int) -> OperationResult:
+    """Sobe ou desce uma variante entre as irmas do mesmo lance.
+
+    A ordem das variantes nao e decorativa: em livro, a primeira e a principal
+    alternativa e as seguintes sao secundarias. Trocar duas de lugar e so trocar
+    dois trechos de texto -- e como nao ha aninhamento entre irmas, uma troca
+    nunca invalida a posicao da outra.
+    """
+    spans = owner.variation_spans
+    target_index = variation_index + delta
+
+    if not 0 <= variation_index < len(spans):
+        return OperationResult([], "Variante sem posicao registrada no texto.")
+    if not 0 <= target_index < len(spans):
+        return OperationResult([], "A variante ja esta no fim da lista.")
+
+    first, second = sorted((spans[variation_index], spans[target_index]))
+    if first[1] > second[0]:
+        return OperationResult([], "As variantes se sobrepoem no texto.")
+
+    return OperationResult(
+        [
+            TextEdit(second[0], second[1], text[first[0] : first[1]]),
+            TextEdit(first[0], first[1], text[second[0] : second[1]]),
+        ],
+        "Variante movida." if delta < 0 else "Variante rebaixada entre as irmas.",
+    )
+
+
+def reanchor_variation(
+    text: str,
+    owner: MoveNode,
+    variation_index: int,
+    new_owner: MoveNode,
+    anchor_after: bool = True,
+) -> OperationResult:
+    """Pendura a variante noutro lance, quando a heuristica de ancora errar.
+
+    A ancoragem por legalidade acerta quase sempre, mas quando erra nao havia
+    saida nenhuma a nao ser recortar e colar a mao. Aqui a variante e movida
+    inteira -- parenteses incluidos -- para logo depois (ou logo antes) do lance
+    escolhido, e o primeiro lance dela ganha o numero certo da posicao nova.
+    """
+    if not 0 <= variation_index < len(owner.variation_spans):
+        return OperationResult([], "Variante sem posicao registrada no texto.")
+
+    open_index, close_index = owner.variation_spans[variation_index]
+    if close_index <= open_index:
+        return OperationResult([], "Variante sem parentese de fechamento.")
+
+    if new_owner is owner:
+        return OperationResult([], "A variante ja esta neste lance.")
+
+    destination = new_owner.san_end_index if anchor_after else new_owner.start_index
+    if open_index <= destination <= close_index:
+        return OperationResult([], "Nao da para pendurar a variante nela mesma.")
+
+    body = text[open_index + 1 : close_index - 1].strip()
+    if not body:
+        return OperationResult([], "Variante vazia.")
+
+    # O numero de lance de dentro da variante fala da posicao **antiga**: sem
+    # trocar, `(12... Be6)` continuaria dizendo 12 depois de mudar de lugar.
+    number = move_number_for(new_owner) if anchor_after else move_number_for(new_owner, force=False)
+    body = re.sub(r"^\d+\s*\.+\s*", "", body)
+    if number:
+        # Depois do lance ancora, quem joga e o outro lado.
+        board = chess.Board(new_owner.parent_fen) if new_owner.parent_fen else None
+        if board is not None and anchor_after:
+            board.push_san(new_owner.display_san)
+            number = (
+                f"{board.fullmove_number}."
+                if board.turn == chess.WHITE
+                else f"{board.fullmove_number}..."
+            )
+        body = f"{number} {body}"
+
+    separator = "" if destination == 0 or text[destination - 1].isspace() else " "
+
+    # Tirar a variante deixaria dois espacos onde ela estava.
+    removal_start = open_index
+    if removal_start > 0 and text[removal_start - 1] == " ":
+        removal_start -= 1
+
+    # Ambas as posicoes sao do texto **original**: `apply_edits` aplica de tras
+    # para frente justamente para que uma edicao nao desloque a outra.
+    return OperationResult(
+        [
+            TextEdit(removal_start, close_index, ""),
+            TextEdit(destination, destination, f"{separator}({body})"),
+        ],
+        "Variante reancorada.",
+    )
+
+
+def renumber_movetext(movetext: str, board: chess.Board) -> str:
+    """Renumera um trecho de movetext a partir de uma posicao.
+
+    E o que falta para colar uma linha copiada de outro lugar do livro: os
+    numeros vem da posicao de origem, e no destino eles estao errados. Aqui os
+    lances sao empurrados num tabuleiro de verdade, entao a renumeracao tambem
+    diz **se a linha e legal** naquela posicao -- e quando nao e, o texto volta
+    intocado em vez de sair numerado errado.
+    """
+    tokens = movetext.split()
+    if not tokens:
+        return movetext
+
+    working = board.copy(stack=False)
+    parts: list[str] = []
+
+    for token in tokens:
+        # O numero antigo sai fora -- solto (`12...`) ou colado ao lance
+        # (`13.Bb5`), que e como o livro escreve. O novo vem da posicao.
+        san = re.sub(r"^\d+\s*\.*\s*", "", token)
+        if not san:
+            continue
+
+        try:
+            move = working.parse_san(san)
+        except (ValueError, AssertionError):
+            return movetext
+
+        if working.turn == chess.WHITE:
+            parts.append(f"{working.fullmove_number}.")
+        elif not parts:
+            parts.append(f"{working.fullmove_number}...")
+
+        parts.append(working.san(move))
+        working.push(move)
+
+    return " ".join(parts) if parts else movetext
+
+
 # ---------------------------------------------------------------------------
 # Verificacao de balanceamento
 # ---------------------------------------------------------------------------

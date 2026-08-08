@@ -12,9 +12,12 @@ from pgn_live_editor.core.paste_cleanup import CleanupOptions, clean_pdf_text
 from pgn_live_editor.core.text_ops import (
     apply_edits,
     check_balance,
+    move_variation,
     paragraph_to_comment,
     promote_variation,
+    reanchor_variation,
     renumber_document,
+    renumber_movetext,
     unwrap_at,
     wrap_as_comment,
     wrap_as_variation,
@@ -356,3 +359,76 @@ class StartFenGesturesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReorganizeVariationsTests(unittest.TestCase):
+    """SPEC 3.3: o que faltava para reorganizar sem recortar e colar."""
+
+    def test_a_variation_moves_between_its_siblings(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nf6) (2.d4 exd4) Nc6"
+        ast = parse(text)
+        owner = next(move for move in ast.moves if len(move.variations) > 1)
+
+        result = move_variation(text, owner, 1, -1)
+
+        self.assertEqual("1.e4 e5 2.Nf3 (2.d4 exd4) (2.Bc4 Nf6) Nc6", apply_edits(text, result.edits))
+
+    def test_moving_past_the_end_says_so_instead_of_doing_nothing(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nf6) Nc6"
+        ast = parse(text)
+        owner = next(move for move in ast.moves if move.variations)
+
+        result = move_variation(text, owner, 0, 1)
+
+        self.assertFalse(result.ok)
+        self.assertIn("fim da lista", result.message)
+
+    def test_a_variation_can_be_hung_on_another_move(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nf6) Nc6 3.Bb5"
+        ast = parse(text)
+        owner = next(move for move in ast.moves if move.variations)
+
+        result = reanchor_variation(text, owner, 0, ast.moves[-1])
+
+        self.assertEqual("1.e4 e5 2.Nf3 Nc6 3.Bb5 (3... Bc4 Nf6)", apply_edits(text, result.edits))
+
+    def test_reanchoring_renumbers_the_first_move_of_the_variation(self):
+        """O numero de dentro falava da posicao antiga."""
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nf6) Nc6 3.Bb5"
+        ast = parse(text)
+        owner = next(move for move in ast.moves if move.variations)
+
+        result = reanchor_variation(text, owner, 0, ast.moves[0])
+
+        self.assertIn("(1... Bc4 Nf6)", apply_edits(text, result.edits))
+
+    def test_a_variation_cannot_be_hung_on_itself(self):
+        text = "1.e4 e5 2.Nf3 (2.Bc4 Nf6) Nc6"
+        ast = parse(text)
+        owner = next(move for move in ast.moves if move.variations)
+
+        self.assertFalse(reanchor_variation(text, owner, 0, owner).ok)
+
+
+class SmartPasteTests(unittest.TestCase):
+    """SPEC 3.2: colar uma linha copiada de outro ponto do livro."""
+
+    def test_the_pasted_line_is_renumbered_from_the_position(self):
+        board = chess.Board()
+        for san in ("e4", "e5", "Nf3"):
+            board.push_san(san)
+
+        self.assertEqual("2... Nc6 3. Bb5 a6", renumber_movetext("12... Nc6 13.Bb5 a6", board))
+
+    def test_a_line_that_does_not_fit_comes_back_untouched(self):
+        """Melhor devolver como estava do que numerar errado em silencio."""
+        board = chess.Board()
+        board.push_san("e4")
+
+        self.assertEqual("12... Qh8 13.Bb5", renumber_movetext("12... Qh8 13.Bb5", board))
+
+    def test_a_white_move_gets_a_full_number(self):
+        self.assertEqual("1. e4 e5", renumber_movetext("7.e4 e5", chess.Board()))
+
+    def test_empty_text_is_left_alone(self):
+        self.assertEqual("", renumber_movetext("", chess.Board()))

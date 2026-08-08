@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from ..core.fen_tools import normalize_diagram_marks, set_start_fen
 from ..core.game_splitter import GameSegment
-from ..core.parser import GameAST
+from ..core.parser import GameAST, iter_moves
 from ..core.paste_cleanup import clean_pdf_text
 from ..core.pgn_headers import insert_or_replace_headers, upsert_headers
 from ..core.text_insertion import build_board_move_insertion
@@ -29,6 +29,7 @@ from ..core.text_ops import (
     check_balance,
     paragraph_to_comment,
     renumber_document,
+    renumber_movetext,
     unwrap_at,
     wrap_as_comment,
     wrap_as_variation,
@@ -107,6 +108,32 @@ class PGNTextEdit(QPlainTextEdit):
     def __init__(self):
         super().__init__()
         self.auto_close_enabled = True
+        # Quem sabe renumerar e o painel: aqui so se pergunta.
+        self.renumber_paste: Callable[[str], str] | None = None
+
+    def insertFromMimeData(self, source):
+        """Colar um trecho de movetext o renumera a partir da posicao do cursor.
+
+        Copiar uma linha de outro ponto do livro traz os numeros de la, e no
+        destino eles estao errados. Renumerar na colagem tira esse retrabalho --
+        e como a renumeracao empurra os lances num tabuleiro de verdade, um
+        trecho que nao encaixa na posicao volta **intocado** em vez de sair
+        numerado errado.
+        """
+        if self.renumber_paste is None or not source.hasText():
+            super().insertFromMimeData(source)
+            return
+
+        text = source.text()
+        renumbered = self.renumber_paste(text)
+        if renumbered == text:
+            super().insertFromMimeData(source)
+            return
+
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.insertText(renumbered)
+        cursor.endEditBlock()
 
     def keyPressEvent(self, event):
         if not self.auto_close_enabled:
@@ -198,6 +225,7 @@ class EditorPanel(QWidget):
         layout.addLayout(toolbar)
 
         self.text_edit = PGNTextEdit()
+        self.text_edit.renumber_paste = self._renumber_pasted_movetext
         editor_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         editor_font.setPointSize(11)
         self.text_edit.setFont(editor_font)
@@ -658,6 +686,52 @@ class EditorPanel(QWidget):
         self._apply_current_selection()
 
     # ------------------------------------------------------------------
+
+    def _renumber_pasted_movetext(self, text: str) -> str:
+        """Renumera o trecho colado a partir da posicao do tabuleiro no cursor."""
+        if "\n" in text.strip() or not text.strip():
+            # Colagem de bloco (uma pagina inteira, por exemplo) nao e uma linha
+            # de lances: nao ha posicao unica de onde renumerar.
+            return text
+
+        board = self.board_at_cursor()
+        if board is None:
+            return text
+        return renumber_movetext(text, board)
+
+    def board_at_cursor(self) -> chess.Board | None:
+        """A posicao do tabuleiro no ponto do cursor, se der para saber."""
+        position = self.cursor_position()
+        board = chess.Board(self.current_start_fen)
+
+        pushed = False
+        for move in self.current_ast.moves:
+            if move.san_start_index >= position:
+                break
+            if not move.is_valid:
+                return None
+            try:
+                board.push_san(move.display_san)
+                pushed = True
+            except (ValueError, AssertionError):
+                return None
+
+        return board if pushed or not self.current_ast.moves else board
+
+    def move_at_cursor(self):
+        """O lance sobre o qual o cursor esta, se houver um."""
+        position = self.cursor_position()
+        for move in iter_moves(self.current_ast.moves):
+            if move.san_start_index <= position <= move.san_end_index:
+                return move
+        return None
+
+    def legal_move_suggestions(self, limit: int = 12) -> list[str]:
+        """Lances legais na posicao do cursor -- o `Ctrl+Espaco` da SPEC 4.5."""
+        board = self.board_at_cursor()
+        if board is None:
+            return []
+        return sorted(board.san(move) for move in board.legal_moves)[:limit]
 
     def set_theme(self, theme: str):
         self.theme = theme

@@ -18,7 +18,12 @@ from PyQt6.QtWidgets import (
 from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
-from ..core.text_ops import promote_variation, set_move_annotations
+from ..core.text_ops import (
+    move_variation,
+    promote_variation,
+    reanchor_variation,
+    set_move_annotations,
+)
 from ..services.clipboard_service import COPY_FORMATS
 from ..services.dictionary_service import DictionaryService
 from ..services.engine_service import (
@@ -226,6 +231,12 @@ class MainWindow(QMainWindow):
         structure_menu.addSeparator()
         self._add_action(structure_menu, "Renumerar documento", "Ctrl+R", self._renumber)
         self._add_action(structure_menu, "Promover variante", "Ctrl+Shift+Up", self._promote_variation)
+        self._add_action(
+            structure_menu, "Rebaixar a linha principal", "Ctrl+Shift+Down", self._demote_mainline
+        )
+        self._add_action(structure_menu, "Subir a variante", "Alt+Up", lambda: self._move_variation(-1))
+        self._add_action(structure_menu, "Descer a variante", "Alt+Down", lambda: self._move_variation(1))
+        self._add_action(structure_menu, "Reancorar a variante aqui", "Ctrl+Shift+A", self._reanchor_variation)
         structure_menu.addSeparator()
         self._add_action(structure_menu, "Limpar texto colado...", "Ctrl+Shift+V", self._clean_paste)
         self._add_action(structure_menu, "Conferir delimitadores", "Ctrl+Shift+B", self._check_balance)
@@ -244,6 +255,11 @@ class MainWindow(QMainWindow):
         self._add_action(move_menu, "Proximo lance", "Ctrl+Right", self.chess_panel.go_next)
         move_menu.addSeparator()
         self._add_action(move_menu, "Inverter tabuleiro", "Ctrl+F", self.chess_panel.flip_board)
+        move_menu.addSeparator()
+        self._add_action(move_menu, "Primeiro lance", "Ctrl+Home", self.chess_panel.go_first)
+        self._add_action(move_menu, "Ultimo lance", "Ctrl+End", self.chess_panel.go_last)
+        self._add_action(move_menu, "Sugerir lance legal", "Ctrl+Space", self._suggest_legal_move)
+        self._add_action(move_menu, "Paleta de simbolos", "Ctrl+D", self.editor_panel.open_symbol_palette)
 
         review_menu = self.menuBar().addMenu("&Revisao")
         self._add_action(review_menu, "Proximo alerta", "F8", lambda: self.issues_panel.go_to_next_issue(1))
@@ -612,6 +628,65 @@ class MainWindow(QMainWindow):
 
         result = promote_variation(self.editor_panel.document_text(), self.editor_panel.current_ast, owner, variation_index)
         self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _variation_target(self):
+        """`(dono, indice)` da variante sob o cursor, ou `(None, None)`."""
+        entry = self.chess_panel.current_entry()
+        if entry is None or len(entry.path) < 2:
+            return (None, None)
+        return self.chess_panel.variation_owner_of(entry)
+
+    def _demote_mainline(self):
+        """O inverso de promover: a linha principal daqui vira variante.
+
+        E a mesma troca, vista do outro lado -- por isso o lance sob o cursor
+        precisa ter uma variante para trocar de lugar com ele.
+        """
+        entry = self.chess_panel.current_entry()
+        if entry is None or not entry.node.variations:
+            self._report("Ponha o cursor num lance que tenha variante para rebaixar a linha principal.")
+            return
+
+        result = promote_variation(
+            self.editor_panel.document_text(), self.editor_panel.current_ast, entry.node, 0
+        )
+        self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _move_variation(self, delta: int):
+        owner, variation_index = self._variation_target()
+        if owner is None:
+            self._report("Selecione um lance de variante para move-la entre as irmas.")
+            return
+
+        result = move_variation(self.editor_panel.document_text(), owner, variation_index, delta)
+        self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _reanchor_variation(self):
+        """Pendura a variante selecionada no lance onde o cursor esta.
+
+        A ancoragem por legalidade acerta quase sempre; quando erra, este e o
+        caminho de volta -- sem recortar e colar a mao.
+        """
+        owner, variation_index = self._variation_target()
+        if owner is None:
+            self._report("Selecione um lance da variante que precisa mudar de lugar.")
+            return
+
+        destination = self.editor_panel.move_at_cursor()
+        if destination is None:
+            self._report("Ponha o cursor no lance que deve passar a segurar a variante.")
+            return
+
+        result = reanchor_variation(self.editor_panel.document_text(), owner, variation_index, destination)
+        self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _suggest_legal_move(self):
+        """Ctrl+Espaco: o que e legal aqui, quando o livro esta ilegivel."""
+        suggestions = self.editor_panel.legal_move_suggestions()
+        if not suggestions:
+            self._report("Nao da para saber a posicao neste ponto do texto.")
+            return
+        self._report("Legais aqui: " + ", ".join(suggestions))
 
     def _clean_paste(self):
         text = self.editor_panel.document_text()
