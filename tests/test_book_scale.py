@@ -54,8 +54,8 @@ GAME_ONE = (
     '[White "Smyslov"]\n'
     '[Black "Rudakovsky"]\n'
     '[Result "1-0"]\n'
-    '\n'
-    '1.e4 c5 2.Nf3 e6 1-0\n'
+    "\n"
+    "1.e4 c5 2.Nf3 e6 1-0\n"
 )
 
 GAME_TWO = (
@@ -65,17 +65,11 @@ GAME_TWO = (
     '[White "Botvinnik"]\n'
     '[Black "Keres"]\n'
     '[Result "1/2-1/2"]\n'
-    '\n'
-    '1.d4 Nf6 2.c4 e6 (2... g6 3.Nc3) 1/2-1/2\n'
+    "\n"
+    "1.d4 Nf6 2.c4 e6 (2... g6 3.Nc3) 1/2-1/2\n"
 )
 
-FRAGMENT = (
-    '=== Estudo 3 ===\n'
-    '[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]\n'
-    '[SetUp "1"]\n'
-    '\n'
-    '1.e4 Kf6 2.e5+ Kf5 *\n'
-)
+FRAGMENT = '=== Estudo 3 ===\n[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]\n[SetUp "1"]\n\n1.e4 Kf6 2.e5+ Kf5 *\n'
 
 BOOK = f"{GAME_ONE}\n{GAME_TWO}\n{FRAGMENT}"
 
@@ -146,21 +140,25 @@ class GameSplitterTests(unittest.TestCase):
     def test_raw_offset_points_exactly_at_the_body(self):
         for segment in split_games(BOOK):
             with self.subTest(partida=segment.index):
-                self.assertEqual(segment.body, BOOK[segment.raw_offset:segment.body_end_offset])
+                self.assertEqual(segment.body, BOOK[segment.raw_offset : segment.body_end_offset])
 
     def test_content_offset_skips_the_separator_but_keeps_the_headers(self):
         fragment = split_games(BOOK)[2]
 
-        self.assertTrue(BOOK[fragment.content_offset:].startswith('[FEN '))
+        self.assertTrue(BOOK[fragment.content_offset :].startswith("[FEN "))
 
     def test_title_comes_from_the_headers(self):
         self.assertEqual(
             "13. Smyslov - Rudakovsky, Moscou 1945",
-            build_segment_title(12, {"White": "Smyslov", "Black": "Rudakovsky", "Site": "Moscou", "Date": "1945.??.??"}, ""),
+            build_segment_title(
+                12, {"White": "Smyslov", "Black": "Rudakovsky", "Site": "Moscou", "Date": "1945.??.??"}, ""
+            ),
         )
 
     def test_title_ignores_placeholder_headers(self):
-        self.assertEqual("1. Evento", build_segment_title(0, {"Event": "Evento", "Site": "?", "Date": "????.??.??"}, ""))
+        self.assertEqual(
+            "1. Evento", build_segment_title(0, {"Event": "Evento", "Site": "?", "Date": "????.??.??"}, "")
+        )
 
     def test_title_falls_back_to_the_first_line_of_the_body(self):
         self.assertEqual("1. Defesa Siciliana", build_segment_title(0, {}, "{Defesa Siciliana}\n1.e4 c5"))
@@ -266,7 +264,7 @@ class ParsePipelineTests(unittest.TestCase):
         analysis = self.pipeline.analyze(BOOK, BOOK.index("Keres"))
         first_move = analysis.ast.moves[0]
 
-        self.assertEqual("d4", BOOK[first_move.san_start_index:first_move.san_end_index])
+        self.assertEqual("d4", BOOK[first_move.san_start_index : first_move.san_end_index])
 
     def test_each_game_keeps_its_own_start_position(self):
         analyses = self.pipeline.analyze_all(BOOK)
@@ -279,7 +277,7 @@ class ParsePipelineTests(unittest.TestCase):
         analyses = self.pipeline.analyze_all(BOOK)
 
         issue = next(issue for issue in analyses[0].ast.issues if issue.code == "INVALID_DATE")
-        self.assertEqual('[Date "1945"]', BOOK[issue.raw_start:issue.raw_end])
+        self.assertEqual('[Date "1945"]', BOOK[issue.raw_start : issue.raw_end])
         self.assertEqual([], [issue for issue in analyses[1].ast.issues if issue.code == "INVALID_DATE"])
 
     def test_untouched_games_come_from_the_cache(self):
@@ -461,7 +459,7 @@ class OtherExportFormatsTests(unittest.TestCase):
         first = game["moves"][0]
         self.assertEqual("e4", first["san"])
         self.assertEqual(2, len(first["span"]))
-        self.assertEqual(self.BOOK[first["span"][0]:first["span"][1]], "e4")
+        self.assertEqual(self.BOOK[first["span"][0] : first["span"][1]], "e4")
         self.assertIn("confidence", first)
 
     def test_a_corrected_move_records_what_was_read(self):

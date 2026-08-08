@@ -95,9 +95,7 @@ def parse_annotations(comment: str) -> VisualAnnotations:
                 match = _ARROW_RE.match(token)
                 if match:
                     color, tail, head = match.groups()
-                    arrows.append(
-                        Arrow(chess.parse_square(tail), chess.parse_square(head), color)
-                    )
+                    arrows.append(Arrow(chess.parse_square(tail), chess.parse_square(head), color))
                 continue
 
             match = _SQUARE_RE.match(token)

@@ -93,9 +93,7 @@ def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.START
 
     if report.reader_errors:
         report.ok = False
-        report.problems.append(
-            f"O leitor de PGN acusou {len(report.reader_errors)} erro(s): {report.reader_errors[0]}"
-        )
+        report.problems.append(f"O leitor de PGN acusou {len(report.reader_errors)} erro(s): {report.reader_errors[0]}")
 
     if report.expected_nodes != report.actual_nodes:
         report.ok = False
@@ -212,9 +210,7 @@ def _move_to_dict(move: MoveNode) -> dict:
     if move.parent_fen:
         payload["fen_before"] = move.parent_fen
     if move.variations:
-        payload["variations"] = [
-            [_move_to_dict(child) for child in variation] for variation in move.variations
-        ]
+        payload["variations"] = [[_move_to_dict(child) for child in variation] for variation in move.variations]
     return payload
 
 
@@ -308,6 +304,6 @@ def game_file_name(index: int, headers: dict[str, str], fallback_stem: str = "pa
 
 
 def _file_safe(value: str) -> str:
-    cleaned = re.sub(r'[^\w\s.-]', "", (value or "").strip(), flags=re.UNICODE)
-    cleaned = re.sub(r'\s+', "_", cleaned).strip("._-")
+    cleaned = re.sub(r"[^\w\s.-]", "", (value or "").strip(), flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._-")
     return "" if cleaned in {"", "?"} else cleaned

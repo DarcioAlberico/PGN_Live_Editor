@@ -30,11 +30,12 @@ from .issues import (
     UNRECOGNIZED_MOVE,
     Candidate,
     Issue,
+    Severity,
 )
 from .move_validator import MoveValidator
 from .tokenizer import Token, comment_is_unclosed
 
-MOVE_TOKEN_TYPES = {'SAN_MOVE', 'MOVE_CANDIDATE'}
+MOVE_TOKEN_TYPES = {"SAN_MOVE", "MOVE_CANDIDATE"}
 
 
 class ASTNode:
@@ -109,7 +110,7 @@ def iter_moves(moves: list[MoveNode]) -> Iterable[MoveNode]:
 class TolerantParser:
     """Consome tokens, valida contra o tabuleiro e monta a arvore da partida."""
 
-    def __init__(self, locale: str = 'pt', dictionary: dict[str, str] | None = None):
+    def __init__(self, locale: str = "pt", dictionary: dict[str, str] | None = None):
         self.validator = MoveValidator()
         self.resolver = CandidateResolver(locale=locale, dictionary=dictionary)
         self.ast = GameAST()
@@ -136,24 +137,26 @@ class TolerantParser:
 
     def _add_issue(
         self,
-        severity: str,
+        severity: Severity,
         code: str,
         message: str,
         token: Token,
         candidates: list[Candidate] | None = None,
         actions: list[str] | None = None,
     ) -> None:
-        self.issues.append(Issue(
-            severity=severity,
-            code=code,
-            message=message,
-            raw_start=token.start_index,
-            raw_end=token.end_index,
-            raw_text=token.value,
-            candidates=list(candidates or []),
-            actions=list(actions or []),
-            is_cascade=self._desynchronized,
-        ))
+        self.issues.append(
+            Issue(
+                severity=severity,
+                code=code,
+                message=message,
+                raw_start=token.start_index,
+                raw_end=token.end_index,
+                raw_text=token.value,
+                candidates=list(candidates or []),
+                actions=list(actions or []),
+                is_cascade=self._desynchronized,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Heuristicas de variante
@@ -168,7 +171,7 @@ class TolerantParser:
         if not value:
             return
 
-        if token_type == 'TEXT' and comments:
+        if token_type == "TEXT" and comments:
             comments[-1] = f"{comments[-1]} {value}".strip()
             return
 
@@ -197,11 +200,11 @@ class TolerantParser:
         san_count = 0
 
         for token in tokens[start_index:]:
-            if token.type == 'VARIANT_OPEN':
+            if token.type == "VARIANT_OPEN":
                 nested_depth += 1
                 continue
 
-            if token.type == 'VARIANT_CLOSE':
+            if token.type == "VARIANT_CLOSE":
                 if nested_depth == 0:
                     break
                 nested_depth -= 1
@@ -220,9 +223,9 @@ class TolerantParser:
 
     def _variation_has_leading_annotation(self, preview_tokens: list[Token]) -> bool:
         for token in preview_tokens:
-            if token.type in {'COMMENT', 'TEXT'}:
+            if token.type in {"COMMENT", "TEXT"}:
                 return True
-            if token.type in {'MOVE_NUMBER', 'SAN_MOVE', 'RESULT'}:
+            if token.type in {"MOVE_NUMBER", "SAN_MOVE", "RESULT"}:
                 return False
         return False
 
@@ -234,7 +237,7 @@ class TolerantParser:
         durante a pontuacao e a ancora da variante era escolhida as cegas -- o
         numero de lance seguinte era comparado com uma posicao parada.
         """
-        if token.type == 'SAN_MOVE':
+        if token.type == "SAN_MOVE":
             return token.value
 
         candidates = self.resolver.resolve(token.value, board)
@@ -247,8 +250,7 @@ class TolerantParser:
             return (-10_000, 0)
 
         informative_tokens = [
-            token for token in preview_tokens
-            if token.type == 'MOVE_NUMBER' or token.type in MOVE_TOKEN_TYPES
+            token for token in preview_tokens if token.type == "MOVE_NUMBER" or token.type in MOVE_TOKEN_TYPES
         ]
         if not informative_tokens:
             return (-10_000, 0)
@@ -258,10 +260,10 @@ class TolerantParser:
         legal_san_count = 0
 
         for token in preview_tokens:
-            if token.type in {'COMMENT', 'TEXT', 'NAG', 'NULL_MOVE'}:
+            if token.type in {"COMMENT", "TEXT", "NAG", "NULL_MOVE"}:
                 continue
 
-            if token.type == 'MOVE_NUMBER':
+            if token.type == "MOVE_NUMBER":
                 parsed = self._parse_move_number_value(token.value)
                 if not parsed:
                     continue
@@ -282,7 +284,7 @@ class TolerantParser:
                 if san is None:
                     # Candidato que nao resolve nao diz nada sobre a ancora --
                     # pode ser prosa. Nao pontua nem para bem nem para mal.
-                    if token.type == 'SAN_MOVE':
+                    if token.type == "SAN_MOVE":
                         score -= 10
                         break
                     continue
@@ -298,10 +300,7 @@ class TolerantParser:
         return (score, legal_san_count)
 
     def _choose_variation_anchor(
-        self,
-        active_list: list[MoveNode],
-        tokens: list[Token],
-        start_index: int
+        self, active_list: list[MoveNode], tokens: list[Token], start_index: int
     ) -> tuple[MoveNode, bool, str | None]:
         preview_tokens = self._collect_variant_preview_tokens(tokens, start_index)
         if not preview_tokens:
@@ -337,7 +336,7 @@ class TolerantParser:
         if not digits:
             return None
 
-        return (int(digits), '...' in value)
+        return (int(digits), "..." in value)
 
     def _move_identity(self, move: MoveNode) -> tuple[int, bool] | None:
         parsed_number = self._parse_move_number_value(move.number)
@@ -374,10 +373,10 @@ class TolerantParser:
 
         while index < len(tokens):
             token = tokens[index]
-            if token.type in {'VARIANT_CLOSE', 'RESULT'}:
+            if token.type in {"VARIANT_CLOSE", "RESULT"}:
                 break
 
-            part = token.value.strip('{}').strip() if token.type == 'COMMENT' else token.value
+            part = token.value.strip("{}").strip() if token.type == "COMMENT" else token.value
             if part:
                 parts.append(part)
             index += 1
@@ -416,7 +415,7 @@ class TolerantParser:
             node.confidence = best.confidence
             self.validator.push_san(best.san)
             self._add_issue(
-                'info',
+                "info",
                 AUTO_CORRECTED,
                 f"'{token.value}' foi lido como '{best.san}' ({best.rationale}).",
                 token,
@@ -434,7 +433,7 @@ class TolerantParser:
             node.needs_review = True
             self.validator.push_san(best.san)
             self._add_issue(
-                'warning',
+                "warning",
                 AMBIGUOUS_MOVE,
                 f"'{token.value}' provavelmente e '{best.san}', mas não ha certeza ({best.rationale}). Confira.",
                 token,
@@ -451,7 +450,7 @@ class TolerantParser:
         else:
             message = f"'{token.value}' não e um lance legal nesta posição e não foi possível adivinhar."
         self._add_issue(
-            'error',
+            "error",
             UNRECOGNIZED_MOVE,
             message,
             token,
@@ -479,10 +478,10 @@ class TolerantParser:
         if not value:
             return
         if not active_list:
-            self._append_comment(pending_comments, value, 'TEXT')
+            self._append_comment(pending_comments, value, "TEXT")
         else:
-            self._append_comment(active_list[-1].comments_after, value, 'TEXT')
-            self._append_comment(comments_since_last_move, value, 'TEXT')
+            self._append_comment(active_list[-1].comments_after, value, "TEXT")
+            self._append_comment(comments_since_last_move, value, "TEXT")
 
     # ------------------------------------------------------------------
     # Parse
@@ -501,7 +500,7 @@ class TolerantParser:
             return False
 
         for token in tokens:
-            if token.type != 'MOVE_CANDIDATE' or not token.in_notation_context:
+            if token.type != "MOVE_CANDIDATE" or not token.in_notation_context:
                 continue
             if token.value[:1] in letters and len(token.value) > 2:
                 return True
@@ -525,13 +524,11 @@ class TolerantParser:
         while index < len(tokens):
             token = tokens[index]
 
-            if token.type == 'VARIANT_OPEN':
+            if token.type == "VARIANT_OPEN":
                 if active_list:
                     preview_tokens = self._collect_variant_preview_tokens(tokens, index + 1)
                     anchor_move, anchor_after_current, anchor_fen = self._choose_variation_anchor(
-                        active_list,
-                        tokens,
-                        index + 1
+                        active_list, tokens, index + 1
                     )
 
                     var_line: list[MoveNode] = []
@@ -549,16 +546,18 @@ class TolerantParser:
                         if not self._variation_has_leading_annotation(preview_tokens):
                             transferred_comments = list(comments_since_last_move)
                         if transferred_comments:
-                            del active_list[-1].comments_after[-len(transferred_comments):]
+                            del active_list[-1].comments_after[-len(transferred_comments) :]
 
-                    stack.append((
-                        active_list,
-                        self.validator.board.fen(),
-                        pending_comments,
-                        parent_comments_since_last_move,
-                        current_move_number_token,
-                        open_variation
-                    ))
+                    stack.append(
+                        (
+                            active_list,
+                            self.validator.board.fen(),
+                            pending_comments,
+                            parent_comments_since_last_move,
+                            current_move_number_token,
+                            open_variation,
+                        )
+                    )
 
                     pending_comments = transferred_comments
                     comments_since_last_move = []
@@ -571,13 +570,13 @@ class TolerantParser:
                     active_list = var_line
                 else:
                     self._add_issue(
-                        'warning',
+                        "warning",
                         ORPHAN_VARIATION,
                         "Variante ignorada: não ha lance anterior para ancora-la.",
                         token,
                     )
 
-            elif token.type == 'VARIANT_CLOSE':
+            elif token.type == "VARIANT_CLOSE":
                 if stack:
                     (
                         active_list,
@@ -594,33 +593,33 @@ class TolerantParser:
                     self._desynchronized = False
                 else:
                     self._add_issue(
-                        'warning',
+                        "warning",
                         UNBALANCED_PAREN,
                         "Encontrado ')' sem variante aberta.",
                         token,
                     )
 
-            elif token.type == 'MOVE_NUMBER':
+            elif token.type == "MOVE_NUMBER":
                 if self._is_backward_reference(active_list, token):
                     comment_value, index = self._collect_backward_reference_comment(tokens, index)
                     if active_list:
-                        self._append_comment(active_list[-1].comments_after, comment_value, 'TEXT')
+                        self._append_comment(active_list[-1].comments_after, comment_value, "TEXT")
                     else:
-                        self._append_comment(pending_comments, comment_value, 'TEXT')
+                        self._append_comment(pending_comments, comment_value, "TEXT")
                     continue
 
                 current_move_number_token = token
 
-            elif token.type in {'COMMENT', 'TEXT'}:
-                if token.type == 'COMMENT' and comment_is_unclosed(token.value):
+            elif token.type in {"COMMENT", "TEXT"}:
+                if token.type == "COMMENT" and comment_is_unclosed(token.value):
                     self._add_issue(
-                        'warning',
+                        "warning",
                         UNCLOSED_BRACE,
                         "Comentário sem '}' de fechamento; vale até o fim da linha.",
                         token,
                     )
 
-                value = token.value.strip('{}').strip()
+                value = token.value.strip("{}").strip()
                 if value:
                     if not active_list:
                         self._append_comment(pending_comments, value, token.type)
@@ -628,22 +627,20 @@ class TolerantParser:
                         self._append_comment(active_list[-1].comments_after, value, token.type)
                         self._append_comment(comments_since_last_move, value, token.type)
 
-            elif token.type == 'NAG':
+            elif token.type == "NAG":
                 if active_list:
                     active_list[-1].nags.append(token.value)
 
-            elif token.type == 'RESULT':
+            elif token.type == "RESULT":
                 self.ast.result = token.value
 
             elif token.type in MOVE_TOKEN_TYPES:
                 # Candidato solto no meio da prosa, ou silenciado pelo usuario:
                 # segue como texto, sem virar alerta.
-                if token.type == 'MOVE_CANDIDATE' and (
+                if token.type == "MOVE_CANDIDATE" and (
                     not token.in_notation_context or token.value in self._ignored_tokens
                 ):
-                    self._absorb_as_text(
-                        token.value.strip(), active_list, pending_comments, comments_since_last_move
-                    )
+                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comments_since_last_move)
                     index += 1
                     continue
 
@@ -657,7 +654,7 @@ class TolerantParser:
                 current_move_number_token = None
                 comments_since_last_move = []
 
-            elif token.type == 'NULL_MOVE':
+            elif token.type == "NULL_MOVE":
                 node = self._build_null_move_node(token, current_move_number_token)
                 if pending_comments:
                     node.comments_before.extend(pending_comments)

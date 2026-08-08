@@ -17,11 +17,11 @@ VALID_RESULTS = ("1-0", "0-1", "1/2-1/2", "*")
 
 HEADER_LINE_RE = re.compile(r'^\[(?P<tag>[A-Za-z0-9_]+)\s+"(?P<value>(?:[^"\\]|\\.)*)"\]\s*$')
 
-_PGN_DATE_RE = re.compile(r'^[\d?]{4}\.[\d?]{2}\.[\d?]{2}$')
-_YEAR_ONLY_RE = re.compile(r'^(\d{4})$')
-_YEAR_MONTH_RE = re.compile(r'^(\d{4})[.\-/](\d{1,2})$')
-_ISO_RE = re.compile(r'^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$')
-_DMY_RE = re.compile(r'^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$')
+_PGN_DATE_RE = re.compile(r"^[\d?]{4}\.[\d?]{2}\.[\d?]{2}$")
+_YEAR_ONLY_RE = re.compile(r"^(\d{4})$")
+_YEAR_MONTH_RE = re.compile(r"^(\d{4})[.\-/](\d{1,2})$")
+_ISO_RE = re.compile(r"^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$")
+_DMY_RE = re.compile(r"^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$")
 
 
 def normalize_pgn_date(value: str) -> str:
@@ -75,9 +75,7 @@ def _header_span(raw_text: str, tag: str, region_start: int = 0, region_end: int
     da partida 1.
     """
     region_end = len(raw_text) if region_end is None else region_end
-    match = re.compile(rf'^\[{re.escape(tag)}\s+"[^"]*"\]', re.MULTILINE).search(
-        raw_text, region_start, region_end
-    )
+    match = re.compile(rf'^\[{re.escape(tag)}\s+"[^"]*"\]', re.MULTILINE).search(raw_text, region_start, region_end)
     return (match.start(), match.end()) if match else (region_start, region_start)
 
 
@@ -95,27 +93,31 @@ def validate_headers(
         normalized = normalize_pgn_date(raw_date)
         if normalized != raw_date.strip():
             start, end = _header_span(raw_text, "Date", region_start, region_end)
-            issues.append(Issue(
-                severity="warning",
-                code=INVALID_DATE,
-                message=f"Data '{raw_date}' não esta no formato PGN; será exportada como '{normalized}'.",
-                raw_start=start,
-                raw_end=end,
-                raw_text=raw_date,
-            ))
+            issues.append(
+                Issue(
+                    severity="warning",
+                    code=INVALID_DATE,
+                    message=f"Data '{raw_date}' não esta no formato PGN; será exportada como '{normalized}'.",
+                    raw_start=start,
+                    raw_end=end,
+                    raw_text=raw_date,
+                )
+            )
 
     raw_result = headers.get("Result")
     if raw_result is not None and raw_result.strip() not in VALID_RESULTS:
         normalized = normalize_pgn_result(raw_result)
         start, end = _header_span(raw_text, "Result", region_start, region_end)
-        issues.append(Issue(
-            severity="warning",
-            code=INVALID_RESULT,
-            message=f"Resultado '{raw_result}' não e válido; será exportado como '{normalized}'.",
-            raw_start=start,
-            raw_end=end,
-            raw_text=raw_result,
-        ))
+        issues.append(
+            Issue(
+                severity="warning",
+                code=INVALID_RESULT,
+                message=f"Resultado '{raw_result}' não e válido; será exportado como '{normalized}'.",
+                raw_start=start,
+                raw_end=end,
+                raw_text=raw_result,
+            )
+        )
 
     return issues
 
@@ -222,9 +224,9 @@ def merge_headers(existing: dict[str, str], updates: dict[str, str | None]) -> d
         else:
             merged[tag] = value
 
-    for tag, value in pending.items():
-        if value is not None:
-            merged[tag] = value
+    for tag, added_value in pending.items():
+        if added_value is not None:
+            merged[tag] = added_value
 
     # O padrao PGN exige os sete cabecalhos obrigatorios primeiro e nesta ordem;
     # o que vier depois (FEN, SetUp, ECO, Annotator) mantem a ordem que tinha.

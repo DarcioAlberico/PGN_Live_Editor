@@ -1,4 +1,3 @@
-
 import chess
 import chess.svg
 from PyQt6.QtCore import Qt, QTimer
@@ -171,8 +170,8 @@ class ChessPanel(QWidget):
             borders=False,
             fill=self._board_fill(),
             arrows=self._board_arrows(),
-        ).encode('utf-8')
-        self.board_view.set_svg(svg.decode('utf-8'))
+        ).encode("utf-8")
+        self.board_view.set_svg(svg.decode("utf-8"))
 
     def _board_fill(self) -> dict[chess.Square, str]:
         fill: dict[chess.Square, str] = {}
@@ -265,7 +264,9 @@ class ChessPanel(QWidget):
             QTimer.singleShot(0, lambda node_id=current_node_id: self.pgn_view.scrollToAnchor(node_id))
 
     def _turn_marker(self) -> str:
-        return f"{self.board.fullmove_number}..." if self.board.turn == chess.BLACK else f"{self.board.fullmove_number}."
+        return (
+            f"{self.board.fullmove_number}..." if self.board.turn == chess.BLACK else f"{self.board.fullmove_number}."
+        )
 
     def _entry_label(self, entry: MoveEntry) -> str:
         label_parts = []
@@ -427,9 +428,7 @@ class ChessPanel(QWidget):
         for copy_format in COPY_FORMATS:
             action = menu.addAction(copy_format.label)
             action.setEnabled(entry is not None or not copy_format.needs_entry)
-            action.triggered.connect(
-                lambda _checked=False, key=copy_format.key: self.copy_excerpt(key)
-            )
+            action.triggered.connect(lambda _checked=False, key=copy_format.key: self.copy_excerpt(key))
 
         menu.exec(self.pgn_view.mapToGlobal(point))
 
@@ -452,23 +451,17 @@ class ChessPanel(QWidget):
     def _on_pgn_anchor_clicked(self, url):
         node_id = url.toString()
         if node_id.startswith("move:"):
-            node_id = node_id[len("move:"):]
+            node_id = node_id[len("move:") :]
         entry = self.entry_by_node_id.get(node_id)
         if entry:
             self._apply_entry(entry, focus_editor=True)
 
     def _legal_targets_for(self, square: chess.Square) -> list[chess.Square]:
-        return [
-            move.to_square
-            for move in self.board.legal_moves
-            if move.from_square == square
-        ]
+        return [move.to_square for move in self.board.legal_moves if move.from_square == square]
 
     def _matching_moves(self, from_square: chess.Square, to_square: chess.Square) -> list[chess.Move]:
         return [
-            move
-            for move in self.board.legal_moves
-            if move.from_square == from_square and move.to_square == to_square
+            move for move in self.board.legal_moves if move.from_square == from_square and move.to_square == to_square
         ]
 
     def _select_square(self, square: chess.Square | None):

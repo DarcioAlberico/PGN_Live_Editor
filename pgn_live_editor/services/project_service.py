@@ -152,8 +152,7 @@ def load_project(path: Path) -> Project:
             ignored_issue_tokens=list(state_payload.get("ignored_issue_tokens", [])),
             completed_games=[int(index) for index in state_payload.get("completed_games", [])],
             accepted_corrections={
-                str(key): int(value)
-                for key, value in dict(state_payload.get("accepted_corrections", {})).items()
+                str(key): int(value) for key, value in dict(state_payload.get("accepted_corrections", {})).items()
             },
             pdf_path=str(state_payload.get("pdf_path", "")),
             pdf_page=int(state_payload.get("pdf_page", 0)),

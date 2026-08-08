@@ -83,9 +83,7 @@ class AnnotationFormatTests(unittest.TestCase):
         self.assertEqual([], marked.toggled_square(SquareMark(chess.D5, "R")).squares)
 
     def test_the_written_form_survives_a_round_trip(self):
-        annotations = VisualAnnotations(
-            [Arrow(chess.E2, chess.E4, "G")], [SquareMark(chess.D5, "Y")]
-        )
+        annotations = VisualAnnotations([Arrow(chess.E2, chess.E4, "G")], [SquareMark(chess.D5, "Y")])
 
         restored = parse_annotations(format_annotations(annotations))
 
@@ -167,9 +165,7 @@ class PromotionTests(unittest.TestCase):
         self.window = MainWindow()
         self.addCleanup(self.window.deleteLater)
         self.addCleanup(self.window.editor_panel.shutdown)
-        self.window.editor_panel.load_document_text(
-            f'[FEN "{self.PROMOTION_FEN}"]\n[SetUp "1"]\n\n'
-        )
+        self.window.editor_panel.load_document_text(f'[FEN "{self.PROMOTION_FEN}"]\n[SetUp "1"]\n\n')
         self.panel = self.window.chess_panel
         self.panel.board.set_fen(self.PROMOTION_FEN)
 

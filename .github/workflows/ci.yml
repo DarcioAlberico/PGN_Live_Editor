@@ -22,7 +22,15 @@ jobs:
       - name: Lint
         run: ruff check pgn_live_editor tests
 
-      - name: Testes
+      - name: Formatacao
+        run: ruff format --check pgn_live_editor tests
+
+      - name: Tipos (modo gradual, obrigatorio em core/)
+        run: mypy
+
+      - name: Testes e cobertura
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q
+        run: |
+          coverage run -m pytest -q
+          coverage report

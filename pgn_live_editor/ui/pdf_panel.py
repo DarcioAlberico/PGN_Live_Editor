@@ -85,8 +85,7 @@ class PdfPanel(QWidget):
         self.txt_page = QPlainTextEdit()
         self.txt_page.setReadOnly(True)
         self.txt_page.setPlaceholderText(
-            "O texto da página aparece aqui. Selecione o trecho e mande para o "
-            "editor com Ctrl+Enter."
+            "O texto da página aparece aqui. Selecione o trecho e mande para o editor com Ctrl+Enter."
         )
         splitter.addWidget(self.txt_page)
         splitter.setStretchFactor(0, 3)

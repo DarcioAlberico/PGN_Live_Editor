@@ -19,7 +19,7 @@ from .annotations import VisualAnnotations, apply_annotations, format_annotation
 from .normalizer import comment_span_end
 from .parser import GameAST, MoveNode, iter_moves
 
-RESULT_TAIL_RE = re.compile(r'\s*(?:1-0|0-1|1/2-1/2|\*)\s*$')
+RESULT_TAIL_RE = re.compile(r"\s*(?:1-0|0-1|1/2-1/2|\*)\s*$")
 
 
 @dataclass
@@ -87,11 +87,7 @@ def move_number_for(move: MoveNode, *, force: bool = True) -> str | None:
 
 
 def moves_in_span(ast: GameAST, start: int, end: int) -> list[MoveNode]:
-    return [
-        move
-        for move in iter_moves(ast.moves)
-        if start <= move.san_start_index and move.san_end_index <= end
-    ]
+    return [move for move in iter_moves(ast.moves) if start <= move.san_start_index and move.san_end_index <= end]
 
 
 def first_move_after(ast: GameAST, position: int) -> MoveNode | None:
@@ -315,11 +311,7 @@ def renumber_document(text: str, ast: GameAST) -> OperationResult:
                 interrupted = ")" in gap or "}" in gap
 
                 needs_number = (
-                    is_white
-                    or position == 0
-                    or bool(move.number)
-                    or bool(move.comments_before)
-                    or interrupted
+                    is_white or position == 0 or bool(move.number) or bool(move.comments_before) or interrupted
                 )
                 desired = f"{move_number_for(move)} " if needs_number else ""
 
@@ -351,9 +343,7 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
         return OperationResult([], "Variante sem parentese de fechamento.")
 
     anchor_after = (
-        owner.variation_anchor_after[variation_index]
-        if variation_index < len(owner.variation_anchor_after)
-        else True
+        owner.variation_anchor_after[variation_index] if variation_index < len(owner.variation_anchor_after) else True
     )
 
     variation_body = text[open_index + 1 : close_index - 1].strip()
@@ -455,11 +445,7 @@ def reanchor_variation(
         board = chess.Board(new_owner.parent_fen) if new_owner.parent_fen else None
         if board is not None and anchor_after:
             board.push_san(new_owner.display_san)
-            number = (
-                f"{board.fullmove_number}."
-                if board.turn == chess.WHITE
-                else f"{board.fullmove_number}..."
-            )
+            number = f"{board.fullmove_number}." if board.turn == chess.WHITE else f"{board.fullmove_number}..."
         body = f"{number} {body}"
 
     separator = "" if destination == 0 or text[destination - 1].isspace() else " "

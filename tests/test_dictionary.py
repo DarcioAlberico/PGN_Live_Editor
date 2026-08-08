@@ -92,10 +92,12 @@ class LayerTests(unittest.TestCase):
 
     def test_the_config_form_survives_a_round_trip(self):
         """E o que atravessa a fronteira de thread e entra na chave do cache."""
-        dictionary = Dictionary([
-            Substitution(pattern="tD", replacement="N", scope=SCOPE_PREFIX, locale="pt"),
-            Substitution(pattern="Bh5", replacement="Bb5", scope=SCOPE_TOKEN, locale="pt"),
-        ])
+        dictionary = Dictionary(
+            [
+                Substitution(pattern="tD", replacement="N", scope=SCOPE_PREFIX, locale="pt"),
+                Substitution(pattern="Bh5", replacement="Bb5", scope=SCOPE_TOKEN, locale="pt"),
+            ]
+        )
 
         restored = Dictionary.from_config(dictionary.as_config())
 
@@ -136,10 +138,12 @@ class ResolverIntegrationTests(unittest.TestCase):
         self.assertEqual("Nf3", resolver.dictionary.token_map("pt")["4)f3"])
 
     def test_prose_still_survives_a_dictionary_full_of_rules(self):
-        dictionary = Dictionary([
-            Substitution(pattern="C", replacement="N", scope=SCOPE_FREE, locale="pt"),
-            Substitution(pattern="ch", replacement="+", scope=SCOPE_FREE, locale="pt"),
-        ])
+        dictionary = Dictionary(
+            [
+                Substitution(pattern="C", replacement="N", scope=SCOPE_FREE, locale="pt"),
+                Substitution(pattern="ch", replacement="+", scope=SCOPE_FREE, locale="pt"),
+            ]
+        )
 
         ast = parse("1.e4 e5 Cada lance conta e as chances crescem 2.Nf3", dictionary)
 

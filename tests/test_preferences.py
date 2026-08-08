@@ -35,9 +35,7 @@ class PreferencesStorageTests(unittest.TestCase):
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
         self.addCleanup(self._temp.cleanup)
-        patcher = mock.patch.object(
-            preferences_service, "app_data_dir", return_value=Path(self._temp.name)
-        )
+        patcher = mock.patch.object(preferences_service, "app_data_dir", return_value=Path(self._temp.name))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -96,9 +94,7 @@ class PreferencesStorageTests(unittest.TestCase):
     def test_a_row_written_by_a_future_version_is_ignored(self):
         save_preferences(Preferences())
         with closing(sqlite3.connect(database_path())) as connection, connection:
-            connection.execute(
-                "INSERT INTO preferences (key, value) VALUES ('funcionalidade_do_futuro', '42')"
-            )
+            connection.execute("INSERT INTO preferences (key, value) VALUES ('funcionalidade_do_futuro', '42')")
 
         self.assertEqual("pt", load_preferences().locale)
 
@@ -119,9 +115,7 @@ class PreferencesInTheWindowTests(unittest.TestCase):
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
         self.addCleanup(self._temp.cleanup)
-        patcher = mock.patch.object(
-            preferences_service, "app_data_dir", return_value=Path(self._temp.name)
-        )
+        patcher = mock.patch.object(preferences_service, "app_data_dir", return_value=Path(self._temp.name))
         patcher.start()
         self.addCleanup(patcher.stop)
 

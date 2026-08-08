@@ -45,12 +45,7 @@ def _selection_key_for(path: Sequence[MoveNode]) -> str:
 def build_move_entries(ast: GameAST) -> list[MoveEntry]:
     entries: list[MoveEntry] = []
 
-    def walk(
-        moves: list[MoveNode],
-        base_path: tuple[MoveNode, ...],
-        depth: int,
-        structural_path: tuple[int, ...]
-    ):
+    def walk(moves: list[MoveNode], base_path: tuple[MoveNode, ...], depth: int, structural_path: tuple[int, ...]):
         running_path = list(base_path)
         for move_index, move in enumerate(moves):
             running_path.append(move)
@@ -58,18 +53,22 @@ def build_move_entries(ast: GameAST) -> list[MoveEntry]:
             node_path = structural_path + (move_index,)
             node_id = ".".join(str(index) for index in node_path)
 
-            entries.append(MoveEntry(
-                node=move,
-                path=path,
-                depth=depth,
-                node_id=node_id,
-                selection_key=_selection_key_for(path),
-                start_index=move.start_index,
-                end_index=move.end_index
-            ))
+            entries.append(
+                MoveEntry(
+                    node=move,
+                    path=path,
+                    depth=depth,
+                    node_id=node_id,
+                    selection_key=_selection_key_for(path),
+                    start_index=move.start_index,
+                    end_index=move.end_index,
+                )
+            )
 
             for variation_index, variation in enumerate(move.variations):
-                anchor_after = variation_index < len(move.variation_anchor_after) and move.variation_anchor_after[variation_index]
+                anchor_after = (
+                    variation_index < len(move.variation_anchor_after) and move.variation_anchor_after[variation_index]
+                )
                 variation_base = path if anchor_after else path[:-1]
                 walk(variation, variation_base, depth + 1, node_path + (variation_index,))
 
@@ -110,10 +109,7 @@ def resolve_selection_key(entries: Sequence[MoveEntry], selection_key: str | Non
 
 
 def find_entry_for_position(entries: Sequence[MoveEntry], position: int) -> MoveEntry | None:
-    containing_entries = [
-        entry for entry in entries
-        if entry.start_index <= position <= entry.end_index
-    ]
+    containing_entries = [entry for entry in entries if entry.start_index <= position <= entry.end_index]
     if not containing_entries:
         return None
 
@@ -121,28 +117,18 @@ def find_entry_for_position(entries: Sequence[MoveEntry], position: int) -> Move
 
 
 def find_entry_for_insertion_position(entries: Sequence[MoveEntry], position: int) -> MoveEntry | None:
-    containing_entries = [
-        entry for entry in entries
-        if entry.start_index < position <= entry.end_index
-    ]
+    containing_entries = [entry for entry in entries if entry.start_index < position <= entry.end_index]
     if containing_entries:
         return min(containing_entries, key=lambda entry: (entry.end_index - entry.start_index, entry.depth))
 
-    preceding_entries = [
-        entry for entry in entries
-        if entry.end_index < position
-    ]
+    preceding_entries = [entry for entry in entries if entry.end_index < position]
     if not preceding_entries:
         return None
 
     return max(preceding_entries, key=lambda entry: (entry.end_index, entry.depth, len(entry.path)))
 
 
-def render_game_movetext(
-    ast: GameAST,
-    result_override: str | None = None,
-    canonical_nags: bool = False
-) -> str:
+def render_game_movetext(ast: GameAST, result_override: str | None = None, canonical_nags: bool = False) -> str:
     def render_comments(comments: Sequence[str]) -> list[str]:
         return [f"{{{comment}}}" for comment in comments if comment]
 

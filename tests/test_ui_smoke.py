@@ -400,9 +400,7 @@ class ReviewModeTests(unittest.TestCase):
         self.assertEqual("", self.window.lbl_touched.text())
 
     def test_the_counts_cover_the_whole_book_not_just_the_current_game(self):
-        self.window.editor_panel.load_document_text(
-            "1.e4 e5 2.Nf3 Nc6\n\n=== Partida 2 ===\n\n1.d4 d5 2.c4"
-        )
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6\n\n=== Partida 2 ===\n\n1.d4 d5 2.c4")
         self.window.editor_panel.analyze_whole_book()
 
         counts = self.window.editor_panel.touch_counts()
@@ -478,9 +476,7 @@ class EngineIssuesInTheWindowTests(unittest.TestCase):
         self.assertIn(SUSPECT_BLUNDER, [i.code for i in self.window.issues_panel.issues])
 
         # O lance conferido mudou: o alerta falava de outro texto.
-        self.window.editor_panel.load_document_text(
-            f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n1. Nd1'
-        )
+        self.window.editor_panel.load_document_text(f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n1. Nd1')
         self.window.editor_panel.reparse_now()
         self.window._refresh_issues()
 
@@ -516,9 +512,9 @@ class BookWindowTests(unittest.TestCase):
         self.assertEqual(1, self.window.editor_panel.analysis.active_index)
         # O tabuleiro passa a partir do diagrama do estudo, nao da posicao inicial.
         self.assertEqual("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1", self.window.chess_panel.start_fen)
-        self.assertEqual(["e4", "Kf6", "e5+", "Kf5"], [
-            move.display_san for move in self.window.editor_panel.current_ast.moves
-        ])
+        self.assertEqual(
+            ["e4", "Kf6", "e5+", "Kf5"], [move.display_san for move in self.window.editor_panel.current_ast.moves]
+        )
 
     def test_stepping_to_the_next_game_moves_the_cursor_there(self):
         self.window._step_game(1)
@@ -553,12 +549,14 @@ class BookWindowTests(unittest.TestCase):
     def test_headers_are_written_into_the_game_under_the_cursor(self):
         self.window._step_game(1)
 
-        self.window.editor_panel.action_apply_headers({
-            "Event": "Final de peões",
-            "White": "Estudo",
-            "FEN": "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1",
-            "SetUp": "1",
-        })
+        self.window.editor_panel.action_apply_headers(
+            {
+                "Event": "Final de peões",
+                "White": "Estudo",
+                "FEN": "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1",
+                "SetUp": "1",
+            }
+        )
         text = self.window.editor_panel.document_text()
 
         self.assertEqual(1, text.count('[Event "Final de peões"]'))
@@ -609,10 +607,15 @@ class HeaderDialogTests(unittest.TestCase):
         self.assertEqual({"Event": "Torneio", "White": "Smyslov"}, dialog.values())
 
     def test_the_book_template_only_carries_what_repeats(self):
-        dialog = HeaderDialog({
-            "Event": "Torneio", "Site": "Moscou", "Date": "1945.??.??",
-            "White": "Smyslov", "Black": "Rudakovsky",
-        })
+        dialog = HeaderDialog(
+            {
+                "Event": "Torneio",
+                "Site": "Moscou",
+                "Date": "1945.??.??",
+                "White": "Smyslov",
+                "Black": "Rudakovsky",
+            }
+        )
         self.addCleanup(dialog.deleteLater)
 
         self.assertEqual(

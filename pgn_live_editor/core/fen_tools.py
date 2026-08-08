@@ -21,7 +21,7 @@ from .text_ops import OperationResult, TextEdit
 DIAGRAM_MARK = "{[#]}"
 
 _DIAGRAM_PATTERNS: tuple[str, ...] = (
-    r'\{\s*\[#\]\s*\}',
+    r"\{\s*\[#\]\s*\}",
     r'(?<![\w"])\[\s*[Dd]\s*\](?![\w"])',
     r'(?<![\w"])[\[(]\s*(?:diagramas?|diagrams?)\s*[\])](?![\w"])',
 )
@@ -50,11 +50,7 @@ def normalize_diagram_marks(text: str) -> OperationResult:
     Sem isto, um `[D]` solto no meio da notacao entra como candidato a lance e
     enche o painel de erros que nao sao erros do usuario.
     """
-    edits = [
-        TextEdit(mark.start, mark.end, DIAGRAM_MARK)
-        for mark in find_diagram_marks(text)
-        if not mark.is_canonical
-    ]
+    edits = [TextEdit(mark.start, mark.end, DIAGRAM_MARK) for mark in find_diagram_marks(text) if not mark.is_canonical]
     if not edits:
         return OperationResult([], "Nenhum marcador de diagrama a converter.")
     return OperationResult(edits, f"{len(edits)} marcador(es) de diagrama convertido(s) em {DIAGRAM_MARK}.")

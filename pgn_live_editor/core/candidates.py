@@ -162,7 +162,15 @@ class CandidateResolver:
 
         # As etapas seguintes sao cumulativas: cada uma trabalha sobre o que a
         # anterior produziu, e a confianca e o produto dos fatores aplicados.
-        for stage in (self._strip_annotation, self._strip_novelty, self._suffix_words, self._ocr_prefix, self._free_substitution, self._fix_case, self._locale_piece):
+        for stage in (
+            self._strip_annotation,
+            self._strip_novelty,
+            self._suffix_words,
+            self._ocr_prefix,
+            self._free_substitution,
+            self._fix_case,
+            self._locale_piece,
+        ):
             for text, confidence, source, rationale in list(states):
                 result = stage(text)
                 if result is None:
@@ -321,9 +329,7 @@ class CandidateResolver:
 
         if not candidates:
             candidates = [
-                candidate
-                for candidate in self._levenshtein_candidates(token, board)
-                if candidate.san not in seen_sans
+                candidate for candidate in self._levenshtein_candidates(token, board) if candidate.san not in seen_sans
             ]
 
         candidates.sort(key=lambda candidate: -candidate.confidence)

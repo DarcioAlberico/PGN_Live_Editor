@@ -53,8 +53,7 @@ class PreferencesDialog(QDialog):
             self.cmb_locale.addItem(LOCALE_LABEL[locale], locale)
         self.cmb_locale.setCurrentIndex(max(0, LOCALES.index(preferences.locale)))
         self.cmb_locale.setToolTip(
-            "Idioma da notação dos livros. O programa ainda confirma pelo proprio "
-            "documento antes de ler 'R' como Rei."
+            "Idioma da notação dos livros. O programa ainda confirma pelo proprio documento antes de ler 'R' como Rei."
         )
         form.addRow("Notação dos livros:", self.cmb_locale)
 
@@ -113,9 +112,7 @@ class PreferencesDialog(QDialog):
         note.setStyleSheet("color: #8a8f98;")
         layout.addWidget(note)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

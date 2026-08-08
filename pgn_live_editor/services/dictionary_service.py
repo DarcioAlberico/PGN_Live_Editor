@@ -184,9 +184,7 @@ class DictionaryService:
 
         normalized = LiveTextNormalizer(locale=self.locale).normalize_with_mapping(text)
         tokens = [
-            token.value
-            for token in PGNTokenizer().tokenize(normalized)
-            if token.type in {"MOVE_CANDIDATE", "SAN_MOVE"}
+            token.value for token in PGNTokenizer().tokenize(normalized) if token.type in {"MOVE_CANDIDATE", "SAN_MOVE"}
         ]
 
         for token in tokens:

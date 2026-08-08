@@ -44,35 +44,35 @@ class Token:
 
 
 class PGNTokenizer:
-    TRADITIONAL_NAG_PATTERN = r'(?:!!|\?\?|!\?|\?!|!|\?)'
-    SYMBOLIC_NAG_PATTERN = r'(?:∞|±|∓|⩲|⩱|=|□|⨀|⊙)'
-    NAG_PATTERN = rf'(?:\$\d+|{TRADITIONAL_NAG_PATTERN}|{SYMBOLIC_NAG_PATTERN})'
+    TRADITIONAL_NAG_PATTERN = r"(?:!!|\?\?|!\?|\?!|!|\?)"
+    SYMBOLIC_NAG_PATTERN = r"(?:∞|±|∓|⩲|⩱|=|□|⨀|⊙)"
+    NAG_PATTERN = rf"(?:\$\d+|{TRADITIONAL_NAG_PATTERN}|{SYMBOLIC_NAG_PATTERN})"
 
     TOKEN_PATTERNS = [
         # O limite do comentario mora no normalizador: o tokenizador usa
         # exatamente o mesmo padrao, para os dois nunca discordarem.
-        ('COMMENT', COMMENT_PATTERN),
-        ('MOVE_NUMBER', r'\b\d+\s*(?:\.\.\.|\.\.)?\s*\.'),
+        ("COMMENT", COMMENT_PATTERN),
+        ("MOVE_NUMBER", r"\b\d+\s*(?:\.\.\.|\.\.)?\s*\."),
         (
-            'SAN_MOVE',
-            r'(?<!\S)(?:'
-            r'[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[KQRBN])?[\+#]?|'
-            r'[O0]-[O0]-[O0][\+#]?|'
-            r'[O0]-[O0][\+#]?'
-            rf')(?=\s|$|[(){{}}]|{NAG_PATTERN})'
+            "SAN_MOVE",
+            r"(?<!\S)(?:"
+            r"[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[KQRBN])?[\+#]?|"
+            r"[O0]-[O0]-[O0][\+#]?|"
+            r"[O0]-[O0][\+#]?"
+            rf")(?=\s|$|[(){{}}]|{NAG_PATTERN})",
         ),
-        ('NULL_MOVE', r'(?<![\w-])(?:--|Z0)(?=\s|$|[(){}])'),
-        ('VARIANT_OPEN', r'\('),
-        ('VARIANT_CLOSE', r'\)'),
-        ('RESULT', r'(?:1-0|0-1|1/2-1/2|\*)(?=[ \t]*$)'),
-        ('NAG', NAG_PATTERN),
-        ('MOVE_CANDIDATE', r'[^\s(){}]+'),
-        ('TEXT', r'[^\s()]+'),
+        ("NULL_MOVE", r"(?<![\w-])(?:--|Z0)(?=\s|$|[(){}])"),
+        ("VARIANT_OPEN", r"\("),
+        ("VARIANT_CLOSE", r"\)"),
+        ("RESULT", r"(?:1-0|0-1|1/2-1/2|\*)(?=[ \t]*$)"),
+        ("NAG", NAG_PATTERN),
+        ("MOVE_CANDIDATE", r"[^\s(){}]+"),
+        ("TEXT", r"[^\s()]+"),
     ]
 
     def __init__(self):
-        regex_parts = [f'(?P<{name}>{pattern})' for name, pattern in self.TOKEN_PATTERNS]
-        self.tokenizer_regex = re.compile('|'.join(regex_parts), re.MULTILINE)
+        regex_parts = [f"(?P<{name}>{pattern})" for name, pattern in self.TOKEN_PATTERNS]
+        self.tokenizer_regex = re.compile("|".join(regex_parts), re.MULTILINE)
 
     def tokenize(self, source: str | NormalizedText) -> list[Token]:
         if isinstance(source, NormalizedText):
@@ -94,8 +94,8 @@ class PGNTokenizer:
 
                 # O regex de candidato e amplo de proposito; o filtro semantico
                 # ("tem cara de lance?") decide se ele vira candidato ou prosa.
-                if token_type == 'MOVE_CANDIDATE' and not looks_like_move(cleaned):
-                    token_type = 'TEXT'
+                if token_type == "MOVE_CANDIDATE" and not looks_like_move(cleaned):
+                    token_type = "TEXT"
 
                 normalized_start = match.start(name)
                 normalized_end = match.end(name)
@@ -106,14 +106,16 @@ class PGNTokenizer:
                 else:
                     start_index, end_index = normalized.raw_span_for(normalized_start, normalized_end)
 
-                tokens.append(Token(
-                    type=token_type,
-                    value=cleaned,
-                    start_index=start_index,
-                    end_index=end_index,
-                    normalized_start_index=normalized_start,
-                    normalized_end_index=normalized_end
-                ))
+                tokens.append(
+                    Token(
+                        type=token_type,
+                        value=cleaned,
+                        start_index=start_index,
+                        end_index=end_index,
+                        normalized_start_index=normalized_start,
+                        normalized_end_index=normalized_end,
+                    )
+                )
                 break
 
         self._mark_notation_context(tokens)
@@ -122,15 +124,13 @@ class PGNTokenizer:
     @staticmethod
     def _mark_notation_context(tokens: list[Token]) -> None:
         for index, token in enumerate(tokens):
-            if token.type != 'MOVE_CANDIDATE':
+            if token.type != "MOVE_CANDIDATE":
                 continue
 
             previous_type = tokens[index - 1].type if index > 0 else None
             next_type = tokens[index + 1].type if index + 1 < len(tokens) else None
-            token.in_notation_context = (
-                previous_type in NOTATION_NEIGHBOURS or next_type in NOTATION_NEIGHBOURS
-            )
+            token.in_notation_context = previous_type in NOTATION_NEIGHBOURS or next_type in NOTATION_NEIGHBOURS
 
 
 def comment_is_unclosed(value: str) -> bool:
-    return value.startswith('{') and not value.endswith('}')
+    return value.startswith("{") and not value.endswith("}")

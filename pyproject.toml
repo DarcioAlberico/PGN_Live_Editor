@@ -18,6 +18,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "mypy>=1.11",
+    "coverage>=7.6",
+]
+package = [
+    "pyinstaller>=6.10",
 ]
 
 [project.scripts]
@@ -39,3 +44,23 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = ["E501"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# Type-check em modo gradual (SPEC 6.2): `core/` e obrigatorio e esta limpo --
+# e onde mora a logica que decide o que vira lance. `ui/` e `services/` ficam
+# para depois: a maior parte do que o mypy tem a dizer ali e sobre `QWidget |
+# None` do proprio Qt, e nao sobre o programa.
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+files = ["pgn_live_editor/core"]
+
+[tool.coverage.run]
+source = ["pgn_live_editor/core"]
+
+[tool.coverage.report]
+# A SPEC pede 80% em `core/`; o corpus e os testes de regressao levam a 93%.
+fail_under = 80
+show_missing = true

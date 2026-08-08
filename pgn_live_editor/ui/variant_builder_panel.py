@@ -1,4 +1,3 @@
-
 import chess
 import chess.svg
 from PyQt6.QtCore import Qt
@@ -143,17 +142,11 @@ class VariantBuilderPanel(QWidget):
         self.render_board()
 
     def _legal_targets_for(self, square: chess.Square):
-        return [
-            move.to_square
-            for move in self.board.legal_moves
-            if move.from_square == square
-        ]
+        return [move.to_square for move in self.board.legal_moves if move.from_square == square]
 
     def _matching_moves(self, from_square: chess.Square, to_square: chess.Square):
         return [
-            move
-            for move in self.board.legal_moves
-            if move.from_square == from_square and move.to_square == to_square
+            move for move in self.board.legal_moves if move.from_square == from_square and move.to_square == to_square
         ]
 
     def _resolve_candidate_move(self, moves):

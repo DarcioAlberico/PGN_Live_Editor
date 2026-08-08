@@ -139,10 +139,7 @@ class CorpusTests(unittest.TestCase):
         for entry in self.entries:
             with self.subTest(pagina=entry.name):
                 errors = [
-                    issue
-                    for analysis in entry.analyze()
-                    for issue in analysis.ast.issues
-                    if issue.severity == "error"
+                    issue for analysis in entry.analyze() for issue in analysis.ast.issues if issue.severity == "error"
                 ]
                 self.assertLessEqual(
                     len(errors),

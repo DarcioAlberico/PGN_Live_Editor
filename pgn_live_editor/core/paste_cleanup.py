@@ -12,10 +12,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 # Linha que e so um numero de pagina, com ou sem enfeite: "12", "- 12 -", "[12]".
-PAGE_NUMBER_RE = re.compile(r'^\s*[-–—\[\|]?\s*\d{1,4}\s*[-–—\]\|]?\s*$')
+PAGE_NUMBER_RE = re.compile(r"^\s*[-–—\[\|]?\s*\d{1,4}\s*[-–—\]\|]?\s*$")
 # Marca de nota de rodape colada num lance: "Nf3¹", "e4*", "Bb5†".
-FOOTNOTE_MARK_RE = re.compile(r'(?<=[a-h1-8QRBNO])[¹²³⁰-₟†‡\*]+(?=\s|$)')
-INVISIBLE_RE = re.compile(r'[­​‌‍﻿]')
+FOOTNOTE_MARK_RE = re.compile(r"(?<=[a-h1-8QRBNO])[¹²³⁰-₟†‡\*]+(?=\s|$)")
+INVISIBLE_RE = re.compile(r"[­​‌‍﻿]")
 
 
 @dataclass
@@ -66,7 +66,7 @@ def clean_pdf_text(text: str, options: CleanupOptions | None = None) -> CleanupR
     if options.dehyphenate:
         # So junta quando a continuacao vem em minuscula: preserva "Ruy-\nLopez"
         # e nomes compostos que quebraram no fim da linha.
-        text, count = re.subn(r'(\w)[-‐‑]\s*\n\s*([a-zà-ÿ])', r'\1\2', text)
+        text, count = re.subn(r"(\w)[-‐‑]\s*\n\s*([a-zà-ÿ])", r"\1\2", text)
         report.joined_hyphens = count
 
     lines = text.splitlines()
@@ -93,13 +93,13 @@ def clean_pdf_text(text: str, options: CleanupOptions | None = None) -> CleanupR
 
     if options.join_wrapped_lines:
         # Quebra simples vira espaco; linha em branco (parágrafo) e preservada.
-        text, count = re.subn(r'(?<!\n)\n(?!\n)', ' ', text)
+        text, count = re.subn(r"(?<!\n)\n(?!\n)", " ", text)
         report.joined_lines = count
 
     if options.collapse_whitespace:
-        text = re.sub(r'[ \t]{2,}', ' ', text)
-        text = re.sub(r' +([,.;:!?])', r'\1', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r" +([,.;:!?])", r"\1", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         text = "\n".join(line.rstrip() for line in text.splitlines())
 
     report.text = text.strip()

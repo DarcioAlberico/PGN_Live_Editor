@@ -164,7 +164,9 @@ class D5MoveNumberTests(unittest.TestCase):
         self.assertEqual("10. Nxd4", normalize("10.Nxd4"))
 
     def test_no_orphan_dot_reaches_the_move_number_token(self):
-        ast = parse("1.e4 c5 2.Nf3 e6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 d6 6.Be2 Be7 7.O-O O-O 8.Be3 Nc6 9.f4 Qc7 10.Qe1 10. ... Nxd4")
+        ast = parse(
+            "1.e4 c5 2.Nf3 e6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 d6 6.Be2 Be7 7.O-O O-O 8.Be3 Nc6 9.f4 Qc7 10.Qe1 10. ... Nxd4"
+        )
 
         numbers = [move.number for move in ast.moves if move.number]
         self.assertNotIn("10... .", numbers)

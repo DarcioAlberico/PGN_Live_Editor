@@ -313,7 +313,16 @@ class PasteCleanupTests(unittest.TestCase):
         self.assertIn("2.Nf3", report.text)
 
     def test_repeated_running_headers_are_removed(self):
-        source = "\n".join(["ABERTURAS SEMI-ABERTAS", "1.e4 c5", "ABERTURAS SEMI-ABERTAS", "2.Nf3 d6", "ABERTURAS SEMI-ABERTAS", "3.d4"])
+        source = "\n".join(
+            [
+                "ABERTURAS SEMI-ABERTAS",
+                "1.e4 c5",
+                "ABERTURAS SEMI-ABERTAS",
+                "2.Nf3 d6",
+                "ABERTURAS SEMI-ABERTAS",
+                "3.d4",
+            ]
+        )
         report = clean_pdf_text(source, CleanupOptions(join_wrapped_lines=False))
 
         self.assertNotIn("ABERTURAS", report.text)

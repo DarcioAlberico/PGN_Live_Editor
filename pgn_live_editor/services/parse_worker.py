@@ -139,8 +139,7 @@ class SegmentDigest:
         return SegmentDigest(
             parsed_at=raw_offset,
             spans=tuple(
-                (start + delta, end + delta, kind, in_variation)
-                for start, end, kind, in_variation in self.spans
+                (start + delta, end + delta, kind, in_variation) for start, end, kind, in_variation in self.spans
             ),
             move_count=self.move_count,
             error_count=self.error_count,
@@ -219,14 +218,16 @@ class DocumentAnalysis:
                 summaries.append(SegmentSummary(index=segment.index, title=segment.title))
                 continue
 
-            summaries.append(SegmentSummary(
-                index=segment.index,
-                title=segment.title,
-                analyzed=True,
-                move_count=digest.move_count,
-                error_count=digest.error_count,
-                warning_count=digest.warning_count,
-            ))
+            summaries.append(
+                SegmentSummary(
+                    index=segment.index,
+                    title=segment.title,
+                    analyzed=True,
+                    move_count=digest.move_count,
+                    error_count=digest.error_count,
+                    warning_count=digest.warning_count,
+                )
+            )
         return summaries
 
 
@@ -303,9 +304,7 @@ class ParsePipeline:
 
         ast = self.parser.parse(tokens, start_fen=start_fen)
         ast.headers = list(segment.headers.items())
-        ast.issues.extend(
-            validate_headers(segment.headers, raw_text, segment.content_offset, segment.end_offset)
-        )
+        ast.issues.extend(validate_headers(segment.headers, raw_text, segment.content_offset, segment.end_offset))
 
         return self._store(key, SegmentAnalysis(segment=segment, ast=ast, start_fen=start_fen))
 
@@ -403,11 +402,7 @@ class AsyncParser(QObject):
             self._configure_signal.emit(config)
 
     def debounce_interval(self, raw_text: str) -> int:
-        return (
-            self.FAST_DEBOUNCE_MS
-            if len(raw_text) < self.SMALL_DOCUMENT_BYTES
-            else self.SLOW_DEBOUNCE_MS
-        )
+        return self.FAST_DEBOUNCE_MS if len(raw_text) < self.SMALL_DOCUMENT_BYTES else self.SLOW_DEBOUNCE_MS
 
     # ------------------------------------------------------------------
 

@@ -29,8 +29,8 @@ from dataclasses import dataclass
 # de livro tem uma no meio -- e uma `}` do outro lado dela pertence a outro
 # comentario, nao a este.
 COMMENT_PATTERN = (
-    r'\{(?:[^}\n]|\n(?![ \t]*(?:\n|$)))*\}'  # fechado: pode ocupar varias linhas
-    r'|\{[^}\n]*'                            # aberto: vale so ate o fim da linha
+    r"\{(?:[^}\n]|\n(?![ \t]*(?:\n|$)))*\}"  # fechado: pode ocupar varias linhas
+    r"|\{[^}\n]*"  # aberto: vale so ate o fim da linha
 )
 COMMENT_RE = re.compile(COMMENT_PATTERN, re.MULTILINE)
 
@@ -60,34 +60,44 @@ class LiveTextNormalizer:
     """Limpa o texto sem nunca alterar o sentido de uma palavra."""
 
     PIECE_GLYPHS = {
-        '♔': 'K', '♕': 'Q', '♖': 'R', '♗': 'B', '♘': 'N', '♙': '',
-        '♚': 'K', '♛': 'Q', '♜': 'R', '♝': 'B', '♞': 'N', '♟': '',
+        "♔": "K",
+        "♕": "Q",
+        "♖": "R",
+        "♗": "B",
+        "♘": "N",
+        "♙": "",
+        "♚": "K",
+        "♛": "Q",
+        "♜": "R",
+        "♝": "B",
+        "♞": "N",
+        "♟": "",
     }
 
     UNICODE_REPLACEMENTS = {
-        '–': '-',
-        '—': '-',
-        '−': '-',
-        '′': "'",
-        '`': "'",
-        '´': "'",
-        '“': '"',
-        '”': '"',
-        '­': '',   # hífen condicional herdado do PDF
-        '​': '',   # espaco de largura zero
-        '﻿': '',   # BOM no meio do texto
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        "′": "'",
+        "`": "'",
+        "´": "'",
+        "“": '"',
+        "”": '"',
+        "­": "",  # hífen condicional herdado do PDF
+        "​": "",  # espaco de largura zero
+        "﻿": "",  # BOM no meio do texto
     }
 
     # Substituicoes seguras: ancoradas em pontuacao e em contexto de notacao,
     # nunca em letras soltas, e por isso incapazes de corromper prosa.
     SYMBOL_PATTERNS: tuple[tuple[str, str], ...] = (
-        (r'\b0-0-0\b', 'O-O-O'),
-        (r'\b0-0\b', 'O-O'),
-        (r'(?<=[a-h1-8QRBNO])\+\+', '#'),
-        (r'=/\+', '⩱'),
-        (r'\+/=', '⩲'),
-        (r'\+-', '±'),
-        (r'-\+', '∓'),
+        (r"\b0-0-0\b", "O-O-O"),
+        (r"\b0-0\b", "O-O"),
+        (r"(?<=[a-h1-8QRBNO])\+\+", "#"),
+        (r"=/\+", "⩱"),
+        (r"\+/=", "⩲"),
+        (r"\+-", "±"),
+        (r"-\+", "∓"),
     )
 
     # Numero de lance: consome **todos** os pontos consecutivos.
@@ -95,9 +105,9 @@ class LiveTextNormalizer:
     # -- o ponto orfao que foi parar nos PGN ja exportados.
     # O lookahead impede que decimais de prosa (`2.5 vezes`) sejam tocados, e
     # `\d{1,3}` impede que anos (`1945.`) sejam lidos como numero de lance.
-    MOVE_NUMBER_PATTERN = r'\b(\d{1,3})\s*((?:\.\s*)+)(?=[A-Za-z(]|[0O]-[0O]|--|$)'
+    MOVE_NUMBER_PATTERN = r"\b(\d{1,3})\s*((?:\.\s*)+)(?=[A-Za-z(]|[0O]-[0O]|--|$)"
 
-    def __init__(self, locale: str = 'en'):
+    def __init__(self, locale: str = "en"):
         # `locale` ja nao decide letra de peca aqui (isso e do CandidateResolver),
         # mas segue registrado para quem monta o pipeline a partir do normalizador.
         self.locale = locale
@@ -140,7 +150,7 @@ class LiveTextNormalizer:
             if not translated:
                 continue
 
-            normalized_char = unicodedata.normalize('NFKC', translated)
+            normalized_char = unicodedata.normalize("NFKC", translated)
             if not normalized_char:
                 continue
 
@@ -150,11 +160,7 @@ class LiveTextNormalizer:
         return NormalizedText("".join(normalized_chars), normalized_spans)
 
     def _replace_pattern(
-        self,
-        text: str,
-        raw_spans: list[tuple[int, int]],
-        pattern: str,
-        replacement
+        self, text: str, raw_spans: list[tuple[int, int]], pattern: str, replacement
     ) -> NormalizedText:
         parts: list[str] = []
         spans: list[tuple[int, int]] = []
@@ -188,7 +194,7 @@ class LiveTextNormalizer:
         index = 0
 
         while index < len(text):
-            if text[index] != '{':
+            if text[index] != "{":
                 index += 1
                 continue
 
@@ -218,7 +224,7 @@ class LiveTextNormalizer:
     @staticmethod
     def _format_move_number(match: re.Match) -> str:
         number = match.group(1)
-        dots = match.group(2).count('.')
+        dots = match.group(2).count(".")
         return f"{number}... " if dots >= 2 else f"{number}. "
 
     def normalize_with_mapping(self, raw_text: str, base_offset: int = 0) -> NormalizedText:

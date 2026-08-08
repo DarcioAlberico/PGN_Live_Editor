@@ -49,8 +49,7 @@ def write_pdf(path: Path, pages: list[list[str]]) -> Path:
     for index, content_id in enumerate(content_ids):
         page_ids[index] = add(
             b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] "
-            b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>"
-            % (pages_id, font_id, content_id)
+            b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>" % (pages_id, font_id, content_id)
         )
 
     kids = b" ".join(b"%d 0 R" % page_id for page_id in page_ids)

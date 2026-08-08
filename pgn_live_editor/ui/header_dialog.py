@@ -84,9 +84,7 @@ class HeaderDialog(QDialog):
         layout.addLayout(form)
 
         fen = (headers.get("FEN") or "").strip()
-        self.lbl_fen = QLabel(
-            f"Posição inicial: {fen}" if fen else "Posição inicial: padrão (sem FEN)"
-        )
+        self.lbl_fen = QLabel(f"Posição inicial: {fen}" if fen else "Posição inicial: padrão (sem FEN)")
         self.lbl_fen.setWordWrap(True)
         self.lbl_fen.setStyleSheet("color: #9aa6b8;")
         layout.addWidget(self.lbl_fen)
@@ -115,9 +113,7 @@ class HeaderDialog(QDialog):
 
         layout.addLayout(template_row)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -142,11 +138,7 @@ class HeaderDialog(QDialog):
 
     def values(self) -> dict[str, str]:
         """Cabecalhos preenchidos. Campo vazio nao vira cabecalho vazio."""
-        return {
-            tag: field.text().strip()
-            for tag, field in self._fields.items()
-            if field.text().strip()
-        }
+        return {tag: field.text().strip() for tag, field in self._fields.items() if field.text().strip()}
 
     def book_template_values(self) -> dict[str, str]:
         values = self.values()

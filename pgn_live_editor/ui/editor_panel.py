@@ -184,7 +184,7 @@ class EditorPanel(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.locale = 'pt'
+        self.locale = "pt"
         self.async_parser = AsyncParser(ParseConfig.build(locale=self.locale), parent=self)
         self.async_parser.analysis_ready_signal.connect(self._on_background_analysis)
 
@@ -302,7 +302,7 @@ class EditorPanel(QWidget):
 
     def action_join_lines(self):
         text = self.text_edit.toPlainText()
-        clean_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+        clean_text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
         self.replace_all_text(clean_text)
 
     def open_symbol_palette(self):
@@ -474,12 +474,14 @@ class EditorPanel(QWidget):
 
     def _reconfigure(self, **changes):
         config = self.async_parser.config
-        self.async_parser.configure(ParseConfig.build(
-            locale=changes.get("locale", config.locale),
-            dictionary=changes.get("dictionary", config.dictionary_map),
-            ignored_tokens=changes.get("ignored_tokens", config.ignored_tokens),
-            separator_pattern=changes.get("separator_pattern", config.separator_pattern),
-        ))
+        self.async_parser.configure(
+            ParseConfig.build(
+                locale=changes.get("locale", config.locale),
+                dictionary=changes.get("dictionary", config.dictionary_map),
+                ignored_tokens=changes.get("ignored_tokens", config.ignored_tokens),
+                separator_pattern=changes.get("separator_pattern", config.separator_pattern),
+            )
+        )
         self.reparse_now()
 
     def configure_recognition(self, locale: str, dictionary: dict[str, str], ignored_tokens):
@@ -560,9 +562,7 @@ class EditorPanel(QWidget):
 
         if not edits:
             return "A numeracao já esta correta."
-        return self.apply_operation(
-            OperationResult(edits, f"{len(edits)} número(s) de lance corrigido(s).")
-        )
+        return self.apply_operation(OperationResult(edits, f"{len(edits)} número(s) de lance corrigido(s)."))
 
     def action_normalize_diagrams(self) -> str:
         return self.apply_operation(normalize_diagram_marks(self.document_text()))
@@ -606,7 +606,9 @@ class EditorPanel(QWidget):
         self._do_reparse()
         return self.current_ast
 
-    def _make_selection(self, start_index: int, end_index: int, text_format: QTextCharFormat) -> QTextEdit.ExtraSelection:
+    def _make_selection(
+        self, start_index: int, end_index: int, text_format: QTextCharFormat
+    ) -> QTextEdit.ExtraSelection:
         selection = QTextEdit.ExtraSelection()
         selection.cursor = self.text_edit.textCursor()
         selection.cursor.setPosition(start_index)
@@ -679,10 +681,9 @@ class EditorPanel(QWidget):
             ("error", True): fmt_error_variation,
         }
 
-        self.highlighter.set_ranges([
-            (start, end, formats[(kind, in_variation)])
-            for start, end, kind, in_variation in analysis.highlight_spans
-        ])
+        self.highlighter.set_ranges(
+            [(start, end, formats[(kind, in_variation)]) for start, end, kind, in_variation in analysis.highlight_spans]
+        )
         self._apply_current_selection()
 
     # ------------------------------------------------------------------

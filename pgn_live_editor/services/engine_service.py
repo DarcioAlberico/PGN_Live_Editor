@@ -303,8 +303,7 @@ class ScanFindings:
         if delta == 0:
             return list(self.issues)
         return [
-            replace(issue, raw_start=issue.raw_start + delta, raw_end=issue.raw_end + delta)
-            for issue in self.issues
+            replace(issue, raw_start=issue.raw_start + delta, raw_end=issue.raw_end + delta) for issue in self.issues
         ]
 
 
@@ -412,8 +411,7 @@ def repair_candidates(
                 confidence=0.75,
                 source="motor",
                 rationale=(
-                    f"a um caractere de '{played}', e o único que o motor não ve "
-                    f"perdendo material ({drop / 100:+.1f})"
+                    f"a um caractere de '{played}', e o único que o motor não ve perdendo material ({drop / 100:+.1f})"
                 ),
             )
         ]

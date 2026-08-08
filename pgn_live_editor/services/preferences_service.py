@@ -129,17 +129,19 @@ def load_preferences() -> Preferences:
     base = Preferences()
 
     layout_payload = stored.get("layout")
-    layout = Layout(**{
-        key: layout_payload[key]
-        for key in Layout().__dataclass_fields__
-        if isinstance(layout_payload, dict) and key in layout_payload
-    }) if isinstance(layout_payload, dict) else Layout()
+    layout = (
+        Layout(
+            **{
+                key: layout_payload[key]
+                for key in Layout().__dataclass_fields__
+                if isinstance(layout_payload, dict) and key in layout_payload
+            }
+        )
+        if isinstance(layout_payload, dict)
+        else Layout()
+    )
 
-    values = {
-        key: stored[key]
-        for key in base.__dataclass_fields__
-        if key in stored and key != "layout"
-    }
+    values = {key: stored[key] for key in base.__dataclass_fields__ if key in stored and key != "layout"}
     try:
         return replace(base, **values, layout=layout).sanitized()
     except TypeError:

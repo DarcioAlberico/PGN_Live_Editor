@@ -231,9 +231,7 @@ class MainWindow(QMainWindow):
         structure_menu.addSeparator()
         self._add_action(structure_menu, "Renumerar documento", "Ctrl+R", self._renumber)
         self._add_action(structure_menu, "Promover variante", "Ctrl+Shift+Up", self._promote_variation)
-        self._add_action(
-            structure_menu, "Rebaixar a linha principal", "Ctrl+Shift+Down", self._demote_mainline
-        )
+        self._add_action(structure_menu, "Rebaixar a linha principal", "Ctrl+Shift+Down", self._demote_mainline)
         self._add_action(structure_menu, "Subir a variante", "Alt+Up", lambda: self._move_variation(-1))
         self._add_action(structure_menu, "Descer a variante", "Alt+Down", lambda: self._move_variation(1))
         self._add_action(structure_menu, "Reancorar a variante aqui", "Ctrl+Shift+A", self._reanchor_variation)
@@ -626,7 +624,9 @@ class MainWindow(QMainWindow):
             self._report("Este lance já esta na linha principal.")
             return
 
-        result = promote_variation(self.editor_panel.document_text(), self.editor_panel.current_ast, owner, variation_index)
+        result = promote_variation(
+            self.editor_panel.document_text(), self.editor_panel.current_ast, owner, variation_index
+        )
         self._report(self.editor_panel.apply_operation(result) or result.message)
 
     def _variation_target(self):
@@ -647,9 +647,7 @@ class MainWindow(QMainWindow):
             self._report("Ponha o cursor num lance que tenha variante para rebaixar a linha principal.")
             return
 
-        result = promote_variation(
-            self.editor_panel.document_text(), self.editor_panel.current_ast, entry.node, 0
-        )
+        result = promote_variation(self.editor_panel.document_text(), self.editor_panel.current_ast, entry.node, 0)
         self._report(self.editor_panel.apply_operation(result) or result.message)
 
     def _move_variation(self, delta: int):
@@ -740,9 +738,7 @@ class MainWindow(QMainWindow):
             apply_theme(application, self.preferences.theme)
 
         self.editor_panel.set_theme(self.preferences.theme)
-        self.editor_panel.set_editor_font(
-            self.preferences.editor_font_family, self.preferences.editor_font_size
-        )
+        self.editor_panel.set_editor_font(self.preferences.editor_font_family, self.preferences.editor_font_size)
         self.editor_panel.text_edit.auto_close_enabled = self.preferences.auto_close_delimiters
         self.editor_panel.set_locale(self.preferences.locale)
         self.dictionary_service.set_locale(self.preferences.locale)
@@ -919,9 +915,7 @@ class MainWindow(QMainWindow):
         delta = (segment.raw_offset if segment else 0) - findings.raw_offset
         original_start = issue.raw_start - delta
         findings.issues = [
-            other
-            for other in findings.issues
-            if not (other.code == issue.code and other.raw_start == original_start)
+            other for other in findings.issues if not (other.code == issue.code and other.raw_start == original_start)
         ]
         self._refresh_issues()
 
@@ -1039,9 +1033,7 @@ class MainWindow(QMainWindow):
             choice = QMessageBox.warning(
                 self,
                 "Conferência do PGN",
-                "O PGN gerado não confere com o que foi analisado:\n\n"
-                f"{report.summary()}\n\n"
-                "Salvar assim mesmo?",
+                f"O PGN gerado não confere com o que foi analisado:\n\n{report.summary()}\n\nSalvar assim mesmo?",
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )

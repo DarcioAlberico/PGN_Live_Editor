@@ -24,9 +24,9 @@ from .pgn_headers import HEADER_LINE_RE, extract_pgn_headers
 
 # `=== Partida 2 ===`, `----- 2 -----` nao; so a forma com `=`, que nao aparece
 # em notacao (um `=` solto e simbolo de igualdade, nunca dois seguidos).
-DEFAULT_SEPARATOR_PATTERN = r'^\s*={2,}[^=\n]*={2,}\s*$'
+DEFAULT_SEPARATOR_PATTERN = r"^\s*={2,}[^=\n]*={2,}\s*$"
 
-_YEAR_RE = re.compile(r'^(\d{4})')
+_YEAR_RE = re.compile(r"^(\d{4})")
 
 
 @dataclass
@@ -124,16 +124,18 @@ def split_games(
         chunk = raw_text[content_start:end_offset]
         headers, body, consumed = extract_pgn_headers(chunk)
 
-        segments.append(GameSegment(
-            index=index,
-            headers=headers,
-            body=body,
-            raw_offset=content_start + consumed,
-            start_offset=start_offset,
-            end_offset=end_offset,
-            content_offset=content_start,
-            title=build_segment_title(index, headers, body),
-        ))
+        segments.append(
+            GameSegment(
+                index=index,
+                headers=headers,
+                body=body,
+                raw_offset=content_start + consumed,
+                start_offset=start_offset,
+                end_offset=end_offset,
+                content_offset=content_start,
+                title=build_segment_title(index, headers, body),
+            )
+        )
 
     return segments
 

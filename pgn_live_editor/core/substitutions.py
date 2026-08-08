@@ -163,9 +163,7 @@ class Dictionary:
 
     def as_config(self) -> tuple[tuple[str, str, str, str], ...]:
         """Forma imutavel e ordenada -- e o que atravessa a fronteira de thread."""
-        return tuple(
-            sorted((entry.scope, entry.pattern, entry.replacement, entry.locale) for entry in self.entries)
-        )
+        return tuple(sorted((entry.scope, entry.pattern, entry.replacement, entry.locale) for entry in self.entries))
 
     # ------------------------------------------------------------------
 
