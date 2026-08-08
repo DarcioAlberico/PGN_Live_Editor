@@ -22,6 +22,8 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from ..core.substitutions import LAYER_PROJECT, Dictionary
+
 PROJECT_SUFFIX = ".plez"
 FORMAT_VERSION = 1
 MAX_RECENT_FILES = 10
@@ -58,6 +60,12 @@ class ProjectState:
     # Indices das partidas ja conferidas. E o "12/64" da barra de status, e a
     # unica informacao do livro que o programa nao consegue deduzir do texto.
     completed_games: list[int] = field(default_factory=list)
+    # Quantas vezes cada correcao ja foi aceita. Na terceira, o programa oferece
+    # grava-la no dicionario -- e a parte "aprendiz" da SPEC 5.2.
+    accepted_corrections: dict[str, int] = field(default_factory=dict)
+    # Pagina do PDF que acompanha este trabalho, para reabrir onde parou.
+    pdf_path: str = ""
+    pdf_page: int = 0
 
 
 @dataclass
@@ -67,7 +75,7 @@ class Project:
     raw_text: str = ""
     meta: ProjectMeta = field(default_factory=ProjectMeta)
     header_template: dict[str, str] = field(default_factory=dict)
-    dictionary: dict[str, str] = field(default_factory=dict)
+    dictionary: Dictionary = field(default_factory=Dictionary)
     state: ProjectState = field(default_factory=ProjectState)
     path: Path | None = None
 
@@ -103,7 +111,10 @@ def save_project(project: Project, path: Path) -> Path:
             archive.writestr("meta.json", json.dumps(asdict(project.meta), ensure_ascii=False, indent=2))
             archive.writestr("raw.txt", project.raw_text)
             archive.writestr("headers.json", json.dumps(project.header_template, ensure_ascii=False, indent=2))
-            archive.writestr("dictionary.json", json.dumps(project.dictionary, ensure_ascii=False, indent=2))
+            archive.writestr(
+                "dictionary.json",
+                json.dumps({"entries": project.dictionary.to_list()}, ensure_ascii=False, indent=2),
+            )
             archive.writestr("state.json", json.dumps(asdict(project.state), ensure_ascii=False, indent=2))
         temp_path.replace(path)
     except BaseException:
@@ -140,13 +151,21 @@ def load_project(path: Path) -> Project:
             cursor_position=int(state_payload.get("cursor_position", 0)),
             ignored_issue_tokens=list(state_payload.get("ignored_issue_tokens", [])),
             completed_games=[int(index) for index in state_payload.get("completed_games", [])],
+            accepted_corrections={
+                str(key): int(value)
+                for key, value in dict(state_payload.get("accepted_corrections", {})).items()
+            },
+            pdf_path=str(state_payload.get("pdf_path", "")),
+            pdf_page=int(state_payload.get("pdf_page", 0)),
         )
 
         return Project(
             raw_text=raw_text,
             meta=meta,
             header_template=_read_json(archive, "headers.json", {}),
-            dictionary=_read_json(archive, "dictionary.json", {}),
+            # `from_payload` le tanto o formato novo (lista com escopo) quanto
+            # o antigo (mapa simples) -- projeto salvo antes da fase 5 abre.
+            dictionary=Dictionary.from_payload(_read_json(archive, "dictionary.json", {}), LAYER_PROJECT),
             state=state,
             path=path,
         )

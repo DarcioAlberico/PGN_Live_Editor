@@ -458,7 +458,7 @@ class EditorPanel(QWidget):
         self.locale = locale
         self._reconfigure(locale=locale)
 
-    def set_dictionary(self, dictionary: dict[str, str]):
+    def set_dictionary(self, dictionary):
         self._reconfigure(dictionary=dictionary)
 
     def set_ignored_tokens(self, tokens):

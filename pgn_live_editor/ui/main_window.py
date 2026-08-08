@@ -17,8 +17,10 @@ from PyQt6.QtWidgets import (
 
 from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
+from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
 from ..core.text_ops import promote_variation
 from ..services.clipboard_service import COPY_FORMATS
+from ..services.dictionary_service import DictionaryService
 from ..services.engine_service import (
     ENGINE_ENV_VAR,
     EngineScanner,
@@ -49,6 +51,7 @@ from ..services.project_service import (
 )
 from .chess_panel import ChessPanel
 from .cleanup_dialog import CleanupDialog
+from .dictionary_dialog import DictionaryDialog
 from .editor_panel import EditorPanel
 from .games_panel import GamesPanel
 from .header_dialog import HeaderDialog
@@ -69,6 +72,7 @@ class MainWindow(QMainWindow):
         self._last_autosaved_text = ""
         # Motor de xadrez (fase 5): opcional, sob demanda, fora da thread de UI.
         self.engine_settings: EngineSettings = load_engine_settings()
+        self.dictionary_service = DictionaryService(locale=self.project.meta.locale)
         self.engine_scanner = EngineScanner(self)
         self._engine_findings: ScanFindings | None = None
         self._pending_engine_segment: tuple[str, int] = ("", 0)
@@ -221,6 +225,8 @@ class MainWindow(QMainWindow):
         self._add_action(review_menu, "Conferir a partida com o motor", "Ctrl+E", self._scan_with_engine)
         self._add_action(review_menu, "Motor de xadrez...", None, self._configure_engine)
         review_menu.addSeparator()
+        self._add_action(review_menu, "Dicionario de OCR...", "Ctrl+Shift+I", self.edit_dictionary)
+        review_menu.addSeparator()
         self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
 
     def _add_action(self, menu, title: str, shortcut, slot) -> QAction:
@@ -279,6 +285,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return
         self.project = Project()
+        self.dictionary_service.set_project(self.project.dictionary)
+        self.editor_panel.set_dictionary(self.dictionary_service.merged())
         self.editor_panel.load_document_text("")
         clear_recovery_snapshot()
         self._last_autosaved_text = ""
@@ -307,9 +315,11 @@ class MainWindow(QMainWindow):
             return
 
         self.project = project
+        self.dictionary_service.set_locale(project.meta.locale)
+        self.dictionary_service.set_project(project.dictionary)
         self.editor_panel.configure_recognition(
             locale=project.meta.locale,
-            dictionary=project.dictionary,
+            dictionary=self.dictionary_service.merged(),
             ignored_tokens=project.state.ignored_issue_tokens,
         )
         self.games_panel.set_completed(project.state.completed_games)
@@ -556,6 +566,7 @@ class MainWindow(QMainWindow):
             return
         self.editor_panel.replace_span(issue.raw_start, issue.raw_end, candidate.san)
         self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{candidate.san}'.", 4000)
+        self._count_acceptance(issue, candidate)
 
     def _comment_issue(self, issue):
         self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
@@ -694,12 +705,51 @@ class MainWindow(QMainWindow):
         candidate = issue.best_candidate
         if not candidate or not issue.raw_text:
             return
-        self.project.dictionary[issue.raw_text] = candidate.san
-        self.editor_panel.set_dictionary(self.project.dictionary)
+        self._learn_substitution(issue.raw_text, candidate.san)
         self.statusBar().showMessage(
             f"Dicionario do projeto: '{issue.raw_text}' -> '{candidate.san}'. Salve o projeto para guardar.",
             6000,
         )
+
+    def _learn_substitution(self, pattern: str, replacement: str, layer: str = LAYER_PROJECT):
+        self.dictionary_service.learn(pattern, replacement, SCOPE_TOKEN, layer)
+        self.project.dictionary = self.dictionary_service.project
+        self.editor_panel.set_dictionary(self.dictionary_service.merged())
+        self._state_dirty = True
+        self._update_window_title()
+
+    def edit_dictionary(self):
+        """Editor das tres camadas, com o alcance de cada regra no texto atual."""
+        dialog = DictionaryDialog(self.dictionary_service, self.editor_panel.document_text(), self)
+        dialog.exec()
+
+        self.project.dictionary = self.dictionary_service.project
+        self.editor_panel.set_dictionary(self.dictionary_service.merged())
+        self._state_dirty = True
+        self._update_window_title()
+
+    def _count_acceptance(self, issue, candidate):
+        """Tres aceitacoes da mesma correcao e o scanner, nao acaso (SPEC 5.2)."""
+        if not issue.raw_text or not candidate:
+            return
+
+        times = DictionaryService.register_acceptance(
+            self.project.state.accepted_corrections, issue.raw_text, candidate.san
+        )
+        self._state_dirty = True
+        if not DictionaryService.should_offer_to_learn(times):
+            return
+
+        choice = QMessageBox.question(
+            self,
+            "Aprender esta correcao",
+            f"Voce ja aceitou '{issue.raw_text}' -> '{candidate.san}' {times} vezes.\n\n"
+            "Gravar no dicionario para o programa passar a fazer isso sozinho?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self._learn_substitution(issue.raw_text, candidate.san)
 
     # ------------------------------------------------------------------
     # Exportacao

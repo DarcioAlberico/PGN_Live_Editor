@@ -23,6 +23,7 @@ from PyQt6.QtCore import QObject, QThread, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
 
+from ..core.candidates import as_dictionary
 from ..core.fen_tools import start_fen_of
 from ..core.game_splitter import (
     DEFAULT_SEPARATOR_PATTERN,
@@ -34,6 +35,7 @@ from ..core.issues import Issue, count_by_severity
 from ..core.normalizer import LiveTextNormalizer
 from ..core.parser import GameAST, TolerantParser, iter_moves
 from ..core.pgn_headers import validate_headers
+from ..core.substitutions import Dictionary
 from ..core.tokenizer import PGNTokenizer
 
 
@@ -46,7 +48,10 @@ class ParseConfig:
     """
 
     locale: str = "pt"
-    dictionary: tuple[tuple[str, str], ...] = ()
+    # `(escopo, padrao, substituicao, idioma)` por entrada: e a forma imutavel
+    # e ordenada do dicionario, que e o que pode atravessar a fronteira de
+    # thread e entrar na chave do cache.
+    dictionary: tuple[tuple[str, str, str, str], ...] = ()
     ignored_tokens: tuple[str, ...] = ()
     separator_pattern: str | None = DEFAULT_SEPARATOR_PATTERN
 
@@ -54,20 +59,20 @@ class ParseConfig:
     def build(
         cls,
         locale: str = "pt",
-        dictionary: Mapping[str, str] | None = None,
+        dictionary: Dictionary | Mapping[str, str] | None = None,
         ignored_tokens: Iterable[str] = (),
         separator_pattern: str | None = DEFAULT_SEPARATOR_PATTERN,
     ) -> ParseConfig:
         return cls(
             locale=locale,
-            dictionary=tuple(sorted((dictionary or {}).items())),
+            dictionary=as_dictionary(dictionary).as_config(),
             ignored_tokens=tuple(sorted(ignored_tokens)),
             separator_pattern=separator_pattern,
         )
 
     @property
-    def dictionary_map(self) -> dict[str, str]:
-        return dict(self.dictionary)
+    def dictionary_map(self) -> Dictionary:
+        return Dictionary.from_config(self.dictionary)
 
 
 @dataclass

@@ -12,16 +12,20 @@ explicacao que o painel de alertas mostra ao usuario.
 
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
+from collections.abc import Mapping
 
 import chess
 import Levenshtein
 
 from .issues import Candidate
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from .substitutions import (
+    SCOPE_TOKEN,
+    Dictionary,
+    Substitution,
+    load_base_dictionary,
+    merge_layers,
+)
 
 # Letras de peca por idioma de notacao.
 #
@@ -41,17 +45,6 @@ LOCALE_PIECE_MAPS: dict[str, dict[str, str]] = {
 }
 
 ENGLISH_PIECE_LETTERS = frozenset("KQRBN")
-
-# Confusoes de OCR conhecidas, aplicadas so no inicio de um token de lance.
-DEFAULT_OCR_PREFIXES: dict[str, str] = {
-    "4J": "N",
-    "tj": "N",
-    "tD": "N",
-    "tt": "R",
-    "lD": "Q",
-    "il": "B",
-    "i.": "B",
-}
 
 # Um token so e considerado candidato a lance se tiver cara de notacao:
 # ao menos uma letra, ao menos um digito de casa, e nenhum caractere estranho.
@@ -87,31 +80,33 @@ def looks_like_move(token: str) -> bool:
     return True
 
 
-def _load_data_file(name: str) -> dict[str, str]:
-    path = DATA_DIR / name
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return {str(key): str(value) for key, value in payload.items()}
+def as_dictionary(source: Dictionary | Mapping[str, str] | None) -> Dictionary:
+    """Aceita o dicionario novo ou o mapa antigo `{padrao: substituicao}`."""
+    if source is None:
+        return Dictionary()
+    if isinstance(source, Dictionary):
+        return source
+    return Dictionary.from_token_map(source)
 
 
 class CandidateResolver:
     """Propoe lances legais para um token que nao era SAN valido."""
 
-    def __init__(self, locale: str = "pt", dictionary: dict[str, str] | None = None):
+    def __init__(self, locale: str = "pt", dictionary: Dictionary | Mapping[str, str] | None = None):
         self.locale = locale
-        self.ocr_prefixes = dict(DEFAULT_OCR_PREFIXES)
-        self.ocr_prefixes.update(_load_data_file("substitutions.json"))
-        self.dictionary: dict[str, str] = dict(dictionary or {})
+        self.base = load_base_dictionary()
+        self.dictionary = as_dictionary(dictionary)
         # O documento provou estar escrito na notacao do idioma? Ver
         # `notation_is_confirmed` e `_expand`.
         self.notation_confirmed = False
 
     def set_locale(self, locale: str) -> None:
         self.locale = locale
+
+    @property
+    def active(self) -> Dictionary:
+        """Base embutida + o que o usuario acrescentou; o usuario vence."""
+        return merge_layers(self.base, self.dictionary)
 
     def set_notation_confirmed(self, confirmed: bool) -> None:
         self.notation_confirmed = confirmed
@@ -132,8 +127,10 @@ class CandidateResolver:
         return letter in ENGLISH_PIECE_LETTERS and mapping.get(letter, letter) != letter
 
     def learn(self, raw_token: str, san: str) -> None:
-        """Grava uma correcao confirmada pelo usuario."""
-        self.dictionary[raw_token] = san
+        """Grava uma correcao confirmada pelo usuario, no escopo mais estreito."""
+        self.dictionary = self.dictionary.with_entry(
+            Substitution(pattern=raw_token, replacement=san, scope=SCOPE_TOKEN, locale=self.locale)
+        )
 
     # ------------------------------------------------------------------
     # Geracao de hipoteses
@@ -157,13 +154,15 @@ class CandidateResolver:
         # leitura inglesa e aplicado no fim, em `resolve`, so a ela mesma.
         push(token, 1.0, "exato", token)
 
-        # 1. Dicionario do usuario: casamento exato do token inteiro.
-        if token in self.dictionary:
-            push(self.dictionary[token], 0.99, "dicionario", f"{token} -> {self.dictionary[token]} (dicionario)")
+        # 1. Dicionario do usuario, escopo de token: casamento exato e inteiro.
+        #    E o mais especifico que existe, e por isso o mais confiavel.
+        token_map = self.active.token_map(self.locale)
+        if token in token_map:
+            push(token_map[token], 0.99, "dicionario", f"{token} -> {token_map[token]} (dicionario)")
 
         # As etapas seguintes sao cumulativas: cada uma trabalha sobre o que a
         # anterior produziu, e a confianca e o produto dos fatores aplicados.
-        for stage in (self._strip_annotation, self._strip_novelty, self._suffix_words, self._ocr_prefix, self._fix_case, self._locale_piece):
+        for stage in (self._strip_annotation, self._strip_novelty, self._suffix_words, self._ocr_prefix, self._free_substitution, self._fix_case, self._locale_piece):
             for text, confidence, source, rationale in list(states):
                 result = stage(text)
                 if result is None:
@@ -201,10 +200,26 @@ class CandidateResolver:
         return None
 
     def _ocr_prefix(self, token: str):
-        for bad, good in sorted(self.ocr_prefixes.items(), key=lambda item: -len(item[0])):
+        prefixes = self.active.prefix_map(self.locale)
+        for bad, good in sorted(prefixes.items(), key=lambda item: -len(item[0])):
             if token.startswith(bad) and len(token) > len(bad):
                 converted = good + token[len(bad) :]
                 return (converted, 0.92, "ocr", f"ruido de OCR: {token} -> {converted}")
+        return None
+
+    def _free_substitution(self, token: str):
+        """Escopo `livre`: troca em qualquer trecho do token.
+
+        Nao ha risco de corromper prosa aqui -- so chegam tokens com cara de
+        lance, e o resultado ainda precisa ser legal. O risco e outro: e o
+        escopo que mais produz lance legal **errado**, e por isso vale menos
+        que os demais e a interface o marca como arriscado.
+        """
+        for pattern, replacement in self.active.free_list(self.locale):
+            if pattern and pattern in token:
+                converted = token.replace(pattern, replacement)
+                if converted and converted != token:
+                    return (converted, 0.88, "livre", f"substituicao livre: {token} -> {converted}")
         return None
 
     def _fix_case(self, token: str):

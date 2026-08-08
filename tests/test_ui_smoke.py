@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 # `tests/` nao e pacote: o discover (e o pytest) poem a pasta no sys.path.
 from test_engine import HANGING_KNIGHT_FEN, shallow_search  # noqa: E402
@@ -19,6 +20,7 @@ from pgn_live_editor.services.engine_service import (  # noqa: E402
     EngineSettings,
     scan_mainline,
 )
+from pgn_live_editor.ui.dictionary_dialog import DictionaryDialog  # noqa: E402
 from pgn_live_editor.ui.editor_panel import EditorPanel  # noqa: E402
 from pgn_live_editor.ui.header_dialog import HeaderDialog  # noqa: E402
 from pgn_live_editor.ui.main_window import MainWindow  # noqa: E402
@@ -259,7 +261,7 @@ class MainWindowSmokeTests(unittest.TestCase):
         issue = next(issue for issue in panel.issues if issue.code == "AMBIGUOUS_MOVE")
         self.window._learn_issue(issue)
 
-        self.assertEqual({"Bh5": "Bb5"}, self.window.project.dictionary)
+        self.assertEqual({"Bh5": "Bb5"}, self.window.project.dictionary.token_map("pt"))
         # Agora a mesma leitura entra com confianca de dicionario, sem pedir revisao.
         self.assertEqual([], [i for i in panel.issues if i.severity == "warning"])
         self.assertFalse(self.window.editor_panel.current_ast.moves[-1].needs_review)
@@ -297,6 +299,59 @@ BOOK_DOCUMENT = (
     '[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]\n[SetUp "1"]\n'
     "\n1.e4 Kf6 2.e5+ Kf5 *\n"
 )
+
+
+class DictionaryInTheWindowTests(unittest.TestCase):
+    """Fase 5: o dicionario aprendiz."""
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
+
+    def _ambiguous_issue(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5")
+        return next(issue for issue in self.window.issues_panel.issues if issue.code == "AMBIGUOUS_MOVE")
+
+    def test_the_third_acceptance_offers_to_learn_the_correction(self):
+        counters = self.window.project.state.accepted_corrections
+        issue = self._ambiguous_issue()
+        candidate = issue.best_candidate
+
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as asked:
+            for _ in range(2):
+                self.window._count_acceptance(issue, candidate)
+            self.assertEqual(0, asked.call_count, "duas vezes ainda e coincidencia")
+
+            self.window._count_acceptance(issue, candidate)
+            self.assertEqual(1, asked.call_count, "na terceira, o programa pergunta")
+
+        self.assertEqual(3, counters["Bh5→Bb5"])
+        self.assertEqual({"Bh5": "Bb5"}, self.window.project.dictionary.token_map("pt"))
+
+    def test_declining_the_offer_leaves_the_dictionary_alone(self):
+        issue = self._ambiguous_issue()
+        candidate = issue.best_candidate
+
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            for _ in range(3):
+                self.window._count_acceptance(issue, candidate)
+
+        self.assertEqual(0, len(self.window.project.dictionary))
+
+    def test_the_dialog_lists_the_three_layers_with_their_reach(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5 Bh5")
+        self.window._learn_substitution("Bh5", "Bb5")
+
+        dialog = DictionaryDialog(
+            self.window.dictionary_service,
+            self.window.editor_panel.document_text(),
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        rows = [(entry.layer, entry.pattern, count) for entry, count, _ in dialog._rows]
+        self.assertIn(("projeto", "Bh5", 2), rows)
+        self.assertTrue(any(layer == "base" for layer, _pattern, _count in rows))
 
 
 class EngineIssuesInTheWindowTests(unittest.TestCase):

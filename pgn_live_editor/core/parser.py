@@ -15,6 +15,7 @@ from .candidates import (
     CONFIDENCE_AUTO_APPLY,
     CONFIDENCE_PROVISIONAL,
     CandidateResolver,
+    as_dictionary,
 )
 from .issues import (
     ACTION_ACCEPT,
@@ -123,8 +124,8 @@ class TolerantParser:
     def set_locale(self, locale: str) -> None:
         self.resolver.set_locale(locale)
 
-    def set_dictionary(self, dictionary: dict[str, str]) -> None:
-        self.resolver.dictionary = dict(dictionary)
+    def set_dictionary(self, dictionary) -> None:
+        self.resolver.dictionary = as_dictionary(dictionary)
 
     def set_ignored_tokens(self, tokens: Iterable[str]) -> None:
         self._ignored_tokens = set(tokens)

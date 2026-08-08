@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from pgn_live_editor.core.substitutions import SCOPE_PREFIX, Dictionary, Substitution
 from pgn_live_editor.services import project_service
 from pgn_live_editor.services.project_service import (
     PROJECT_SUFFIX,
@@ -42,7 +43,7 @@ class ProjectRoundTripTests(unittest.TestCase):
             raw_text=BOOK_TEXT,
             meta=ProjectMeta(title="Smyslov", author="V. Smyslov", source="Livro X", locale="pt"),
             header_template={"Event": "Torneio", "Site": "Moscou"},
-            dictionary={"tD": "N"},
+            dictionary=Dictionary([Substitution(pattern="tD", replacement="N", scope=SCOPE_PREFIX)]),
             state=ProjectState(cursor_position=42, ignored_issue_tokens=["[D]"]),
         )
 
@@ -54,10 +55,26 @@ class ProjectRoundTripTests(unittest.TestCase):
         self.assertEqual("Smyslov", reopened.meta.title)
         self.assertEqual("pt", reopened.meta.locale)
         self.assertEqual({"Event": "Torneio", "Site": "Moscou"}, reopened.header_template)
-        self.assertEqual({"tD": "N"}, reopened.dictionary)
+        self.assertEqual({"tD": "N"}, reopened.dictionary.prefix_map("pt"))
+        self.assertEqual(SCOPE_PREFIX, list(reopened.dictionary)[0].scope)
         self.assertEqual(42, reopened.state.cursor_position)
         self.assertEqual(["[D]"], reopened.state.ignored_issue_tokens)
         self.assertGreater(reopened.meta.saved_at, 0.0)
+
+    def test_a_project_saved_before_the_scoped_dictionary_still_opens(self):
+        """Formato antigo: `dictionary.json` era um mapa simples."""
+        path = save_project(Project(raw_text="1.e4"), self.tmp / "antigo")
+        with zipfile.ZipFile(path) as archive:
+            kept = {name: archive.read(name) for name in archive.namelist()}
+        kept["dictionary.json"] = b'{"Bh5": "Bb5"}'
+
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, payload in kept.items():
+                archive.writestr(name, payload)
+
+        reopened = load_project(path)
+
+        self.assertEqual({"Bh5": "Bb5"}, reopened.dictionary.token_map("pt"))
 
     def test_accented_text_survives_the_zip(self):
         text = "{Excelente desenvolvimento das pretas. Ameaça mate.} 1.e4 e5"
