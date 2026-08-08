@@ -15,10 +15,11 @@ Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 | 2 · Parar a corrupção silenciosa | ✅ concluída |
 | 3 · Gestos de edição | ✅ concluída |
 | 4 · Escala de livro | ✅ concluída |
-| 5 · Assistentes | 🔶 motor entregue; dicionário e PDF pendentes |
-| 6 · Polimento | 🔶 corpus entregue; o resto pendente |
+| 5 · Assistentes | ✅ concluída |
+| 6 · Polimento | ✅ concluída |
 
-240 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
+339 testes passando, cobertura de 93 % em `core/`, lint, formatação e tipos limpos.
+O CI roda os quatro (`ruff check`, `ruff format --check`, `mypy`, `coverage`).
 
 ---
 
@@ -159,8 +160,26 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
   texto bruto com um clique. Havendo empate, o alerta lista e não aplica.
 - `ScanFindings` amarra a varredura ao texto que a produziu — mesma ideia do `SegmentDigest`.
   Sem isso os alertas do motor sumiriam no primeiro caractere digitado.
-- Falta: `dictionary_service.py` com as três camadas e o editor, aprendizado após 3
-  aceitações, painel de PDF e modo dupla visão.
+**Fase entregue por inteiro.** O que veio depois do motor:
+
+- `dictionary_service.py` com as três camadas (embutida → minha → deste projeto) e
+  **escopo explícito** por substituição: token inteiro, início do lance ou qualquer
+  trecho. O escopo era a peça que faltava — é o que separa `Bh5 → Bb5` de uma regra
+  livre que mexe em trinta lances. O editor (`Ctrl+Shift+I`) mostra as três camadas
+  juntas com a coluna **Alcance**: quantos tokens do texto aberto agora cada regra
+  pega, antes de gravá-la.
+- **Aprendizado por repetição**: o programa conta as aceitações manuais e na
+  terceira oferece gravar a regra. Uma vez é acaso, duas é coincidência, três é o
+  scanner fazendo sempre a mesma coisa.
+- **Painel de PDF** (`F11`): a página à esquerda, o texto extraído dela embaixo,
+  `Ctrl+Enter` manda a seleção para o cursor. Página e caminho ficam no `.plez`.
+  Duas limitações do Qt decidiram o desenho e estão documentadas no módulo: o
+  `QPdfView` não deixa selecionar texto na página, e carregar o PDF por caminho
+  **prende o arquivo** do usuário pelo resto da sessão (por isso ele é lido para a
+  memória).
+- **Dupla visão** (`F12`): o realce apaga tudo que o programa apenas confirmou e
+  deixa aceso o que ele mexeu. Numa partida de 80 lances com três correções, são
+  as três que saltam — que é a única revisão que vale a pena fazer.
 
 ---
 
@@ -173,11 +192,22 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
   partida inteira. Todos eram invisíveis para teste sintético pelo mesmo motivo: os
   testes supunham notação inglesa e texto numa linha só, e livro nenhum é assim.
   Acrescentar uma página é largar dois arquivos na pasta — o runner acha sozinho.
-- Diálogo de promoção, arrastar-e-soltar, setas `[%cal]`/`[%csl]`.
-- Preferências: idioma, tema, fonte, caminho do motor, layout persistido.
-- Consistência de acentuação na UI (hoje "Nao", "Simbolos", "posicao" convivem com texto acentuado) e camada de tradução.
-- Empacotamento PyInstaller — executável Windows sem instalar Python.
-- Exportação `.json` estrutural e `.txt` normalizado.
+- ✅ **Tabuleiro**: diálogo de promoção (`Shift` promove a dama direto), arrastar-e-soltar
+  com peça fantasma, e setas e casas coloridas `[%cal]`/`[%csl]`. O programa passa a
+  **desenhar o que o livro escreveu** — a metade mais valiosa — e a escrever o que se
+  desenha nele, sempre dentro do comentário, no texto bruto.
+- ✅ **Preferências** (`Ctrl+,`): idioma, tema (escuro e claro, com as duas paletas
+  completas), fonte do editor, motor e layout, em `app.db`. SQLite não pelo conteúdo,
+  mas porque a gravação acontece **ao fechar a janela** — e um JSON truncado nessa hora
+  perde tudo.
+- ✅ **Acentuação da interface**: todo texto que aparece na tela. Docstring e comentário
+  ficaram em ASCII de propósito — a linha divisória é o que o usuário lê.
+- ✅ **Empacotamento PyInstaller**: `packaging/pgn-live-editor.spec`, executável de
+  109 MB construído e aberto de verdade.
+- ✅ **Exportação `.json` estrutural e `.txt` normalizado**. O `.json` é a única saída
+  que não perde nada: span no texto bruto, confiança e o que o programa leu antes de
+  corrigir. O `.txt` é o oposto — só número e lance, para passar o olho ao lado da
+  página impressa.
 
 ---
 
@@ -193,9 +223,9 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
 | 4 · Escala de livro | 2–3 | múltiplas partidas, FEN, lote | D6, D10, D12 |
 | ↳ *situação* | ✅ | painel de partidas, `.plez` com concluídas, exportação em lote | |
 | 5 · Assistentes | 3–4 | dicionário aprendiz, motor, PDF | — (novas funções) |
-| ↳ *situação* | 🔶 | motor com `SUSPECT_BLUNDER` (`Ctrl+E`); falta dicionário e PDF | |
+| ↳ *situação* | ✅ | `SUSPECT_BLUNDER`, dicionário em três camadas, PDF, dupla visão | |
 | 6 · Polimento | contínuo | corpus, empacotamento, i18n | D13 restante |
-| ↳ *situação* | 🔶 | corpus de páginas de livro | D15–D19 |
+| ↳ *situação* | ✅ | corpus, tabuleiro, preferências, i18n, `.exe`, CI completo | D13, D15–D19 |
 
 **Total até um produto completo: cerca de 12 a 16 semanas.** Mas o programa já fica substancialmente melhor no fim da **fase 1** (nunca mais perder trabalho) e a dor real de transcrever livro desaparece no fim da **fase 3**.
 

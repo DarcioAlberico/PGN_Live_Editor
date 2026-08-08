@@ -4,11 +4,18 @@
 > Todos os defeitos abaixo foram **reproduzidos empiricamente** contra o pipeline real (venv do projeto),
 > não são suposições de leitura de código.
 
-> **Status (fases 0–4 implementadas, fase 5 em andamento).** Corrigidos e travados por teste de regressão:
-> **D1 a D12**, a validação de cabeçalho de **D13**, e **D15 a D19** (achados depois, pelo corpus).
-> `tests/test_regressions.py` tem um caso por defeito. Continua em aberto o restante de **D13/D14**
-> (diálogo de promoção, empacotamento, i18n — fase 6). Os 9 pontos órfãos `10... .` dos arquivos em
-> `Trabalhos Salvos/` desaparecem ao reabrir e reexportar.
+> **Status: todas as fases implementadas.** Corrigidos e travados por teste: **D1 a D19**, sem
+> exceção. `tests/test_regressions.py` tem um caso por defeito, e `tests/corpus/` tem páginas de
+> livro inteiras. Os 9 pontos órfãos `10... .` dos arquivos em `Trabalhos Salvos/` desaparecem ao
+> reabrir e reexportar.
+>
+> O que fechou por último, na fase 6: **diálogo de promoção** (o programa perguntava nada e promovia
+> a dama), **número do lance preto após variante**, **coordenadas e inversão do tabuleiro**,
+> **atalhos**, **`load_custom_dictionary`** — que era código morto prometendo um dicionário de
+> usuário e virou `dictionary_service.py` com três camadas —, **`find_entry_for_position`**, e a
+> **barra de status** com a conta do que o parser entendeu. De **D14** sobrava o empacotamento, que
+> agora é `packaging/pgn-live-editor.spec`, e o CI, que passou a rodar lint, formatação, tipos e
+> cobertura.
 
 ---
 
