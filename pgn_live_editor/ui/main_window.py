@@ -56,6 +56,7 @@ from .editor_panel import EditorPanel
 from .games_panel import GamesPanel
 from .header_dialog import HeaderDialog
 from .issues_panel import IssuesPanel
+from .pdf_panel import PdfPanel
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
@@ -93,18 +94,23 @@ class MainWindow(QMainWindow):
         self.vertical_splitter.addWidget(self.splitter)
 
         self.games_panel = GamesPanel()
+        self.pdf_panel = PdfPanel()
         self.editor_panel = EditorPanel()
         self.chess_panel = ChessPanel()
 
         self.splitter.addWidget(self.games_panel)
+        self.splitter.addWidget(self.pdf_panel)
         self.splitter.addWidget(self.editor_panel)
         self.splitter.addWidget(self.chess_panel)
         self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setStretchFactor(1, 2)
         self.splitter.setStretchFactor(2, 3)
-        self.splitter.setSizes([210, 560, 500])
-        # Um livro de uma partida so nao precisa de lista de partidas.
+        self.splitter.setStretchFactor(3, 3)
+        self.splitter.setSizes([210, 420, 560, 500])
+        # Um livro de uma partida so nao precisa de lista de partidas, e quem
+        # nao tem o PDF a mao nao precisa do painel dele ocupando a tela.
         self.games_panel.setVisible(False)
+        self.pdf_panel.setVisible(False)
 
         self.issues_panel = IssuesPanel()
         self.vertical_splitter.addWidget(self.issues_panel)
@@ -138,6 +144,9 @@ class MainWindow(QMainWindow):
         self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
         self.issues_panel.learn_requested_signal.connect(self._learn_issue)
         self.issues_panel.comment_requested_signal.connect(self._comment_issue)
+        self.pdf_panel.text_requested_signal.connect(self._insert_from_pdf)
+        self.pdf_panel.page_changed_signal.connect(self._on_pdf_page_changed)
+        self.pdf_panel.document_opened_signal.connect(self._on_pdf_opened)
         self.engine_scanner.finished_signal.connect(self._on_engine_scan_finished)
         self.engine_scanner.failed_signal.connect(self._on_engine_scan_failed)
 
@@ -189,6 +198,9 @@ class MainWindow(QMainWindow):
         self._add_action(book_menu, "Converter marcadores de diagrama", None, self._normalize_diagrams)
         book_menu.addSeparator()
         self._add_action(book_menu, "Mostrar/ocultar lista de partidas", "F10", self._toggle_games_panel)
+        book_menu.addSeparator()
+        self._add_action(book_menu, "Abrir o PDF do livro...", None, self.pdf_panel.choose_pdf)
+        self._add_action(book_menu, "Mostrar/ocultar o PDF", "F11", self._toggle_pdf_panel)
 
         structure_menu = self.menuBar().addMenu("&Estrutura")
         self._add_action(structure_menu, "Envolver em comentario", "Ctrl+K", self._wrap_comment)
@@ -323,6 +335,7 @@ class MainWindow(QMainWindow):
             ignored_tokens=project.state.ignored_issue_tokens,
         )
         self.games_panel.set_completed(project.state.completed_games)
+        self._restore_pdf(project)
         self.editor_panel.load_document_text(project.raw_text, project.state.cursor_position)
         self._last_autosaved_text = project.raw_text
         self._chars_since_autosave = 0
@@ -331,6 +344,20 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
         self._update_window_title()
         self.statusBar().showMessage(f"Projeto aberto: {path.name}", 5000)
+
+    def _restore_pdf(self, project):
+        """O PDF que acompanha o trabalho, na pagina em que se parou."""
+        target = project.state.pdf_path
+        if not target or not Path(target).is_file():
+            self.pdf_panel.close_pdf()
+            self.pdf_panel.setVisible(False)
+            return
+
+        problem = self.pdf_panel.open_pdf(Path(target), project.state.pdf_page)
+        if problem:
+            self._report(problem)
+            return
+        self.pdf_panel.setVisible(True)
 
     def save_project(self) -> bool:
         if self.project.path is None:
@@ -461,6 +488,31 @@ class MainWindow(QMainWindow):
 
     def _toggle_games_panel(self):
         self.games_panel.setVisible(not self.games_panel.isVisible())
+
+    def _toggle_pdf_panel(self):
+        self.pdf_panel.setVisible(not self.pdf_panel.isVisible())
+
+    # ------------------------------------------------------------------
+    # PDF ao lado (fase 5)
+    # ------------------------------------------------------------------
+
+    def _insert_from_pdf(self, text: str):
+        """O trecho escolhido no PDF entra no cursor, como uma colagem normal."""
+        self.editor_panel.insert_text_at_cursor(text)
+        self.editor_panel.text_edit.setFocus()
+        self._report(f"{len(text)} caractere(s) vindos do PDF.")
+
+    def _on_pdf_page_changed(self, page: int):
+        """A pagina fica guardada no projeto: reabrir volta onde parou."""
+        if self.project.state.pdf_page != page:
+            self.project.state.pdf_page = page
+            self._state_dirty = True
+
+    def _on_pdf_opened(self, path: str):
+        self.project.state.pdf_path = path
+        self._state_dirty = True
+        self.pdf_panel.setVisible(True)
+        self._update_window_title()
 
     def _set_start_fen_from_board(self):
         self._report(self.editor_panel.action_set_start_fen(self.chess_panel.board.fen()))
