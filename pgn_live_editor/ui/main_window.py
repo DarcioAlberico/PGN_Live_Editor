@@ -2,7 +2,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QByteArray, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -37,6 +37,7 @@ from ..services.export_service import (
     write_pgn,
 )
 from ..services.parse_worker import SegmentAnalysis, build_games_for_export
+from ..services.preferences_service import Layout, load_preferences, save_preferences
 from ..services.project_service import (
     PROJECT_SUFFIX,
     Project,
@@ -57,6 +58,8 @@ from .games_panel import GamesPanel
 from .header_dialog import HeaderDialog
 from .issues_panel import IssuesPanel
 from .pdf_panel import PdfPanel
+from .preferences_dialog import PreferencesDialog
+from .theme import apply_theme
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
@@ -69,11 +72,12 @@ class MainWindow(QMainWindow):
         self.resize(1280, 860)
 
         self.project = Project()
+        self.preferences = load_preferences()
         self._chars_since_autosave = 0
         self._last_autosaved_text = ""
         # Motor de xadrez (fase 5): opcional, sob demanda, fora da thread de UI.
         self.engine_settings: EngineSettings = load_engine_settings()
-        self.dictionary_service = DictionaryService(locale=self.project.meta.locale)
+        self.dictionary_service = DictionaryService(locale=self.preferences.locale)
         self.engine_scanner = EngineScanner(self)
         self._engine_findings: ScanFindings | None = None
         self._pending_engine_segment: tuple[str, int] = ("", 0)
@@ -160,6 +164,8 @@ class MainWindow(QMainWindow):
         self.autosave_timer.timeout.connect(self._autosave)
         self.autosave_timer.start()
 
+        self._apply_preferences()
+        self._restore_layout()
         self._update_window_title()
         QTimer.singleShot(0, self._offer_session_recovery)
 
@@ -186,6 +192,9 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Exportar o livro num arquivo...", None, self.export_book)
         self._add_action(file_menu, "Exportar uma partida por arquivo...", None, self.export_games_separately)
 
+        file_menu.addSeparator()
+        file_menu.addSeparator()
+        self._add_action(file_menu, "Preferencias...", "Ctrl+,", self.edit_preferences)
         file_menu.addSeparator()
         self._add_action(file_menu, "Sair", QKeySequence.StandardKey.Quit, self.close)
 
@@ -630,6 +639,69 @@ class MainWindow(QMainWindow):
             first_line = text.splitlines()[0]
             preview = first_line[:60] + ("..." if len(first_line) > 60 else "")
             self._report(f"Copiado: {preview}")
+
+    # ------------------------------------------------------------------
+    # Preferencias e layout (fase 6)
+    # ------------------------------------------------------------------
+
+    def edit_preferences(self):
+        dialog = PreferencesDialog(self.preferences, self)
+        if dialog.exec() != PreferencesDialog.DialogCode.Accepted:
+            return
+
+        self.preferences = dialog.values()
+        save_preferences(self.preferences)
+        self._apply_preferences()
+        self._report("Preferencias gravadas.")
+
+    def _apply_preferences(self):
+        """Poe as preferencias em uso agora, sem precisar reabrir o programa."""
+        application = QApplication.instance()
+        if application is not None:
+            apply_theme(application, self.preferences.theme)
+
+        self.editor_panel.set_theme(self.preferences.theme)
+        self.editor_panel.set_editor_font(
+            self.preferences.editor_font_family, self.preferences.editor_font_size
+        )
+        self.editor_panel.text_edit.auto_close_enabled = self.preferences.auto_close_delimiters
+        self.editor_panel.set_locale(self.preferences.locale)
+        self.dictionary_service.set_locale(self.preferences.locale)
+
+        self.engine_settings = replace(
+            self.engine_settings,
+            path=self.preferences.engine_path,
+            movetime_ms=self.preferences.engine_movetime_ms,
+            threshold_cp=self.preferences.engine_threshold_cp,
+        )
+        save_engine_settings(self.engine_settings)
+
+    def _restore_layout(self):
+        """Devolve a janela ao tamanho e a divisao em que foi fechada."""
+        layout = self.preferences.layout
+        if layout.geometry:
+            self.restoreGeometry(QByteArray.fromBase64(layout.geometry.encode("ascii")))
+        if layout.window_state:
+            self.restoreState(QByteArray.fromBase64(layout.window_state.encode("ascii")))
+        if layout.horizontal_splitter:
+            self.splitter.restoreState(QByteArray.fromBase64(layout.horizontal_splitter.encode("ascii")))
+        if layout.vertical_splitter:
+            self.vertical_splitter.restoreState(QByteArray.fromBase64(layout.vertical_splitter.encode("ascii")))
+
+        self.issues_panel.setVisible(layout.issues_panel_visible)
+        # A lista de partidas e o PDF continuam mandados pelo conteudo: aparecem
+        # quando ha livro e quando ha PDF, nao porque estavam abertos ontem.
+
+    def _capture_layout(self) -> Layout:
+        return Layout(
+            geometry=bytes(self.saveGeometry().toBase64()).decode("ascii"),
+            window_state=bytes(self.saveState().toBase64()).decode("ascii"),
+            horizontal_splitter=bytes(self.splitter.saveState().toBase64()).decode("ascii"),
+            vertical_splitter=bytes(self.vertical_splitter.saveState().toBase64()).decode("ascii"),
+            games_panel_visible=self.games_panel.isVisible(),
+            pdf_panel_visible=self.pdf_panel.isVisible(),
+            issues_panel_visible=self.issues_panel.isVisible(),
+        )
 
     def _toggle_issues_panel(self):
         self.issues_panel.setVisible(not self.issues_panel.isVisible())
@@ -1077,6 +1149,8 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
+        self.preferences.layout = self._capture_layout()
+        save_preferences(self.preferences)
         self.editor_panel.shutdown()
         self.engine_scanner.shutdown()
         clear_recovery_snapshot()

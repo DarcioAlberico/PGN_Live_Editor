@@ -39,6 +39,8 @@ from ..services.parse_worker import (
     ParseConfig,
     SegmentAnalysis,
 )
+from ..services.preferences_service import THEME_DARK
+from .theme import palette_of
 
 SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = (
     ("!", "$1", "Bom lance"),
@@ -165,6 +167,7 @@ class EditorPanel(QWidget):
         self.current_move_span = None
         # Dupla visao: quando ligada, o realce apaga o que so foi confirmado.
         self.review_mode = False
+        self.theme = THEME_DARK
         self._suspend_cursor_sync = False
         self._symbol_palette_dialog: SymbolPaletteDialog | None = None
 
@@ -590,28 +593,30 @@ class EditorPanel(QWidget):
         deslocado para a posicao atual delas -- por isso elas nao apagam quando
         uma edicao acima empurra o texto.
         """
+        colors = palette_of(self.theme)
+
         fmt_valid = QTextCharFormat()
-        fmt_valid.setForeground(QColor("#78aefc"))
+        fmt_valid.setForeground(QColor(colors["move"]))
         fmt_valid.setFontWeight(QFont.Weight.Bold)
 
         fmt_valid_variation = QTextCharFormat(fmt_valid)
-        fmt_valid_variation.setForeground(QColor("#9fc4ff"))
+        fmt_valid_variation.setForeground(QColor(colors["move_variation"]))
         fmt_valid_variation.setFontWeight(QFont.Weight.Normal)
 
         fmt_fixed = QTextCharFormat()
-        fmt_fixed.setForeground(QColor("#95e1a7"))
+        fmt_fixed.setForeground(QColor(colors["fixed"]))
         fmt_fixed.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SingleUnderline)
-        fmt_fixed.setUnderlineColor(QColor("#5bb974"))
+        fmt_fixed.setUnderlineColor(QColor(colors["fixed_underline"]))
         fmt_fixed.setFontWeight(QFont.Weight.Bold)
 
         fmt_fixed_variation = QTextCharFormat(fmt_fixed)
         fmt_fixed_variation.setFontWeight(QFont.Weight.Normal)
 
-        # Amarelo pontilhado: aplicado em carater provisorio, pendente de conferencia.
+        # Pontilhado: aplicado em carater provisorio, pendente de conferencia.
         fmt_review = QTextCharFormat()
-        fmt_review.setForeground(QColor("#f0c05a"))
+        fmt_review.setForeground(QColor(colors["review"]))
         fmt_review.setUnderlineStyle(QTextCharFormat.UnderlineStyle.DotLine)
-        fmt_review.setUnderlineColor(QColor("#f0c05a"))
+        fmt_review.setUnderlineColor(QColor(colors["review"]))
         fmt_review.setFontWeight(QFont.Weight.Bold)
 
         fmt_review_variation = QTextCharFormat(fmt_review)
@@ -619,8 +624,8 @@ class EditorPanel(QWidget):
 
         fmt_error = QTextCharFormat()
         fmt_error.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
-        fmt_error.setUnderlineColor(QColor("#ff6666"))
-        fmt_error.setForeground(QColor("#ffd5d5"))
+        fmt_error.setUnderlineColor(QColor(colors["error_underline"]))
+        fmt_error.setForeground(QColor(colors["error_text"]))
         fmt_error.setFontWeight(QFont.Weight.Bold)
 
         fmt_error_variation = QTextCharFormat(fmt_error)
@@ -632,7 +637,7 @@ class EditorPanel(QWidget):
             # apenas confirmou apaga; o que ele tocou fica como estava. Numa
             # partida de 80 lances com tres correcoes, sao as tres que saltam.
             fmt_valid = QTextCharFormat()
-            fmt_valid.setForeground(QColor("#5a6070"))
+            fmt_valid.setForeground(QColor(colors["confirmed_dimmed"]))
             fmt_valid_variation = QTextCharFormat(fmt_valid)
 
         formats = {
@@ -653,6 +658,14 @@ class EditorPanel(QWidget):
         self._apply_current_selection()
 
     # ------------------------------------------------------------------
+
+    def set_theme(self, theme: str):
+        self.theme = theme
+        self._apply_highlights(self.analysis)
+
+    def set_editor_font(self, family: str, size: int):
+        font = QFont(family, size)
+        self.text_edit.setFont(font)
 
     def set_review_mode(self, enabled: bool):
         """Liga a dupla visao: confirmado apaga, tocado permanece."""
@@ -682,7 +695,7 @@ class EditorPanel(QWidget):
             return
 
         fmt_current = QTextCharFormat()
-        fmt_current.setBackground(QColor("#4b5568"))
+        fmt_current.setBackground(QColor(palette_of(self.theme)["current_move"]))
 
         start_index, end_index = self.current_move_span
         self.text_edit.setExtraSelections([self._make_selection(start_index, end_index, fmt_current)])
