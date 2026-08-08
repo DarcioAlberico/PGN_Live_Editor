@@ -125,6 +125,28 @@ Prosa nunca e alterada: `chances`, `Cada`, `Chega` e `mate` continuam exatamente
 escreveu. A troca de letra de peca so acontece sobre um token com cara de lance **e** so se o
 resultado for legal na posicao.
 
+O programa tambem descobre sozinho em que idioma o livro esta escrito. Achando um `Cf3`
+ou um `Dc7` -- letras que nao existem na notacao inglesa -- ele passa a ler `Rh1` como
+**Rei**, e nao como Torre. Num final de torre as duas leituras costumam ser legais na
+mesma posicao, e escolher errado estraga a partida inteira dali para frente. Num PGN
+ingles importado nada disso acontece: sem a prova, `Re1` continua sendo a torre.
+
+### O motor desconfia por voce
+
+`Ctrl+E` manda o motor conferir a linha principal da partida sob o cursor. Ele nao esta
+ali para analisar a partida -- esta para **desconfiar do OCR**. Um lance mal lido tambem
+e um lance legal, e por isso passa por todas as outras verificacoes; o que o entrega e a
+avaliacao despencar sem o livro ter marcado com `?`. Se fosse erro do mestre, o livro
+teria comentado.
+
+Quando existe um lance legal a um caractere do que foi lido, e so ele nao perde material,
+o alerta ja vem com o conserto pronto para gravar. Havendo mais de um, o alerta lista e
+**nao aplica**.
+
+O motor e opcional: sem Stockfish instalado o programa segue inteiro. Ele e procurado no
+`PATH`, na variavel `PGN_LIVE_EDITOR_ENGINE` ou no caminho que voce apontar em
+*Revisao - Motor de xadrez...*.
+
 ### Seguranca do trabalho
 
 - **Autosave** a cada 30 s ou a cada 200 caracteres digitados.
@@ -150,6 +172,7 @@ resultado for legal na posicao.
 | `Ctrl+F` | inverter tabuleiro |
 | `F8` / `Shift+F8` | proximo / anterior alerta |
 | `F4` | aceitar a correcao do alerta selecionado |
+| `Ctrl+E` | conferir a partida com o motor |
 | `F9` / `F10` | mostrar/ocultar o painel de alertas / a lista de partidas |
 | `Ctrl+Z` | desfazer (funciona tambem em *Join Lines* e *Inserir Headers*) |
 
@@ -160,6 +183,21 @@ Executar os testes:
 ```powershell
 uv run python -m unittest discover -s tests
 ```
+
+### Corpus de regressao
+
+`tests/corpus/` guarda paginas de livro em texto bruto com o PGN que cada uma **tem** que
+produzir. E o unico teste que roda o programa na direcao em que ele e usado de verdade --
+texto colado entra, PGN sai -- e por isso e o que mede a coisa que interessa: nenhum lance
+perdido em silencio.
+
+Para acrescentar uma pagina bastam dois arquivos, `nome.txt` e `nome.expected.pgn`; o
+runner acha sozinho. Os detalhes estao em [tests/corpus/README.md](tests/corpus/README.md).
+
+Vale o aviso: no primeiro dia em que rodou, o corpus achou cinco defeitos que 225 testes
+verdes nao achavam -- entre eles, comentario de mais de uma linha sendo lido como chave
+aberta, e `R` de Rei sendo lido como Torre. Uma pagina que quebra hoje vale mais que dez
+que passam.
 
 Lint:
 

@@ -1,0 +1,20 @@
+[Event "Torneio de Hastings"]
+[Site "Hastings"]
+[Date "1895.08.15"]
+[White "W. STEINITZ"]
+[Black "C. VON BARDELEBEN"]
+[Result "1-0"]
+
+1.e4 e5 2.Cf3 Cc6 3.Bc4 Bc5 4.c3 Cf6 5.d4 exd4 6.cxd4 Bb4+ 7.Cc3
+d5 8.exd5 Cxd5 9.O-O Be6 10.Bg5 Be7 11.Bxd5 Bxd5 12.Cxd5 Dxd5
+13.Bxe7 Cxe7 14.Te1 f6 15.De2 Dd7 16.Tac1 c6 17.d5 cxd5 18.Cd4
+Rf7 19.Ce6 Thc8 20.Dg4 g6 21.Cg5+ Re8 22.Txe7+ {O lance mais
+famoso da historia do xadrez: a torre e imune nas duas capturas.}
+Rf8 23.Tf7+ Rg8 24.Tg7+ Rh8 25.Txh7+ 1-0
+
+=== Partida 2 ===
+
+1.d4 Cf6 2.c4 e6 3.Cc3 Bb4 4.Dc2 d5 5.cxd5 exd5 6.Bg5 h6 7.Bh4
+c5 8.O-O-O Bxc3 9.Dxc3 g5 10.Bg3 cxd4 11.Dxd4 Cc6 12.Da4 Bf5
+13.e3 Tc8 14.Bd3 Dd7 {As negras ficam com a iniciativa nas duas
+colunas abertas.} 15.Rb1 Bxd3+ 16.Txd3 Df5 0-1

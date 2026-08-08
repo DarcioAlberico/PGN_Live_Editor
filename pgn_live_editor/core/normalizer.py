@@ -18,6 +18,28 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+# Onde um comentario termina -- regra unica, usada aqui e no tokenizador.
+#
+# Duas exigencias opostas se encontram aqui. Uma pagina de livro quebra o texto
+# em linhas, entao um comentario legitimo **precisa** poder ocupar varias linhas.
+# Ao mesmo tempo, uma `{` recem-digitada nao pode engolir o resto do capitulo
+# (era o D7). A regra que atende as duas: **se existe `}` no mesmo paragrafo, o
+# comentario vai ate la, atravessando quantas linhas forem; se nao existe, ele
+# para no fim da linha.** A linha em branco e o limite porque nenhum paragrafo
+# de livro tem uma no meio -- e uma `}` do outro lado dela pertence a outro
+# comentario, nao a este.
+COMMENT_PATTERN = (
+    r'\{(?:[^}\n]|\n(?![ \t]*(?:\n|$)))*\}'  # fechado: pode ocupar varias linhas
+    r'|\{[^}\n]*'                            # aberto: vale so ate o fim da linha
+)
+COMMENT_RE = re.compile(COMMENT_PATTERN, re.MULTILINE)
+
+
+def comment_span_end(text: str, start: int) -> int:
+    """Fim (exclusivo) do comentario aberto em `start`."""
+    match = COMMENT_RE.match(text, start)
+    return match.end() if match else start + 1
+
 
 @dataclass
 class NormalizedText:
@@ -156,9 +178,9 @@ class LiveTextNormalizer:
     def _apply_outside_comments(self, text: str, raw_spans: list[tuple[int, int]], transform) -> NormalizedText:
         """Executa `transform` so fora de `{...}`.
 
-        Uma chave sem fechamento vale ate o **fim da linha**, nao ate o fim do
-        documento: antes, digitar `{` fazia todo o resto do capitulo parar de
-        ser analisado ate a chave ser fechada.
+        O limite do comentario e o de `comment_span_end`: fechado, ele pode
+        ocupar varias linhas; aberto, para no fim da linha, para que digitar `{`
+        nao faca o resto do capitulo parar de ser analisado.
         """
         parts: list[str] = []
         spans: list[tuple[int, int]] = []
@@ -175,12 +197,7 @@ class LiveTextNormalizer:
                 parts.append(normalized.text)
                 spans.extend(normalized.raw_spans)
 
-            comment_end = text.find('}', index)
-            line_end = text.find('\n', index)
-            if comment_end == -1 or (line_end != -1 and line_end < comment_end):
-                comment_slice_end = line_end if line_end != -1 else len(text)
-            else:
-                comment_slice_end = comment_end + 1
+            comment_slice_end = comment_span_end(text, index)
 
             parts.append(text[index:comment_slice_end])
             spans.extend(raw_spans[index:comment_slice_end])

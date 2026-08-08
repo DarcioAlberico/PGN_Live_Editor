@@ -263,6 +263,133 @@ class CascadeTests(unittest.TestCase):
         self.assertTrue(any(issue.is_cascade for issue in errors[1:]), "erros seguintes deveriam ser cascata")
 
 
+class D15MultiLineCommentTests(unittest.TestCase):
+    """D15: comentario que ocupa varias linhas era lido como chave aberta.
+
+    Achado pelo corpus. Toda pagina de livro quebra texto em linhas, entao o
+    defeito atingia praticamente **todo** comentario de verdade -- e passou
+    despercebido porque os arquivos salvos guardam cada comentario numa unica
+    linha comprida.
+    """
+
+    def test_a_comment_may_span_lines(self):
+        ast = parse("1.e4 e5 {um comentario\nque continua na linha seguinte} 2.Nf3 Nc6")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in ast.moves])
+        self.assertEqual([], ast.issues)
+        self.assertEqual(["um comentario\nque continua na linha seguinte"], ast.moves[1].comments_after)
+
+    def test_an_unclosed_brace_still_stops_at_the_end_of_the_line(self):
+        """A protecao do D7 continua de pe: nao havendo `}`, vale so a linha."""
+        ast = parse("1.e4 e5 {comentario que ficou aberto\n2.Nf3 Nc6")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in ast.moves])
+        self.assertIn("UNCLOSED_BRACE", [issue.code for issue in ast.issues])
+
+    def test_a_blank_line_closes_the_comment_even_with_a_brace_further_down(self):
+        """A `}` do outro lado de um paragrafo pertence a outro comentario."""
+        ast = parse("1.e4 e5 {comentario aberto\n\n2.Nf3 Nc6 {outro} 3.Bb5")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in ast.moves])
+        self.assertIn("UNCLOSED_BRACE", [issue.code for issue in ast.issues])
+
+
+class D16PortugueseKingTests(unittest.TestCase):
+    """D16: `R` e Rei em portugues e Torre em ingles.
+
+    Achado pelo corpus, num final de torre -- onde as duas leituras costumam ser
+    legais na mesma posicao. O programa escolhia a torre e destruia a partida do
+    primeiro lance de rei em diante.
+    """
+
+    # Ponte de Lucena: `Tc4` prova que o documento chama torre de `T`.
+    LUCENA = "1K6/1P6/8/8/8/8/r7/2R3k1 w - - 0 1"
+
+    def test_a_document_that_says_T_for_rook_reads_R_as_king(self):
+        ast = parse("1.Tc4 Ta1 2.Rc7 Tc1 3.Rb6 Tb1+", start_fen=self.LUCENA)
+
+        self.assertEqual(["Rc4", "Ra1", "Kc7", "Rc1", "Kb6", "Rb1+"], [move.display_san for move in ast.moves])
+        self.assertEqual([], [issue for issue in ast.issues if issue.severity != "info"])
+
+    def test_an_english_document_keeps_reading_R_as_rook(self):
+        """PGN ingles importado nao pode virar partida de rei."""
+        ast = parse("1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 4.Ba4 Nf6 5.O-O Be7 6.Re1 b5")
+
+        self.assertEqual("Re1", ast.moves[10].display_san)
+        self.assertEqual([], ast.issues)
+
+    def test_the_english_reading_stays_on_the_list_as_an_alternative(self):
+        resolver = CandidateResolver(locale="pt")
+        resolver.set_notation_confirmed(True)
+        # Rei em b8 e torre em c4: `Rc7` e legal como Rei **e** como Torre.
+        board = chess.Board("1K6/1P6/8/8/2R5/8/r7/6k1 w - - 0 1")
+
+        candidates = resolver.resolve("Rc7", board)
+
+        self.assertEqual("Kc7", candidates[0].san)
+        self.assertIn("Rc7", [candidate.san for candidate in candidates])
+        self.assertGreater(candidates[0].confidence, candidates[1].confidence)
+
+
+class D17VariationAnchorInForeignNotationTests(unittest.TestCase):
+    """D17: a ancora da variante era escolhida sem olhar os lances.
+
+    A pontuacao so entendia `SAN_MOVE`. Num livro em portugues **nenhum** lance
+    e SAN, entao o tabuleiro nao andava durante a pontuacao e o numero de lance
+    seguinte era comparado com uma posicao parada -- a variante ia parar no
+    lance errado.
+    """
+
+    def test_the_variation_hangs_from_the_move_its_number_points_to(self):
+        ast = parse("1.e4 e5 2.Cf3 Cc6 3.Bb5 a6 (3. ...Cf6 4.O-O Cxe4) 4.Ba4")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4"], [move.display_san for move in ast.moves])
+
+        # `3...Cf6` e alternativa a `a6`, entao pendura em `Bb5`, depois dele.
+        owner = ast.moves[4]
+        self.assertEqual("Bb5", owner.display_san)
+        self.assertEqual([True], owner.variation_anchor_after)
+        self.assertEqual(["Nf6", "O-O", "Nxe4"], [move.display_san for move in owner.variations[0]])
+        self.assertEqual([], [move for move in ast.moves[5:] if move.variations])
+        self.assertEqual([], [issue for issue in ast.issues if issue.severity != "info"])
+
+
+class D18MoveBetweenCommentsTests(unittest.TestCase):
+    """D18: lance entre dois comentarios era descartado como prosa.
+
+    `18.Tf2 {e se} Dc8 {entao} 19.Tc1` e escrita corrente de livro. O candidato
+    so contava como lance se tivesse notacao **ao lado**, e comentario nao
+    contava -- o lance sumia sem alerta nenhum, que e o pior defeito possivel
+    aqui (D3).
+    """
+
+    def test_a_move_surrounded_by_comments_is_still_a_move(self):
+        ast = parse("1.e4 e5 2.Cf3 {ameaca} Cc6 {defende} 3.Bb5")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in ast.moves])
+
+
+class D19GluedAnnotationTests(unittest.TestCase):
+    """D19: sinal de avaliacao colado ao lance derrubava o lance.
+
+    `Bg5!` em ingles se salvava (o SAN casa e o `!` vira NAG a parte), mas
+    `Tg5!` em portugues morria no filtro de candidato, antes de chegar a quem
+    sabe tirar o sufixo.
+    """
+
+    def test_a_glued_annotation_does_not_lose_the_move(self):
+        self.assertTrue(looks_like_move("Tg5!"))
+        self.assertTrue(looks_like_move("Cd5?"))
+
+        ast = parse("1.e4 e5 2.Cf3! Cc6?! 3.Bb5")
+
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in ast.moves])
+
+    def test_prose_is_still_not_a_move(self):
+        self.assertFalse(looks_like_move("Cada!"))
+        self.assertFalse(looks_like_move("posicao?"))
+
+
 class HeaderValidationTests(unittest.TestCase):
     def test_year_only_date_becomes_a_valid_pgn_date(self):
         self.assertEqual("1945.??.??", normalize_pgn_date("1945"))

@@ -1,0 +1,58 @@
+PARTIDA N.o 13
+Defesa Siciliana
+V. SMYSLOV - I. RUDAKOVSKY
+XIV Campeonato Sovietico, Moscou 1945
+
+1.e4 c5 2.Cf3 e6 3.d4 cxd4 4.Cxd4 Cf6 5.Cc3 d6 {O centro de
+peões montado pelas negras é característico da conhecida
+Variante Schevenin-gen, um dos mais populares sistemas de
+desenvolvimento na Defesa Siciliana. As brancas usualmente
+baseiam suas chances num ataque no lado do R.} 6.Be2 Be7 7.O-O
+O-O 8.Be3 Cc6 9.f4 Dc7 10.De1 {Este lance tem dois propósitos:
+transferir a dama para g3, onde ficará em boa posição de
+ataque e liberar a casa d1 para a manobra Rd1.} Cxd4 11.Bxd4
+e5 {O avanço deste peão foi o motivo da prévia troca.} 12.Be3
+(12.fxe5 12. ...dxe5 13.Dg3 Bc5 {os bispos das casas pretas
+são trocados, o que em minha opinião diminui as possibilidades
+do ataque das brancas.}) Be6 {Era preferível desenvolver o
+Bispo via c6 com 12... Bd7-c6. O lance efetuado tem o
+inconveniente de permitir um avanço de peão no flanco rei com
+ganho de tempo.} 13.f5 Bc4 {As negras executam um plano que do
+ponto de vista posicional é incorreto: e5 enfraqueceu a casa
+central d5; assim deveriam preservar seu bispo das casas
+brancas para defendê-la.} (13. ...Bd7 {as brancas podiam
+continuar} 14.g4 Bc6 15.Bf3 {com a ameaça P5C. Então} h6 {não
+resolvería em vista de} (15. ...d5 16.exd5 e4 17.Cxe4 Cxd5
+
+142
+SMYSLOV - RUDAKOVSKY
+
+{com jogo agudo, embora mesmo assim, com} 18.Bd4 {as brancas
+pareçam preservar suas melhores oportunidades.}) 16.g5 hxg5
+17.Bxg5 {e as brancas abrem a coluna g para o ataque.})
+14.Bxc4 Dxc4 {[#]} 15.Bg5 ! {Exemplo instrutivo que mostra
+como explorar a debilidade da casa d5 em tais posições. A
+troca em f6 é inevitável, resultando disso a fixação
+definitiva do Cavalo em d5, dando às brancas as melhores
+chances num ataque direto contra o Rei.} Tfe8 16.Bxf6 Bxf6
+
+143
+SMYSLOV - RUDAKOVSKY
+
+17.Cd5 Bd8 (17. ...Dxc2 {as brancas poderíam efetuar} 18.Tf2
+{e se} Dc8 {então} 19.Tc1 {e 20. Cc7 ganhando a qualidade.})
+18.c3 b5 19.b3 Dc5+ 20.Rh1 Tc8 21.Tf3 Rh8 {Aqui e mais
+adiante, as negras podiam executar f6, mas assim fazendo se
+condenam a uma defesa passiva. As brancas então teriam apenas
+que levar suas peças maiores para a ala do R, para o início do
+assalto decisivo contra a posição do monarca inimigo. [#]}
+22.f6 ! {Avanço típico - a cobertura de peões do Rei negro se
+estraçalha.} gxf6 (22. ...g6 23.Dd2 {ameaçando Dh6.}) 23.Dh4
+
+144
+SMYSLOV - RUDAKOVSKY
+
+Tg8 24.Cxf6 Tg7 25.Tg3 {Ameaçando mate 26. Qxh7+ Rxh7 27. Rg8#
+ou 26. Rxg7 Kxg7 27. Qxh7+ Kxf6 28. Rf1+ Ke7 29. Qxf7#} Bxf6
+26.Dxf6 Tg8 27.Td1 d5 28.Txg7 Txg7 29.Txd5 ! {e as negras
+abandonam.}

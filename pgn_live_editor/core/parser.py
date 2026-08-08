@@ -210,7 +210,7 @@ class TolerantParser:
                 continue
 
             preview_tokens.append(token)
-            if token.type == 'SAN_MOVE':
+            if token.type in MOVE_TOKEN_TYPES:
                 san_count += 1
                 if san_count >= max_san_tokens:
                     break
@@ -225,11 +225,30 @@ class TolerantParser:
                 return False
         return False
 
+    def _preview_move_san(self, token: Token, board: chess.Board) -> str | None:
+        """O lance que este token representa nesta posicao, se houver um so claro.
+
+        Num livro em portugues **nenhum** lance chega aqui como `SAN_MOVE`:
+        `Cf3` e `Dxc2` sao candidatos. Sem resolve-los, o tabuleiro nao avancava
+        durante a pontuacao e a ancora da variante era escolhida as cegas -- o
+        numero de lance seguinte era comparado com uma posicao parada.
+        """
+        if token.type == 'SAN_MOVE':
+            return token.value
+
+        candidates = self.resolver.resolve(token.value, board)
+        if candidates and candidates[0].confidence >= CONFIDENCE_AUTO_APPLY:
+            return candidates[0].san
+        return None
+
     def _score_variant_candidate(self, fen: str | None, preview_tokens: list[Token]) -> tuple[int, int]:
         if not fen:
             return (-10_000, 0)
 
-        informative_tokens = [token for token in preview_tokens if token.type in {'MOVE_NUMBER', 'SAN_MOVE'}]
+        informative_tokens = [
+            token for token in preview_tokens
+            if token.type == 'MOVE_NUMBER' or token.type in MOVE_TOKEN_TYPES
+        ]
         if not informative_tokens:
             return (-10_000, 0)
 
@@ -238,7 +257,7 @@ class TolerantParser:
         legal_san_count = 0
 
         for token in preview_tokens:
-            if token.type in {'COMMENT', 'TEXT', 'NAG', 'MOVE_CANDIDATE', 'NULL_MOVE'}:
+            if token.type in {'COMMENT', 'TEXT', 'NAG', 'NULL_MOVE'}:
                 continue
 
             if token.type == 'MOVE_NUMBER':
@@ -257,9 +276,18 @@ class TolerantParser:
                     score -= min(6, abs(number - board.fullmove_number) + 2)
                 continue
 
-            if token.type == 'SAN_MOVE':
+            if token.type in MOVE_TOKEN_TYPES:
+                san = self._preview_move_san(token, board)
+                if san is None:
+                    # Candidato que nao resolve nao diz nada sobre a ancora --
+                    # pode ser prosa. Nao pontua nem para bem nem para mal.
+                    if token.type == 'SAN_MOVE':
+                        score -= 10
+                        break
+                    continue
+
                 try:
-                    board.push_san(token.value)
+                    board.push_san(san)
                     legal_san_count += 1
                     score += 10
                 except ValueError:
@@ -359,11 +387,20 @@ class TolerantParser:
     # Resolucao de um token de lance
     # ------------------------------------------------------------------
 
+    def _reading_is_disputed(self, token: Token) -> bool:
+        """O token e legal como esta, mas a letra muda de sentido entre idiomas.
+
+        `Rc7` num final de torre e legal como Torre **e** como Rei. Ser legal
+        nao basta para decidir: se o documento provou estar em portugues, quem
+        decide e o resolvedor, com o desconto da leitura inglesa.
+        """
+        return self.resolver.notation_confirmed and self.resolver.collides_with_english(token.value)
+
     def _build_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
         node = MoveNode(san=token, number=number_token)
         node.parent_fen = self.validator.board.fen()
 
-        if self.validator.is_legal(token.value):
+        if self.validator.is_legal(token.value) and not self._reading_is_disputed(token):
             self.validator.push_san(token.value)
             node.confidence = 1.0
             self._desynchronized = False
@@ -450,11 +487,31 @@ class TolerantParser:
     # Parse
     # ------------------------------------------------------------------
 
+    def _detect_notation_language(self, tokens: list[Token]) -> bool:
+        """O documento prova estar escrito na notacao do idioma configurado?
+
+        Basta um lance comecando por uma letra que **nao existe** no SAN ingles
+        (`Cf3`, `Dc7`, `Tf1`, `Ld3`). Achando um, `Rc7` passa a ser lido como
+        Rei; nao achando nenhum -- um PGN ingles importado, por exemplo -- `Rc7`
+        continua sendo a torre, como o padrao PGN manda.
+        """
+        letters = self.resolver.proof_letters()
+        if not letters:
+            return False
+
+        for token in tokens:
+            if token.type != 'MOVE_CANDIDATE' or not token.in_notation_context:
+                continue
+            if token.value[:1] in letters and len(token.value) > 2:
+                return True
+        return False
+
     def parse(self, tokens: list[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
         self.validator.set_board_fen(start_fen)
         self.ast = GameAST()
         self.issues = []
         self._desynchronized = False
+        self.resolver.set_notation_confirmed(self._detect_notation_language(tokens))
 
         current_move_number_token: Token | None = None
         pending_comments: list[str] = []

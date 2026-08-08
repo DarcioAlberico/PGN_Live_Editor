@@ -4,12 +4,11 @@
 > Todos os defeitos abaixo foram **reproduzidos empiricamente** contra o pipeline real (venv do projeto),
 > não são suposições de leitura de código.
 
-> **Status (fases 0–2 implementadas).** Corrigidos e travados por teste de regressão:
-> **D1, D2, D3, D4, D5, D7, D8, D9, D10, D11, D12** e a validação de cabeçalho de **D13**.
-> `tests/test_regressions.py` tem um caso por defeito. Continuam em aberto para as fases seguintes:
-> **D6** (várias partidas na mesma colagem — fase 4) e o restante de **D13/D14** (diálogo de promoção,
-> empacotamento, i18n — fase 6). Os 9 pontos órfãos `10... .` dos arquivos em `Trabalhos Salvos/`
-> desaparecem ao reabrir e reexportar.
+> **Status (fases 0–4 implementadas, fase 5 em andamento).** Corrigidos e travados por teste de regressão:
+> **D1 a D12**, a validação de cabeçalho de **D13**, e **D15 a D19** (achados depois, pelo corpus).
+> `tests/test_regressions.py` tem um caso por defeito. Continua em aberto o restante de **D13/D14**
+> (diálogo de promoção, empacotamento, i18n — fase 6). Os 9 pontos órfãos `10... .` dos arquivos em
+> `Trabalhos Salvos/` desaparecem ao reabrir e reexportar.
 
 ---
 
@@ -191,6 +190,62 @@ Tudo na thread de UI. Um capítulo de 80 KB congela a interface por ~0,2 s a cad
 - `sys.path.append` no meio do código de UI ([editor_panel.py:23](../app/ui/editor_panel.py#L23)) e mistura de imports absolutos (`from app.core…`) com relativos (`from ..core…`).
 - `requires-python = ">=3.8"` no `pyproject.toml` contra `.python-version` = 3.12 e README pedindo 3.12.
 - Sem lint, sem formatação, sem type-check, sem CI, sem teste de UI, sem corpus real de regressão.
+
+---
+
+---
+
+## 2b. Defeitos achados pelo corpus de regressão
+
+Os cinco abaixo **não estavam nesta análise**. Apareceram no dia em que uma página
+de livro de verdade — notação portuguesa, quebrada em colunas, com número de página
+no meio — entrou no `tests/corpus/`. Nenhum teste sintético os pegaria, porque todos
+supunham notação inglesa e texto numa linha só. Vale a pena ler a lista como
+argumento a favor do corpus: cinco defeitos, quatro deles capazes de destruir a
+partida inteira, num pipeline que já tinha 225 testes verdes.
+
+### 🔴 D15 — Comentário de mais de uma linha era lido como chave aberta
+
+O limite do comentário era o **fim da linha** (a correção de D7). Mas toda página de
+livro quebra texto em linhas: praticamente *todo* comentário real caía nessa regra, o
+comentário engolia os lances seguintes e o resto da partida desmoronava. Passou
+despercebido porque os arquivos de `Trabalhos Salvos/` guardam cada comentário numa
+única linha comprida.
+
+**Regra nova:** se existe `}` no mesmo parágrafo, o comentário vai até lá, atravessando
+quantas linhas forem; se não existe, para no fim da linha. A linha em branco é o limite
+porque nenhum parágrafo tem uma no meio — e a proteção de D7 continua de pé.
+
+### 🔴 D16 — `R` de Rei virava Torre em português
+
+`LOCALE_PIECE_MAPS['pt']` não tinha `R → K`. Pior que faltar: `R` **também** é a Torre
+inglesa, e num final de torre as duas leituras costumam ser legais na mesma posição —
+`Rc7` é Rei-c7 e Torre-c7 ao mesmo tempo. A leitura exata valia 1.0 incondicionalmente,
+então o programa escolhia a torre e destruía a partida do primeiro lance de rei em diante.
+
+**Regra nova:** o documento prova o idioma sozinho. Achando um lance começado por letra
+que não existe no SAN inglês (`Cf3`, `Dc7`, `Tf1`), a notação está confirmada e a leitura
+inglesa de `R` cai para 0.80, abaixo da leitura de idioma (0.95). Sem essa prova — um PGN
+inglês importado — nada muda e `Re1` continua sendo a torre.
+
+### 🟠 D17 — Âncora de variante escolhida às cegas em notação estrangeira
+
+A pontuação de âncora só entendia `SAN_MOVE`. Num livro em português **nenhum** lance é
+SAN: são todos candidatos. O tabuleiro não avançava durante a pontuação, e o número de
+lance seguinte era comparado com uma posição parada — a variante ia parar no lance errado,
+e com ela todos os lances dela.
+
+### 🔴 D18 — Lance entre dois comentários era descartado como prosa
+
+`18.Tf2 {e se} Dc8 {então} 19.Tc1` é escrita corrente de livro. Um candidato só contava
+como lance se tivesse notação **ao lado**, e `COMMENT` não estava na lista de vizinhos —
+o lance sumia sem alerta nenhum. É D3 outra vez, por outra porta.
+
+### 🟠 D19 — Sinal de avaliação colado ao lance derrubava o lance
+
+`Bg5!` em inglês se salvava (o SAN casa e o `!` vira NAG à parte), mas `Tg5!` em português
+morria no filtro de candidato, que não aceitava `!` nem `?` — antes de chegar a quem sabe
+tirar o sufixo. Livro imprime a anotação colada o tempo todo.
 
 ---
 

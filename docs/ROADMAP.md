@@ -15,10 +15,10 @@ Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 | 2 · Parar a corrupção silenciosa | ✅ concluída |
 | 3 · Gestos de edição | ✅ concluída |
 | 4 · Escala de livro | ✅ concluída |
-| 5 · Assistentes | ⬜ próxima |
-| 6 · Polimento | ⬜ |
+| 5 · Assistentes | 🔶 motor entregue; dicionário e PDF pendentes |
+| 6 · Polimento | 🔶 corpus entregue; o resto pendente |
 
-199 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
+240 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
 
 ---
 
@@ -144,12 +144,36 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
 
 **Aceite:** o motor aponta um lance mal lido que passou por todas as outras verificações.
 
+**Motor entregue.** Notas de implementação:
+
+- A regra de suspeita é **pura**: `scan_mainline` recebe uma função de avaliação, não
+  um motor. A detecção inteira é testada sem Stockfish instalado, com uma busca material
+  de dois lances no lugar do motor. É o que permite trocar a fonte de avaliação depois.
+- Convenção de sinal única, a mesma do UCI: toda avaliação é em centipeões do ponto de
+  vista de quem tem a vez. Assim a queda de um lance vira uma **soma** (`antes + depois`),
+  sem troca de sinal no meio — que é onde esse tipo de código costuma errar.
+- Cada posição é avaliada uma vez: a posição depois do lance N é a posição antes do N+1.
+  Uma partida de 40 lances custa 41 avaliações, não 80.
+- O conserto só é proposto quando é **único**. Entre os lances legais a um caractere do
+  jogado, se exatamente um não perde material, ele vira candidato aceitável e grava no
+  texto bruto com um clique. Havendo empate, o alerta lista e não aplica.
+- `ScanFindings` amarra a varredura ao texto que a produziu — mesma ideia do `SegmentDigest`.
+  Sem isso os alertas do motor sumiriam no primeiro caractere digitado.
+- Falta: `dictionary_service.py` com as três camadas e o editor, aprendizado após 3
+  aceitações, painel de PDF e modo dupla visão.
+
 ---
 
 ## Fase 6 — Polimento · contínuo
 
-- Corpus de regressão com páginas reais de livro (SPEC §6.1) — vale mais que qualquer teste sintético.
-- Diálogo de promoção, inversão do tabuleiro, arrastar-e-soltar, setas `[%cal]`/`[%csl]`.
+- ✅ **Corpus de regressão** (SPEC §6.1) — valeu exatamente o que se esperava dele.
+  Quatro páginas em `tests/corpus/`, comparadas por lista de lances e contagem de nós,
+  mais o `.expected.pgn` de cada uma. **No primeiro dia achou cinco defeitos** que 225
+  testes verdes não achavam (D15–D19 na análise), quatro deles capazes de destruir a
+  partida inteira. Todos eram invisíveis para teste sintético pelo mesmo motivo: os
+  testes supunham notação inglesa e texto numa linha só, e livro nenhum é assim.
+  Acrescentar uma página é largar dois arquivos na pasta — o runner acha sozinho.
+- Diálogo de promoção, arrastar-e-soltar, setas `[%cal]`/`[%csl]`.
 - Preferências: idioma, tema, fonte, caminho do motor, layout persistido.
 - Consistência de acentuação na UI (hoje "Nao", "Simbolos", "posicao" convivem com texto acentuado) e camada de tradução.
 - Empacotamento PyInstaller — executável Windows sem instalar Python.
@@ -169,7 +193,9 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
 | 4 · Escala de livro | 2–3 | múltiplas partidas, FEN, lote | D6, D10, D12 |
 | ↳ *situação* | ✅ | painel de partidas, `.plez` com concluídas, exportação em lote | |
 | 5 · Assistentes | 3–4 | dicionário aprendiz, motor, PDF | — (novas funções) |
+| ↳ *situação* | 🔶 | motor com `SUSPECT_BLUNDER` (`Ctrl+E`); falta dicionário e PDF | |
 | 6 · Polimento | contínuo | corpus, empacotamento, i18n | D13 restante |
+| ↳ *situação* | 🔶 | corpus de páginas de livro | D15–D19 |
 
 **Total até um produto completo: cerca de 12 a 16 semanas.** Mas o programa já fica substancialmente melhor no fim da **fase 1** (nunca mais perder trabalho) e a dor real de transcrever livro desaparece no fim da **fase 3**.
 

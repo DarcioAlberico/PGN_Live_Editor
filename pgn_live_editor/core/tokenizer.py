@@ -17,10 +17,17 @@ import re
 from dataclasses import dataclass
 
 from .candidates import looks_like_move
-from .normalizer import NormalizedText
+from .normalizer import COMMENT_PATTERN, NormalizedText
 
 # Tipos de token que estabelecem "contexto de notacao" ao redor de um candidato.
-NOTATION_NEIGHBOURS = {"MOVE_NUMBER", "SAN_MOVE", "MOVE_CANDIDATE", "NULL_MOVE"}
+#
+# `COMMENT` esta aqui porque o livro escreve `18.Tf2 {e se} Dc8 {entao} 19.Tc1`
+# o tempo todo: um lance entre dois comentarios continua sendo um lance. Sem
+# isso ele era descartado como prosa -- e um lance perdido em silencio e o pior
+# defeito possivel neste programa (D3). O preco e um alerta visivel a mais
+# quando prosa entre chaves tem cara de lance, o que e exatamente o negocio que
+# a SPEC manda fazer: duvidar em vez de adivinhar.
+NOTATION_NEIGHBOURS = {"MOVE_NUMBER", "SAN_MOVE", "MOVE_CANDIDATE", "NULL_MOVE", "COMMENT"}
 
 
 @dataclass
@@ -42,7 +49,9 @@ class PGNTokenizer:
     NAG_PATTERN = rf'(?:\$\d+|{TRADITIONAL_NAG_PATTERN}|{SYMBOLIC_NAG_PATTERN})'
 
     TOKEN_PATTERNS = [
-        ('COMMENT', r'\{[^}\n]*\}?'),
+        # O limite do comentario mora no normalizador: o tokenizador usa
+        # exatamente o mesmo padrao, para os dois nunca discordarem.
+        ('COMMENT', COMMENT_PATTERN),
         ('MOVE_NUMBER', r'\b\d+\s*(?:\.\.\.|\.\.)?\s*\.'),
         (
             'SAN_MOVE',

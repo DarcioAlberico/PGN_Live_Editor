@@ -1,0 +1,13 @@
+[Event "Exercicio 47"]
+[White "Brancas"]
+[Black "Negras"]
+[Result "1-0"]
+[FEN "1K6/1P6/8/8/8/8/r7/2R3k1 w - - 0 1"]
+[SetUp "1"]
+
+EXERCICIO 47 - Brancas jogam e ganham. [D]
+
+1.Tc4! {A ponte de Lucena. A torre se coloca na quarta fila, de
+onde vai cobrir os xeques laterais assim que o Rei sair da frente
+do peao.} 1. ...Ta1 2.Rc7 Tc1 3.Rb6 Tb1+ 4.Rc6 Tc1 5.Rb5 Tb1+
+6.Tb4 {e o peao promove.} 1-0

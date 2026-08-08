@@ -24,14 +24,23 @@ from .issues import Candidate
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Letras de peca por idioma de notacao.
+#
+# `R` -> `K` e o caso delicado: em portugues, espanhol, frances e italiano o Rei
+# e `R`, mas `R` tambem e a Torre em ingles. O conflito nao precisa de regra
+# especial -- a hipotese `exato` vale 1.0 e so cede quando nao da lance legal.
+# Numa posicao em que a torre pode ir para h1, `Rh1` continua sendo a torre;
+# quando ela nao pode, o Rei entra. Sem esta entrada, um livro em portugues
+# perdia a partida inteira no primeiro lance de rei.
 LOCALE_PIECE_MAPS: dict[str, dict[str, str]] = {
     "en": {},
-    "pt": {"D": "Q", "T": "R", "B": "B", "C": "N"},
-    "es": {"D": "Q", "T": "R", "A": "B", "C": "N"},
+    "pt": {"R": "K", "D": "Q", "T": "R", "B": "B", "C": "N"},
+    "es": {"R": "K", "D": "Q", "T": "R", "A": "B", "C": "N"},
     "de": {"D": "Q", "T": "R", "L": "B", "S": "N"},
-    "fr": {"D": "Q", "T": "R", "F": "B", "C": "N"},
-    "it": {"D": "Q", "T": "R", "A": "B", "C": "N"},
+    "fr": {"R": "K", "D": "Q", "T": "R", "F": "B", "C": "N"},
+    "it": {"R": "K", "D": "Q", "T": "R", "A": "B", "C": "N"},
 }
+
+ENGLISH_PIECE_LETTERS = frozenset("KQRBN")
 
 # Confusoes de OCR conhecidas, aplicadas so no inicio de um token de lance.
 DEFAULT_OCR_PREFIXES: dict[str, str] = {
@@ -46,7 +55,12 @@ DEFAULT_OCR_PREFIXES: dict[str, str] = {
 
 # Um token so e considerado candidato a lance se tiver cara de notacao:
 # ao menos uma letra, ao menos um digito de casa, e nenhum caractere estranho.
-MOVE_CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-+#=]{1,7}$")
+#
+# Os sinais de avaliacao entram no conjunto porque o livro imprime `Bg5!` e
+# `Cd5?` colados. Um `Bg5!` em ingles ja se salvava (o SAN casa e o `!` vira NAG
+# a parte), mas `Tg5!` em portugues morria aqui, antes de chegar ao resolvedor
+# que sabe tirar o sufixo -- e o lance sumia sem alerta nenhum.
+MOVE_CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-+#=!?∞±∓⩱⩲□]{1,7}$")
 ANNOTATION_SUFFIX_RE = re.compile(r"(?:[!?]{1,2}|[∞±∓⩱⩲□])+$")
 
 # Limiares de aplicacao (SPEC 2.3).
@@ -92,9 +106,30 @@ class CandidateResolver:
         self.ocr_prefixes = dict(DEFAULT_OCR_PREFIXES)
         self.ocr_prefixes.update(_load_data_file("substitutions.json"))
         self.dictionary: dict[str, str] = dict(dictionary or {})
+        # O documento provou estar escrito na notacao do idioma? Ver
+        # `notation_is_confirmed` e `_expand`.
+        self.notation_confirmed = False
 
     def set_locale(self, locale: str) -> None:
         self.locale = locale
+
+    def set_notation_confirmed(self, confirmed: bool) -> None:
+        self.notation_confirmed = confirmed
+
+    def proof_letters(self) -> set[str]:
+        """Letras que so existem na notacao deste idioma.
+
+        `C`, `D` e `T` nao sao letras de peca do SAN ingles: um `Cf3` legal no
+        documento prova que ele esta em portugues. `B` nao prova nada (e Bispo
+        nos dois) e `R` menos ainda -- e justamente a letra em disputa.
+        """
+        return {letter for letter in self._piece_map() if letter not in ENGLISH_PIECE_LETTERS}
+
+    def collides_with_english(self, token: str) -> bool:
+        """`Rc7` quer dizer Rei em portugues e Torre em ingles."""
+        letter = token[:1]
+        mapping = self._piece_map()
+        return letter in ENGLISH_PIECE_LETTERS and mapping.get(letter, letter) != letter
 
     def learn(self, raw_token: str, san: str) -> None:
         """Grava uma correcao confirmada pelo usuario."""
@@ -117,6 +152,9 @@ class CandidateResolver:
                 seen.add(text)
                 states.append((text, confidence, source, rationale))
 
+        # A semente vale 1.0 sempre: as etapas seguintes multiplicam por ela, e
+        # rebaixa-la aqui rebaixaria junto toda hipotese derivada. O desconto da
+        # leitura inglesa e aplicado no fim, em `resolve`, so a ela mesma.
         push(token, 1.0, "exato", token)
 
         # 1. Dicionario do usuario: casamento exato do token inteiro.
@@ -224,12 +262,30 @@ class CandidateResolver:
     # API
     # ------------------------------------------------------------------
 
+    def _exact_reading_confidence(self, token: str) -> tuple[float, str]:
+        """Quanto vale ler o token como esta, sem traduzir nada.
+
+        Normalmente 1.0 -- e a leitura do proprio PGN. Ela so cede quando **o
+        documento provou** estar noutra notacao e a letra muda de sentido entre
+        os dois idiomas: num final de torre em portugues, `Rc7` costuma ser
+        legal como Torre **e** como Rei, e escolher a torre destroi a partida
+        inteira dali para frente. Sem essa prova -- um PGN ingles importado, por
+        exemplo -- nada muda e `Rc7` continua sendo a torre.
+        """
+        if self.notation_confirmed and self.collides_with_english(token):
+            return (0.80, f"leitura inglesa de '{token}'; o documento usa notacao {self.locale}")
+        return (1.0, "lance legal")
+
     def resolve(self, token: str, board: chess.Board) -> list[Candidate]:
         """Hipoteses legais para `token`, da mais confiavel para a menos."""
         candidates: list[Candidate] = []
         seen_sans: set[str] = set()
+        exact_confidence, exact_rationale = self._exact_reading_confidence(token)
 
         for text, confidence, source, rationale in self._expand(token):
+            if source == "exato":
+                confidence, rationale = exact_confidence, exact_rationale
+
             try:
                 move = board.parse_san(text)
             except (ValueError, AssertionError):
@@ -242,9 +298,9 @@ class CandidateResolver:
             candidates.append(
                 Candidate(
                     san=san,
-                    confidence=1.0 if source == "exato" else round(confidence, 3),
+                    confidence=round(confidence, 3),
                     source=source,
-                    rationale=rationale if source != "exato" else "lance legal",
+                    rationale=rationale,
                 )
             )
 
