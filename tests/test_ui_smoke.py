@@ -354,6 +354,62 @@ class DictionaryInTheWindowTests(unittest.TestCase):
         self.assertTrue(any(layer == "base" for layer, _pattern, _count in rows))
 
 
+class ReviewModeTests(unittest.TestCase):
+    """Fase 5: dupla visao -- o que foi mexido contra o que so foi confirmado."""
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
+
+    def test_the_counts_separate_confirmed_from_touched(self):
+        # `Bh5` e corrigido em carater provisorio; o resto entra sem duvida.
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5")
+
+        counts = self.window.editor_panel.touch_counts()
+
+        self.assertEqual(4, counts["confirmado"])
+        self.assertEqual(1, counts["por_conferir"])
+        self.assertEqual(0, counts["nao_entendido"])
+
+    def test_an_unreadable_move_is_counted_apart(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Xf6z")
+
+        self.assertEqual(1, self.window.editor_panel.touch_counts()["nao_entendido"])
+
+    def test_turning_the_mode_on_dims_what_was_only_confirmed(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6 3.Bh5")
+        self.assertFalse(self.window.editor_panel.review_mode)
+
+        self.window.action_review_mode.setChecked(True)
+        self.window._toggle_review_mode()
+
+        self.assertTrue(self.window.editor_panel.review_mode)
+        self.assertIn("confirmados 4", self.window.lbl_touched.text())
+        self.assertIn("por conferir 1", self.window.lbl_touched.text())
+
+    def test_turning_it_off_clears_the_status(self):
+        self.window.editor_panel.load_document_text("1.e4 e5")
+        self.window.action_review_mode.setChecked(True)
+        self.window._toggle_review_mode()
+
+        self.window.action_review_mode.setChecked(False)
+        self.window._toggle_review_mode()
+
+        self.assertFalse(self.window.editor_panel.review_mode)
+        self.assertEqual("", self.window.lbl_touched.text())
+
+    def test_the_counts_cover_the_whole_book_not_just_the_current_game(self):
+        self.window.editor_panel.load_document_text(
+            "1.e4 e5 2.Nf3 Nc6\n\n=== Partida 2 ===\n\n1.d4 d5 2.c4"
+        )
+        self.window.editor_panel.analyze_whole_book()
+
+        counts = self.window.editor_panel.touch_counts()
+
+        self.assertEqual(7, counts["confirmado"])
+
+
 class EngineIssuesInTheWindowTests(unittest.TestCase):
     """Fase 5: a suspeita do motor convive com os alertas do parser.
 

@@ -118,6 +118,8 @@ class MainWindow(QMainWindow):
         self.vertical_splitter.setStretchFactor(1, 1)
         self.vertical_splitter.setSizes([640, 180])
 
+        self.lbl_touched = QLabel("")
+        self.statusBar().addPermanentWidget(self.lbl_touched)
         self.lbl_book = QLabel("")
         self.statusBar().addPermanentWidget(self.lbl_book)
         self.lbl_autosave = QLabel("")
@@ -240,6 +242,10 @@ class MainWindow(QMainWindow):
         self._add_action(review_menu, "Dicionario de OCR...", "Ctrl+Shift+I", self.edit_dictionary)
         review_menu.addSeparator()
         self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
+        self.action_review_mode = self._add_action(
+            review_menu, "Dupla visao: so o que foi mexido", "F12", self._toggle_review_mode
+        )
+        self.action_review_mode.setCheckable(True)
 
     def _add_action(self, menu, title: str, shortcut, slot) -> QAction:
         action = QAction(title, self)
@@ -447,6 +453,7 @@ class MainWindow(QMainWindow):
         # A lista so aparece quando ha livro: uma partida sozinha nao precisa dela.
         self.games_panel.setVisible(analysis.game_count > 1)
         self._update_book_status(analysis)
+        self._update_touch_status()
 
     def _update_book_status(self, analysis):
         moves = len(list(iter_moves(analysis.ast.moves)))
@@ -610,6 +617,37 @@ class MainWindow(QMainWindow):
 
     def _toggle_issues_panel(self):
         self.issues_panel.setVisible(not self.issues_panel.isVisible())
+
+    def _toggle_review_mode(self):
+        """Dupla visao: apaga o confirmado para sobrar o que o programa mexeu."""
+        enabled = self.action_review_mode.isChecked()
+        self.editor_panel.set_review_mode(enabled)
+        self._update_touch_status()
+
+        if not enabled:
+            self._report("Realce normal.")
+            return
+
+        counts = self.editor_panel.touch_counts()
+        touched = counts["corrigido"] + counts["por_conferir"] + counts["nao_entendido"]
+        if touched:
+            self._report(f"Dupla visao: {touched} lance(s) que o programa mexeu, de {sum(counts.values())}.")
+        else:
+            self._report("Dupla visao: o programa nao mexeu em nenhum lance deste livro.")
+
+    def _update_touch_status(self):
+        """A conta que o modo dupla visao existe para mostrar."""
+        if not self.editor_panel.review_mode:
+            self.lbl_touched.setText("")
+            return
+
+        counts = self.editor_panel.touch_counts()
+        self.lbl_touched.setText(
+            f"confirmados {counts['confirmado']} | "
+            f"corrigidos {counts['corrigido']} | "
+            f"por conferir {counts['por_conferir']} | "
+            f"nao entendidos {counts['nao_entendido']}"
+        )
 
     def _accept_issue(self, issue):
         """Grava a correcao no texto bruto -- o alerta some porque a causa sumiu."""

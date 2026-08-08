@@ -163,6 +163,8 @@ class EditorPanel(QWidget):
         self.current_ast = GameAST()
         self.current_start_fen = chess.STARTING_FEN
         self.current_move_span = None
+        # Dupla visao: quando ligada, o realce apaga o que so foi confirmado.
+        self.review_mode = False
         self._suspend_cursor_sync = False
         self._symbol_palette_dialog: SymbolPaletteDialog | None = None
 
@@ -624,6 +626,15 @@ class EditorPanel(QWidget):
         fmt_error_variation = QTextCharFormat(fmt_error)
         fmt_error_variation.setFontWeight(QFont.Weight.Normal)
 
+        if self.review_mode:
+            # Dupla visao (SPEC 5, fase 5): a pergunta deixa de ser "o que e
+            # lance?" e passa a ser "onde o programa **mexeu**?". Tudo que ele
+            # apenas confirmou apaga; o que ele tocou fica como estava. Numa
+            # partida de 80 lances com tres correcoes, sao as tres que saltam.
+            fmt_valid = QTextCharFormat()
+            fmt_valid.setForeground(QColor("#5a6070"))
+            fmt_valid_variation = QTextCharFormat(fmt_valid)
+
         formats = {
             ("valid", False): fmt_valid,
             ("valid", True): fmt_valid_variation,
@@ -640,6 +651,29 @@ class EditorPanel(QWidget):
             for start, end, kind, in_variation in analysis.highlight_spans
         ])
         self._apply_current_selection()
+
+    # ------------------------------------------------------------------
+
+    def set_review_mode(self, enabled: bool):
+        """Liga a dupla visao: confirmado apaga, tocado permanece."""
+        if enabled == self.review_mode:
+            return
+        self.review_mode = enabled
+        self._apply_highlights(self.analysis)
+
+    def touch_counts(self) -> dict[str, int]:
+        """`{confirmado, corrigido, por_conferir, nao_entendido}` do livro inteiro.
+
+        Vem dos mesmos spans do realce, e por isso conta o **documento**, nao so
+        a partida sob o cursor.
+        """
+        counts = {"confirmado": 0, "corrigido": 0, "por_conferir": 0, "nao_entendido": 0}
+        names = {"valid": "confirmado", "fixed": "corrigido", "review": "por_conferir", "error": "nao_entendido"}
+        for _start, _end, kind, _in_variation in self.analysis.highlight_spans:
+            key = names.get(kind)
+            if key:
+                counts[key] += 1
+        return counts
 
     def _apply_current_selection(self):
         """Realce do lance sob o cursor. Nao mexe no realce sintatico."""
