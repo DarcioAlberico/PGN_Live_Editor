@@ -16,6 +16,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core.annotations import (
+    ANNOTATION_COLORS,
+    DEFAULT_COLOR,
+    Arrow,
+    SquareMark,
+    VisualAnnotations,
+    parse_annotations,
+)
 from ..core.move_tree import (
     MoveEntry,
     build_entry_maps,
@@ -27,6 +35,7 @@ from ..core.move_tree import (
 from ..core.parser import GameAST
 from ..services.clipboard_service import COPY_FORMATS, copy_text
 from .board_view import InteractiveBoardView
+from .promotion_dialog import PromotionDialog, wants_default_promotion
 from .variant_builder_panel import VariantBuilderPanel
 
 
@@ -36,6 +45,8 @@ class ChessPanel(QWidget):
     move_insert_requested_signal = Signal(str, bool, int)
     excerpt_copied_signal = Signal(str)
     start_fen_requested_signal = Signal()
+    #: `(node_id, VisualAnnotations)` -- a janela grava no comentario do lance.
+    annotations_changed_signal = Signal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -49,8 +60,11 @@ class ChessPanel(QWidget):
         self.current_last_move = None
         self.board = chess.Board()
         self.board_flipped = False
+        # Setas e casas coloridas do lance atual (SPEC 4.4).
+        self.annotations = VisualAnnotations([], [])
         self.selected_square: chess.Square | None = None
         self.input_mode: str | None = None
+        self.annotate_mode = False
         self.input_origin_label: str | None = None
         self._suppress_next_editor_sync = False
 
@@ -73,9 +87,21 @@ class ChessPanel(QWidget):
         self.btn_start_fen.setToolTip("Grava a posicao do tabuleiro como [FEN] inicial desta partida")
         self.btn_start_fen.clicked.connect(self.start_fen_requested_signal.emit)
 
+        # O botao direito ja tem dono (entrar em variante). Anotar visualmente e
+        # um modo a parte, e explicito, em vez de mais um significado escondido
+        # no mesmo clique.
+        self.btn_annotate = QPushButton("Setas")
+        self.btn_annotate.setCheckable(True)
+        self.btn_annotate.setToolTip(
+            "Modo anotacao: arrastar com o botao direito desenha seta, clicar marca a casa. "
+            "Alt vermelho, Ctrl amarelo, Shift azul. Sai como [%cal] e [%csl] no comentario."
+        )
+        self.btn_annotate.toggled.connect(self._on_annotate_toggled)
+
         controls.addWidget(self.btn_prev)
         controls.addWidget(self.lbl_status, 1)
         controls.addWidget(self.lbl_meta)
+        controls.addWidget(self.btn_annotate)
         controls.addWidget(self.btn_start_fen)
         controls.addWidget(self.btn_next)
         layout.addLayout(controls)
@@ -87,6 +113,7 @@ class ChessPanel(QWidget):
         self.board_view.setMinimumHeight(380)
         self.board_view.square_pressed_signal.connect(self._on_board_square_pressed)
         self.board_view.square_released_signal.connect(self._on_board_square_released)
+        self.board_view.drag_finished_signal.connect(self._on_board_drag_finished)
         self.content_splitter.addWidget(self.board_view)
 
         preview_container = QWidget()
@@ -143,16 +170,32 @@ class ChessPanel(QWidget):
             coordinates=True,
             borders=False,
             fill=self._board_fill(),
+            arrows=self._board_arrows(),
         ).encode('utf-8')
         self.board_view.set_svg(svg.decode('utf-8'))
 
     def _board_fill(self) -> dict[chess.Square, str]:
         fill: dict[chess.Square, str] = {}
+        # As casas marcadas pelo livro entram primeiro: a selecao em curso e
+        # mais importante e pode cobri-las.
+        for mark in self.annotations.squares:
+            fill[mark.square] = ANNOTATION_COLORS.get(mark.color, ANNOTATION_COLORS["G"]) + "88"
+
         if self.selected_square is not None:
             fill[self.selected_square] = "#f1c75b88"
             for target in self._legal_targets_for(self.selected_square):
                 fill[target] = "#6ecf8b88"
         return fill
+
+    def _board_arrows(self) -> list[chess.svg.Arrow]:
+        return [
+            chess.svg.Arrow(
+                arrow.tail,
+                arrow.head,
+                color=ANNOTATION_COLORS.get(arrow.color, ANNOTATION_COLORS["G"]),
+            )
+            for arrow in self.annotations.arrows
+        ]
 
     def _current_entry(self) -> MoveEntry | None:
         if 0 <= self.current_entry_index < len(self.entries):
@@ -189,6 +232,7 @@ class ChessPanel(QWidget):
         self.selected_square = None
         self.input_mode = None
         self.input_origin_label = None
+        self.annotations = VisualAnnotations([], [])
         self.board.set_fen(self.start_fen)
         self.render_board(None)
         self._restore_status_label()
@@ -335,6 +379,7 @@ class ChessPanel(QWidget):
         self.current_selection_key = entry.selection_key
         self.input_mode = None
         self.input_origin_label = None
+        self._load_annotations_of(entry)
         self._set_board_from_path(entry.path)
         self._restore_status_label()
         self._refresh_preview()
@@ -421,21 +466,26 @@ class ChessPanel(QWidget):
         self.selected_square = square
         self.render_board(self.current_last_move)
 
-    def _resolve_candidate_move(self, moves: list[chess.Move]) -> chess.Move:
+    def _resolve_candidate_move(self, moves: list[chess.Move], force_queen: bool = False) -> chess.Move | None:
+        """Um so lance possivel: e ele. Varios: e promocao, e quem decide e o usuario.
+
+        `force_queen` (soltar com Shift) atalha a pergunta -- e a resposta em
+        quase toda partida, e ninguem quer um dialogo a cada peao que chega.
+        Devolve `None` se o usuario fechou o dialogo sem escolher.
+        """
         if len(moves) == 1:
             return moves[0]
 
-        preferred_promotions = [
-            chess.QUEEN,
-            chess.KNIGHT,
-            chess.ROOK,
-            chess.BISHOP,
-        ]
-        for promotion in preferred_promotions:
-            candidate = next((move for move in moves if move.promotion == promotion), None)
-            if candidate:
-                return candidate
-        return moves[0]
+        def with_promotion(piece_type: int) -> chess.Move | None:
+            return next((move for move in moves if move.promotion == piece_type), None)
+
+        if force_queen:
+            return with_promotion(chess.QUEEN) or moves[0]
+
+        chosen = PromotionDialog.ask(self.board.turn, self)
+        if chosen is None:
+            return None
+        return with_promotion(chosen) or moves[0]
 
     def _commit_board_move(self, move: chess.Move):
         san = self.board.san(move)
@@ -449,7 +499,7 @@ class ChessPanel(QWidget):
         self._suppress_next_editor_sync = True
         self.move_insert_requested_signal.emit(san, is_white_turn, fullmove_number)
 
-    def _try_commit_move_to_square(self, target_square: chess.Square) -> bool:
+    def _try_commit_move_to_square(self, target_square: chess.Square, force_queen: bool = False) -> bool:
         if self.selected_square is None:
             return False
 
@@ -457,7 +507,13 @@ class ChessPanel(QWidget):
         if not matching_moves:
             return False
 
-        move = self._resolve_candidate_move(matching_moves)
+        move = self._resolve_candidate_move(matching_moves, force_queen)
+        if move is None:
+            # Promocao cancelada: a peca volta para onde estava.
+            self._select_square(None)
+            self._restore_status_label()
+            return True
+
         self._commit_board_move(move)
         return True
 
@@ -465,6 +521,9 @@ class ChessPanel(QWidget):
         button = Qt.MouseButton(button_value)
 
         if button == Qt.MouseButton.RightButton:
+            if self.annotate_mode:
+                self._toggle_square_mark(SquareMark(square, DEFAULT_COLOR))
+                return
             if self.input_mode is None:
                 self._begin_variation_input_mode()
             else:
@@ -472,6 +531,8 @@ class ChessPanel(QWidget):
             return
 
         piece = self.board.piece_at(square)
+        # A peca fantasma so aparece se o arrasto realmente comecar.
+        self.board_view.set_ghost_piece(piece if piece and piece.color == self.board.turn else None)
 
         if self.selected_square is None:
             if piece and piece.color == self.board.turn:
@@ -493,6 +554,66 @@ class ChessPanel(QWidget):
             return
 
         self.lbl_status.setText("Destino ilegal para a peca selecionada")
+
+    def _on_board_drag_finished(self, origin: int, target: int, button_value: int, modifiers: int):
+        """Arrastar da origem ao destino: lance com o botao esquerdo, seta com o direito."""
+        button = Qt.MouseButton(button_value)
+
+        if button == Qt.MouseButton.RightButton:
+            if self.annotate_mode:
+                self._toggle_arrow(Arrow(origin, target, self._annotation_color(modifiers)))
+            return
+
+        if self.selected_square != origin:
+            self._select_square(origin)
+        self._try_commit_move_to_square(target, force_queen=wants_default_promotion(Qt.KeyboardModifier(modifiers)))
+
+    # ------------------------------------------------------------------
+    # Setas e casas coloridas (SPEC 4.4)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _annotation_color(modifiers: int) -> str:
+        """Verde e o padrao; Alt vermelho, Ctrl amarelo, Shift azul."""
+        flags = Qt.KeyboardModifier(modifiers)
+        if flags & Qt.KeyboardModifier.AltModifier:
+            return "R"
+        if flags & Qt.KeyboardModifier.ControlModifier:
+            return "Y"
+        if flags & Qt.KeyboardModifier.ShiftModifier:
+            return "B"
+        return DEFAULT_COLOR
+
+    def _on_annotate_toggled(self, enabled: bool):
+        self.annotate_mode = enabled
+        if enabled:
+            self.lbl_status.setText("Modo anotacao: direito arrasta seta, direito clica marca casa")
+        else:
+            self._restore_status_label()
+
+    def current_annotations(self) -> VisualAnnotations:
+        return self.annotations
+
+    def _toggle_arrow(self, arrow: Arrow):
+        self.annotations = self.annotations.toggled_arrow(arrow)
+        self.render_board(self.current_last_move)
+        self._emit_annotations()
+
+    def _toggle_square_mark(self, mark: SquareMark):
+        self.annotations = self.annotations.toggled_square(mark)
+        self.render_board(self.current_last_move)
+        self._emit_annotations()
+
+    def _emit_annotations(self):
+        """Quem grava no texto bruto e a janela: aqui so se desenha."""
+        entry = self._current_entry()
+        if entry is not None:
+            self.annotations_changed_signal.emit(entry.node_id, self.annotations)
+
+    def _load_annotations_of(self, entry):
+        """As anotacoes vem do comentario do lance -- e onde o PGN as guarda."""
+        comments = list(entry.node.comments_after) + list(entry.node.comments_before) if entry else []
+        self.annotations = parse_annotations(" ".join(comments))
 
     def _on_board_square_released(self, square: chess.Square, button_value: int):
         button = Qt.MouseButton(button_value)

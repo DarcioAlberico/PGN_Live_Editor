@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
-from ..core.text_ops import promote_variation
+from ..core.text_ops import promote_variation, set_move_annotations
 from ..services.clipboard_service import COPY_FORMATS
 from ..services.dictionary_service import DictionaryService
 from ..services.engine_service import (
@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         self.games_panel.completion_toggled_signal.connect(self._on_completion_toggled)
         self.games_panel.analyze_book_requested_signal.connect(self._analyze_book)
         self.chess_panel.start_fen_requested_signal.connect(self._set_start_fen_from_board)
+        self.chess_panel.annotations_changed_signal.connect(self._on_annotations_changed)
         self.issues_panel.issue_selected_signal.connect(self.editor_panel.focus_span)
         self.issues_panel.accept_requested_signal.connect(self._accept_issue)
         self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
@@ -569,6 +570,21 @@ class MainWindow(QMainWindow):
 
     def _renumber(self):
         self._report(self.editor_panel.action_renumber())
+
+    def _on_annotations_changed(self, node_id: str, annotations):
+        """A seta desenhada no tabuleiro vira `[%cal]` no texto bruto.
+
+        Passa pelo mesmo caminho de qualquer outro gesto: uma edicao no texto,
+        um Ctrl+Z para desfazer, reanalise em seguida. Nao existe anotacao que
+        viva fora do texto.
+        """
+        entry = self.chess_panel.entry_by_node_id.get(node_id)
+        if entry is None:
+            return
+
+        result = set_move_annotations(self.editor_panel.document_text(), entry.node, annotations)
+        if result.ok:
+            self._report(self.editor_panel.apply_operation(result) or result.message)
 
     def _promote_variation(self):
         entry = self.chess_panel.current_entry()

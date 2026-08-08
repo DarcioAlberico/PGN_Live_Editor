@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import chess
 
+from .annotations import VisualAnnotations, apply_annotations, format_annotations
+from .normalizer import comment_span_end
 from .parser import GameAST, MoveNode, iter_moves
 
 RESULT_TAIL_RE = re.compile(r'\s*(?:1-0|0-1|1/2-1/2|\*)\s*$')
@@ -386,6 +388,48 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
 # ---------------------------------------------------------------------------
 # Verificacao de balanceamento
 # ---------------------------------------------------------------------------
+
+
+def set_move_annotations(text: str, move: MoveNode, annotations: VisualAnnotations) -> OperationResult:
+    """Grava as setas e casas coloridas no comentario do lance.
+
+    O PGN guarda anotacao visual dentro do comentario, entao e isso que se
+    edita -- nao ha estrutura paralela nenhuma, e o texto bruto continua sendo a
+    fonte da verdade. Se o lance ja tem comentario, a prosa dele e preservada e
+    so os comandos `[%cal]`/`[%csl]` sao trocados; se nao tem, um comentario
+    novo nasce logo depois do lance.
+    """
+    insert_at = move.san_end_index
+    if not 0 <= insert_at <= len(text):
+        return OperationResult([], "Lance fora do texto.")
+
+    cursor = insert_at
+    while cursor < len(text) and text[cursor] in " \t":
+        cursor += 1
+
+    if cursor < len(text) and text[cursor] == "{":
+        end = comment_span_end(text, cursor)
+        body = text[cursor:end].strip("{}")
+        updated = apply_annotations(body, annotations)
+        if not updated:
+            # Sem prosa e sem anotacao, o comentario deixa de ter razao de ser.
+            return OperationResult(
+                [TextEdit(insert_at, end, "")],
+                "Anotacoes removidas.",
+            )
+        return OperationResult(
+            [TextEdit(cursor, end, "{" + updated + "}")],
+            "Anotacoes gravadas no comentario.",
+        )
+
+    commands = format_annotations(annotations)
+    if not commands:
+        return OperationResult([], "Nao ha anotacao para gravar.")
+
+    return OperationResult(
+        [TextEdit(insert_at, insert_at, " {" + commands + "}")],
+        "Anotacoes gravadas.",
+    )
 
 
 @dataclass
