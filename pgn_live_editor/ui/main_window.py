@@ -17,7 +17,13 @@ from PyQt6.QtWidgets import (
 from ..core.parser import iter_moves
 from ..core.text_ops import promote_variation
 from ..services.clipboard_service import COPY_FORMATS
-from ..services.export_service import build_pgn, write_pgn
+from ..services.export_service import (
+    build_book_pgn,
+    build_pgn,
+    game_file_name,
+    write_pgn,
+)
+from ..services.parse_worker import SegmentAnalysis, build_games_for_export
 from ..services.project_service import (
     PROJECT_SUFFIX,
     Project,
@@ -33,6 +39,8 @@ from ..services.project_service import (
 from .chess_panel import ChessPanel
 from .cleanup_dialog import CleanupDialog
 from .editor_panel import EditorPanel
+from .games_panel import GamesPanel
+from .header_dialog import HeaderDialog
 from .issues_panel import IssuesPanel
 
 AUTOSAVE_INTERVAL_MS = 30_000
@@ -48,6 +56,9 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self._chars_since_autosave = 0
         self._last_autosaved_text = ""
+        # Marcas de partida concluida e template do livro nao estao no texto
+        # bruto -- sem isto elas sumiriam sem aviso ao fechar a janela.
+        self._state_dirty = False
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -61,13 +72,19 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.vertical_splitter.addWidget(self.splitter)
 
+        self.games_panel = GamesPanel()
         self.editor_panel = EditorPanel()
         self.chess_panel = ChessPanel()
 
+        self.splitter.addWidget(self.games_panel)
         self.splitter.addWidget(self.editor_panel)
         self.splitter.addWidget(self.chess_panel)
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setStretchFactor(2, 3)
+        self.splitter.setSizes([210, 560, 500])
+        # Um livro de uma partida so nao precisa de lista de partidas.
+        self.games_panel.setVisible(False)
 
         self.issues_panel = IssuesPanel()
         self.vertical_splitter.addWidget(self.issues_panel)
@@ -75,6 +92,8 @@ class MainWindow(QMainWindow):
         self.vertical_splitter.setStretchFactor(1, 1)
         self.vertical_splitter.setSizes([640, 180])
 
+        self.lbl_book = QLabel("")
+        self.statusBar().addPermanentWidget(self.lbl_book)
         self.lbl_autosave = QLabel("")
         self.statusBar().addPermanentWidget(self.lbl_autosave)
 
@@ -89,6 +108,11 @@ class MainWindow(QMainWindow):
         self.chess_panel.variant_builder.insert_requested_signal.connect(self.editor_panel.insert_text_at_cursor)
 
         self.editor_panel.text_parsed_signal.connect(self._on_parsed)
+        self.editor_panel.document_analyzed_signal.connect(self._on_document_analyzed)
+        self.games_panel.game_selected_signal.connect(self.editor_panel.go_to_segment)
+        self.games_panel.completion_toggled_signal.connect(self._on_completion_toggled)
+        self.games_panel.analyze_book_requested_signal.connect(self._analyze_book)
+        self.chess_panel.start_fen_requested_signal.connect(self._set_start_fen_from_board)
         self.issues_panel.issue_selected_signal.connect(self.editor_panel.focus_span)
         self.issues_panel.accept_requested_signal.connect(self._accept_issue)
         self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
@@ -124,10 +148,25 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
         self._add_action(file_menu, "Importar PGN ou texto...", "Ctrl+I", self.import_text)
-        self._add_action(file_menu, "Exportar PGN...", "Ctrl+Shift+E", self.export_pgn)
+        self._add_action(file_menu, "Exportar esta partida...", "Ctrl+Shift+E", self.export_pgn)
+        self._add_action(file_menu, "Exportar o livro num arquivo...", None, self.export_book)
+        self._add_action(file_menu, "Exportar uma partida por arquivo...", None, self.export_games_separately)
 
         file_menu.addSeparator()
         self._add_action(file_menu, "Sair", QKeySequence.StandardKey.Quit, self.close)
+
+        book_menu = self.menuBar().addMenu("&Partidas")
+        self._add_action(book_menu, "Proxima partida", "Ctrl+Shift+P", lambda: self._step_game(1))
+        self._add_action(book_menu, "Partida anterior", "Ctrl+Shift+O", lambda: self._step_game(-1))
+        book_menu.addSeparator()
+        self._add_action(book_menu, "Cabecalhos da partida...", "Ctrl+H", self.edit_headers)
+        self._add_action(book_menu, "Marcar como concluida", "Ctrl+Shift+D", self.games_panel.toggle_current_completion)
+        self._add_action(book_menu, "Analisar o livro inteiro", None, self._analyze_book)
+        book_menu.addSeparator()
+        self._add_action(book_menu, "Usar a posicao do tabuleiro como inicial", None, self._set_start_fen_from_board)
+        self._add_action(book_menu, "Converter marcadores de diagrama", None, self._normalize_diagrams)
+        book_menu.addSeparator()
+        self._add_action(book_menu, "Mostrar/ocultar lista de partidas", "F10", self._toggle_games_panel)
 
         structure_menu = self.menuBar().addMenu("&Estrutura")
         self._add_action(structure_menu, "Envolver em comentario", "Ctrl+K", self._wrap_comment)
@@ -196,7 +235,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{dirty}{name} - PGN Live Editor")
 
     def _is_dirty(self) -> bool:
-        return self.editor_panel.document_text() != self.project.raw_text
+        return self._state_dirty or self.editor_panel.document_text() != self.project.raw_text
 
     def _confirm_discard(self) -> bool:
         if not self._is_dirty():
@@ -222,6 +261,7 @@ class MainWindow(QMainWindow):
         self.editor_panel.load_document_text("")
         clear_recovery_snapshot()
         self._last_autosaved_text = ""
+        self._state_dirty = False
         self._update_window_title()
         self.statusBar().showMessage("Projeto novo.", 4000)
 
@@ -246,14 +286,16 @@ class MainWindow(QMainWindow):
             return
 
         self.project = project
-        self.editor_panel.locale = project.meta.locale
-        self.editor_panel.normalizer.locale = project.meta.locale
-        self.editor_panel.parser.set_locale(project.meta.locale)
-        self.editor_panel.parser.set_dictionary(project.dictionary)
-        self.editor_panel.parser.set_ignored_tokens(project.state.ignored_issue_tokens)
+        self.editor_panel.configure_recognition(
+            locale=project.meta.locale,
+            dictionary=project.dictionary,
+            ignored_tokens=project.state.ignored_issue_tokens,
+        )
+        self.games_panel.set_completed(project.state.completed_games)
         self.editor_panel.load_document_text(project.raw_text, project.state.cursor_position)
         self._last_autosaved_text = project.raw_text
         self._chars_since_autosave = 0
+        self._state_dirty = False
         remember_recent_file(path)
         self._rebuild_recent_menu()
         self._update_window_title()
@@ -292,6 +334,7 @@ class MainWindow(QMainWindow):
 
         self._last_autosaved_text = self.project.raw_text
         self._chars_since_autosave = 0
+        self._state_dirty = False
         clear_recovery_snapshot()
         remember_recent_file(saved_path)
         self._rebuild_recent_menu()
@@ -321,8 +364,10 @@ class MainWindow(QMainWindow):
 
         self.project = Project()
         self.project.meta.title = path.stem
+        self.games_panel.set_completed([])
         self.editor_panel.load_document_text(text)
         self._last_autosaved_text = ""
+        self._state_dirty = False
         self._update_window_title()
         self.statusBar().showMessage(f"Importado: {path.name} ({len(text)} caracteres)", 5000)
 
@@ -333,6 +378,84 @@ class MainWindow(QMainWindow):
     def _on_parsed(self, ast):
         self.issues_panel.set_issues(ast.issues)
         self.chess_panel.start_fen = self.editor_panel.current_start_fen
+
+    # ------------------------------------------------------------------
+    # Escala de livro (fase 4)
+    # ------------------------------------------------------------------
+
+    def _on_document_analyzed(self, analysis):
+        self.games_panel.set_completed(self.project.state.completed_games)
+        self.games_panel.set_summaries(analysis.summaries(), analysis.active_index)
+        # A lista so aparece quando ha livro: uma partida sozinha nao precisa dela.
+        self.games_panel.setVisible(analysis.game_count > 1)
+        self._update_book_status(analysis)
+
+    def _update_book_status(self, analysis):
+        moves = len(list(iter_moves(analysis.ast.moves)))
+        if analysis.game_count > 1:
+            done = len([index for index in self.project.state.completed_games if index < analysis.game_count])
+            self.lbl_book.setText(
+                f"partida {analysis.active_index + 1}/{analysis.game_count} | {moves} lances | {done} concluida(s)"
+            )
+        else:
+            self.lbl_book.setText(f"{moves} lances")
+
+    def _on_completion_toggled(self, index: int, completed: bool):
+        marked = set(self.project.state.completed_games)
+        if completed:
+            marked.add(index)
+        else:
+            marked.discard(index)
+
+        self.project.state.completed_games = sorted(marked)
+        self._state_dirty = True
+        self._update_book_status(self.editor_panel.analysis)
+        self._update_window_title()
+
+    def _step_game(self, delta: int):
+        analysis = self.editor_panel.analysis
+        if analysis.game_count <= 1:
+            self._report("Este documento tem uma partida so.")
+            return
+
+        target = (analysis.active_index + delta) % analysis.game_count
+        self.editor_panel.go_to_segment(target)
+
+    def _analyze_book(self):
+        analyses = self.editor_panel.analyze_whole_book()
+        moves = sum(analysis.move_count for analysis in analyses)
+        errors = sum(analysis.issue_counts["error"] for analysis in analyses)
+        suffix = f", {errors} erro(s)" if errors else ""
+        self._report(f"{len(analyses)} partida(s) analisada(s): {moves} lances{suffix}.")
+
+    def _toggle_games_panel(self):
+        self.games_panel.setVisible(not self.games_panel.isVisible())
+
+    def _set_start_fen_from_board(self):
+        self._report(self.editor_panel.action_set_start_fen(self.chess_panel.board.fen()))
+
+    def _normalize_diagrams(self):
+        self._report(self.editor_panel.action_normalize_diagrams())
+
+    def edit_headers(self):
+        segment = self.editor_panel.active_segment()
+        headers = dict(segment.headers) if segment else {}
+
+        dialog = HeaderDialog(headers, self.project.header_template, self)
+        if dialog.exec() != HeaderDialog.DialogCode.Accepted:
+            return
+
+        if dialog.should_save_template:
+            self.project.header_template = dialog.book_template_values()
+            self._state_dirty = True
+
+        values = dialog.values()
+        # A posicao inicial nao passa pelo dialogo; nao pode sumir por causa dele.
+        for tag in ("FEN", "SetUp"):
+            if tag in headers:
+                values[tag] = headers[tag]
+
+        self._report(self.editor_panel.action_apply_headers(values))
 
     # ------------------------------------------------------------------
     # Gestos de edicao estrutural
@@ -499,6 +622,90 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{report.actual_nodes} lances exportados para {output_path}", 6000)
 
     # ------------------------------------------------------------------
+    # Exportacao em lote (fase 4)
+    # ------------------------------------------------------------------
+
+    def _book_analyses(self) -> list[SegmentAnalysis]:
+        """Todas as partidas do documento, analisadas e com conteudo."""
+        return [
+            analysis
+            for analysis in self.editor_panel.analyze_whole_book()
+            if analysis.ast.moves or analysis.ast.result or analysis.segment.headers
+        ]
+
+    def _confirm_book_report(self, report) -> bool:
+        if report.ok:
+            return True
+
+        choice = QMessageBox.warning(
+            self,
+            "Conferencia do livro",
+            f"{report.summary()}\n\nSalvar assim mesmo?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return choice == QMessageBox.StandardButton.Save
+
+    def export_book(self):
+        analyses = self._book_analyses()
+        if not analyses:
+            QMessageBox.information(self, "Exportar livro", "Nao ha partida analisada para exportar.")
+            return
+
+        pgn_text, report = build_book_pgn(build_games_for_export(analyses))
+        if not self._confirm_book_report(report):
+            return
+
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Exportar livro",
+            str(Path.cwd() / f"{self.project.display_name}.pgn"),
+            "Arquivos PGN (*.pgn);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+
+        output_path = Path(file_path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".pgn")
+
+        try:
+            write_pgn(output_path, pgn_text)
+        except OSError as exc:
+            QMessageBox.critical(self, "Exportar livro", f"Nao foi possivel gravar o arquivo.\n\n{exc}")
+            return
+
+        self.statusBar().showMessage(f"{report.summary()} Arquivo: {output_path}", 8000)
+
+    def export_games_separately(self):
+        analyses = self._book_analyses()
+        if not analyses:
+            QMessageBox.information(self, "Exportar partidas", "Nao ha partida analisada para exportar.")
+            return
+
+        _book_text, report = build_book_pgn(build_games_for_export(analyses))
+        if not self._confirm_book_report(report):
+            return
+
+        directory = QFileDialog.getExistingDirectory(self, "Pasta de destino", str(Path.cwd()))
+        if not directory:
+            return
+
+        target_dir = Path(directory)
+        written: list[Path] = []
+        try:
+            for position, analysis in enumerate(analyses):
+                pgn_text, _game_report = build_pgn(analysis.ast, analysis.start_fen)
+                name = game_file_name(position, analysis.segment.headers, self.project.display_name)
+                write_pgn(target_dir / name, pgn_text)
+                written.append(target_dir / name)
+        except OSError as exc:
+            QMessageBox.critical(self, "Exportar partidas", f"Nao foi possivel gravar os arquivos.\n\n{exc}")
+            return
+
+        self.statusBar().showMessage(f"{len(written)} arquivo(s) gravado(s) em {target_dir}", 8000)
+
+    # ------------------------------------------------------------------
     # Autosave e recuperacao
     # ------------------------------------------------------------------
 
@@ -572,6 +779,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
+        self.editor_panel.shutdown()
         clear_recovery_snapshot()
         event.accept()
 

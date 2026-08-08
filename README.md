@@ -51,6 +51,37 @@ uv run python main.py
 6. **Salvar o projeto** (`Ctrl+S`) em `.plez` - guarda o **texto bruto**, que e o trabalho de verdade.
 7. **Exportar PGN** (`Ctrl+Shift+E`) quando a partida estiver pronta.
 
+### Um capitulo inteiro, nao uma partida
+
+Um documento pode conter o livro todo. O programa corta em partidas sozinho no
+inicio de cada bloco `[Tag "..."]` precedido de linha em branco; em texto que
+ainda nao tem cabecalho, uma linha `=== Partida 2 ===` faz o mesmo servico.
+
+A lista da esquerda aparece a partir da segunda partida: titulo tirado dos
+cabecalhos (`13. Smyslov - Rudakovsky, Moscou 1945`), numero de lances, alertas
+e a marca de **concluida**. Clicar leva o cursor ate la; `Ctrl+Shift+P` e
+`Ctrl+Shift+O` andam entre partidas e `Ctrl+Shift+D` marca a atual como pronta.
+
+O tabuleiro, o preview e o painel de alertas seguem sempre a partida que contem
+o cursor. Cada uma tem a **sua** posicao inicial: um exercicio que parte de um
+diagrama so precisa do `[FEN]`, e o botao *Posicao inicial* grava no cabecalho
+a posicao que estiver no tabuleiro, com `[SetUp "1"]` junto. Marcadores de
+diagrama do livro (`[D]`, `(diagrama)`) viram o comentario padrao `{[#]}`.
+
+`Ctrl+H` abre os cabecalhos da partida sob o cursor. O que se repete no livro
+inteiro -- evento, local, data, rodada, comentarista -- pode ser guardado como
+**template do livro** e reaproveitado nas partidas seguintes com um clique.
+
+Para exportar ha tres caminhos: **esta partida** (`Ctrl+Shift+E`), **o livro num
+arquivo so** ou **uma partida por arquivo** (`01_Smyslov-Rudakovsky.pgn`,
+`02_...`). Nos tres, cada partida passa pela conferencia de round-trip antes de
+ser gravada, e o relatorio diz quais nao conferiram.
+
+Digitar num capitulo grande nao trava: so a partida que esta sendo editada e
+reanalisada, e isso acontece fora da thread da interface. Abrir um livro de 64
+partidas custa cerca de meio segundo, uma vez; cada tecla depois disso custa uma
+partida.
+
 O texto bruto e a fonte da verdade; o PGN e uma saida derivada. Por isso *Salvar projeto*
 e *Exportar PGN* sao acoes diferentes.
 
@@ -110,13 +141,16 @@ resultado for legal na posicao.
 | `Ctrl+Shift+V` | limpar texto colado do PDF |
 | `Ctrl+K` / `Ctrl+9` | envolver em comentario / variante |
 | `Ctrl+Shift+K` / `Ctrl+Shift+C` | desenvolver / paragrafo vira comentario |
-| `Ctrl+R` | renumerar documento |
-| `Ctrl+Shift+E` | exportar PGN |
+| `Ctrl+R` | renumerar o documento inteiro |
+| `Ctrl+Shift+E` | exportar esta partida |
+| `Ctrl+Shift+P` / `Ctrl+Shift+O` | proxima / anterior partida do livro |
+| `Ctrl+H` | cabecalhos da partida |
+| `Ctrl+Shift+D` | marcar a partida como concluida |
 | `Ctrl+Left` / `Ctrl+Right` | lance anterior / proximo |
 | `Ctrl+F` | inverter tabuleiro |
 | `F8` / `Shift+F8` | proximo / anterior alerta |
 | `F4` | aceitar a correcao do alerta selecionado |
-| `F9` | mostrar/ocultar o painel de alertas |
+| `F9` / `F10` | mostrar/ocultar o painel de alertas / a lista de partidas |
 | `Ctrl+Z` | desfazer (funciona tambem em *Join Lines* e *Inserir Headers*) |
 
 ## Desenvolvimento

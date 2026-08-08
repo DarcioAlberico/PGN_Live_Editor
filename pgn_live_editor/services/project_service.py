@@ -55,6 +55,9 @@ class ProjectMeta:
 class ProjectState:
     cursor_position: int = 0
     ignored_issue_tokens: list[str] = field(default_factory=list)
+    # Indices das partidas ja conferidas. E o "12/64" da barra de status, e a
+    # unica informacao do livro que o programa nao consegue deduzir do texto.
+    completed_games: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -136,6 +139,7 @@ def load_project(path: Path) -> Project:
         state = ProjectState(
             cursor_position=int(state_payload.get("cursor_position", 0)),
             ignored_issue_tokens=list(state_payload.get("ignored_issue_tokens", [])),
+            completed_games=[int(index) for index in state_payload.get("completed_games", [])],
         )
 
         return Project(

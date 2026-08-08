@@ -14,11 +14,11 @@ Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 | 1 · Não perder trabalho | ✅ concluída |
 | 2 · Parar a corrupção silenciosa | ✅ concluída |
 | 3 · Gestos de edição | ✅ concluída |
-| 4 · Escala de livro | ⬜ próxima |
-| 5 · Assistentes | ⬜ |
+| 4 · Escala de livro | ✅ concluída |
+| 5 · Assistentes | ⬜ próxima |
 | 6 · Polimento | ⬜ |
 
-144 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
+199 testes passando (`uv run python -m unittest discover -s tests`), lint limpo.
 
 ---
 
@@ -113,6 +113,23 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
 
 **Aceite:** colar um capítulo com 8 partidas, ver 8 entradas na lista, navegar entre elas e exportar um `.pgn` com as 8 íntegras.
 
+**Entregue.** Notas de implementação que valem para as fases seguintes:
+
+- O corte também aceita um separador (`=== Partida 2 ===`) — texto recém-colado de
+  PDF ainda não tem cabeçalho nenhum, e sem isso o capítulo inteiro seria uma partida só.
+- Os segmentos **ladrilham** o documento: todo caractere pertence a exatamente um deles.
+  É o que torna "qual partida está sob o cursor" uma comparação de posição.
+- `parse_worker.py` guarda dois caches. O de AST exige a posição exata (é o que
+  alimenta os gestos e o cursor); o de **resumo** (`SegmentDigest`) é indexado só
+  pelo texto da partida, e por isso sobrevive a uma edição acima empurrar todas as
+  seguintes — as posições se corrigem com uma soma. Sem esse segundo cache, o realce
+  das partidas de baixo apagava ao primeiro caractere digitado.
+- Medido num livro de 64 partidas (22 KB): abrir custa ~460 ms uma vez, cada edição
+  custa ~27 ms — bem abaixo do orçamento de 50 ms de digitação da SPEC §6.1.
+- `extract_pgn_headers` passou a tolerar linha em branco no meio do bloco de tags.
+  É PGN malformado, mas constante em OCR, e antes `[White "..."]` ia parar no
+  movetext e virava prosa.
+
 ---
 
 ## Fase 5 — Assistentes · 3–4 semanas
@@ -150,6 +167,7 @@ Faça isto hoje, antes de qualquer planejamento. São correções pontuais de al
 | 2 · Parar a corrupção | 2 | `candidates.py` + painel de alertas | D1, D2, D3, D4, D7, D8, D13 |
 | 3 · Gestos de edição | 2–3 | envolver, copiar trechos, renumerar | — (novas funções) |
 | 4 · Escala de livro | 2–3 | múltiplas partidas, FEN, lote | D6, D10, D12 |
+| ↳ *situação* | ✅ | painel de partidas, `.plez` com concluídas, exportação em lote | |
 | 5 · Assistentes | 3–4 | dicionário aprendiz, motor, PDF | — (novas funções) |
 | 6 · Polimento | contínuo | corpus, empacotamento, i18n | D13 restante |
 

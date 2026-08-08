@@ -11,6 +11,8 @@ STANDARD_PGN_HEADERS = (
     ("Black", "?"),
 )
 
+SEVEN_TAG_ROSTER = tuple(tag for tag, _default in STANDARD_PGN_HEADERS) + ("Result",)
+
 VALID_RESULTS = ("1-0", "0-1", "1/2-1/2", "*")
 
 HEADER_LINE_RE = re.compile(r'^\[(?P<tag>[A-Za-z0-9_]+)\s+"(?P<value>(?:[^"\\]|\\.)*)"\]\s*$')
@@ -65,12 +67,26 @@ def normalize_pgn_result(value: str) -> str:
     return "*"
 
 
-def _header_span(raw_text: str, tag: str) -> tuple[int, int]:
-    match = re.search(rf'^\[{re.escape(tag)}\s+"[^"]*"\]', raw_text, re.MULTILINE)
-    return (match.start(), match.end()) if match else (0, 0)
+def _header_span(raw_text: str, tag: str, region_start: int = 0, region_end: int | None = None) -> tuple[int, int]:
+    """Posicao de um cabecalho **dentro da regiao pedida**.
+
+    A regiao importa desde que um documento passou a poder conter varias
+    partidas: sem ela, o alerta de `Date` da partida 7 apontaria para o `Date`
+    da partida 1.
+    """
+    region_end = len(raw_text) if region_end is None else region_end
+    match = re.compile(rf'^\[{re.escape(tag)}\s+"[^"]*"\]', re.MULTILINE).search(
+        raw_text, region_start, region_end
+    )
+    return (match.start(), match.end()) if match else (region_start, region_start)
 
 
-def validate_headers(headers: dict[str, str], raw_text: str = "") -> list[Issue]:
+def validate_headers(
+    headers: dict[str, str],
+    raw_text: str = "",
+    region_start: int = 0,
+    region_end: int | None = None,
+) -> list[Issue]:
     """Alertas sobre cabecalhos que sairiam invalidos no PGN."""
     issues: list[Issue] = []
 
@@ -78,7 +94,7 @@ def validate_headers(headers: dict[str, str], raw_text: str = "") -> list[Issue]
     if raw_date is not None:
         normalized = normalize_pgn_date(raw_date)
         if normalized != raw_date.strip():
-            start, end = _header_span(raw_text, "Date")
+            start, end = _header_span(raw_text, "Date", region_start, region_end)
             issues.append(Issue(
                 severity="warning",
                 code=INVALID_DATE,
@@ -91,7 +107,7 @@ def validate_headers(headers: dict[str, str], raw_text: str = "") -> list[Issue]
     raw_result = headers.get("Result")
     if raw_result is not None and raw_result.strip() not in VALID_RESULTS:
         normalized = normalize_pgn_result(raw_result)
-        start, end = _header_span(raw_text, "Result")
+        start, end = _header_span(raw_text, "Result", region_start, region_end)
         issues.append(Issue(
             severity="warning",
             code=INVALID_RESULT,
@@ -104,6 +120,15 @@ def validate_headers(headers: dict[str, str], raw_text: str = "") -> list[Issue]
     return issues
 
 
+def _next_line_is_a_header(lines: list[str], index: int) -> bool:
+    for line in lines[index:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        return HEADER_LINE_RE.match(stripped) is not None
+    return False
+
+
 def extract_pgn_headers(raw_text: str) -> tuple[dict[str, str], str, int]:
     lines = raw_text.splitlines(keepends=True)
     consumed = 0
@@ -114,7 +139,11 @@ def extract_pgn_headers(raw_text: str) -> tuple[dict[str, str], str, int]:
     while index < len(lines):
         stripped = lines[index].strip()
         if not stripped:
-            if found_headers:
+            # Linha em branco no meio do bloco de cabecalhos e PGN malformado,
+            # mas aparece o tempo todo em texto de OCR. Antes, tudo o que vinha
+            # depois dela era lido como movetext -- e `[White "..."]` ia parar
+            # no corpo da partida, virando prosa.
+            if found_headers and not _next_line_is_a_header(lines, index + 1):
                 consumed += len(lines[index])
                 index += 1
                 break
@@ -163,6 +192,68 @@ def insert_or_replace_headers(raw_text: str) -> str:
     headers, body_text, _body_offset = extract_pgn_headers(raw_text)
     header_block = build_header_text(headers)
     return header_block + body_text.lstrip("\r\n")
+
+
+def render_header_block(headers: dict[str, str]) -> str:
+    """O bloco de cabecalhos como ele fica no texto bruto, com a linha em branco."""
+    if not headers:
+        return ""
+    lines = [f'[{tag} "{_escape_tag_value(value)}"]' for tag, value in headers.items()]
+    return "\n".join(lines) + "\n\n"
+
+
+def merge_headers(existing: dict[str, str], updates: dict[str, str | None]) -> dict[str, str]:
+    """Aplica alteracoes preservando a ordem em que os cabecalhos ja estavam.
+
+    Valor `None` remove o cabecalho -- e assim que `SetUp` sai quando o `FEN`
+    sai, sem que ninguem precise lembrar de apaga-lo a mao.
+    """
+    pending = dict(updates)
+    merged: dict[str, str] = {}
+
+    source = existing or {tag: default for tag, default in STANDARD_PGN_HEADERS} | {"Result": "*"}
+
+    for tag, value in source.items():
+        if tag in pending:
+            new_value = pending.pop(tag)
+            if new_value is None:
+                continue
+            merged[tag] = new_value
+        else:
+            merged[tag] = value
+
+    for tag, value in pending.items():
+        if value is not None:
+            merged[tag] = value
+
+    # O padrao PGN exige os sete cabecalhos obrigatorios primeiro e nesta ordem;
+    # o que vier depois (FEN, SetUp, ECO, Annotator) mantem a ordem que tinha.
+    ordered = {tag: merged[tag] for tag in SEVEN_TAG_ROSTER if tag in merged}
+    ordered.update({tag: value for tag, value in merged.items() if tag not in ordered})
+    return ordered
+
+
+def upsert_headers(
+    raw_text: str,
+    updates: dict[str, str | None],
+    region_start: int = 0,
+    region_end: int | None = None,
+) -> tuple[int, int, str] | None:
+    """Trecho a substituir e novo bloco de cabecalhos, ou `None` se nada muda.
+
+    Devolve posicoes em vez de texto pronto para que quem chama aplique a
+    mudanca num unico bloco de desfazer, como todos os gestos da fase 3.
+    """
+    region_end = len(raw_text) if region_end is None else region_end
+    chunk = raw_text[region_start:region_end]
+    existing, _body, consumed = extract_pgn_headers(chunk)
+
+    merged = merge_headers(existing, updates)
+    block = render_header_block(merged)
+    if block == chunk[:consumed]:
+        return None
+
+    return (region_start, region_start + consumed, block)
 
 
 def _escape_tag_value(value: str) -> str:

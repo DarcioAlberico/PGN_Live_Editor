@@ -35,6 +35,7 @@ class ChessPanel(QWidget):
     move_focused_signal = Signal(int, int)
     move_insert_requested_signal = Signal(str, bool, int)
     excerpt_copied_signal = Signal(str)
+    start_fen_requested_signal = Signal()
 
     def __init__(self):
         super().__init__()
@@ -66,9 +67,16 @@ class ChessPanel(QWidget):
         self.lbl_meta = QLabel("0 moves | 0 issues")
         self.lbl_meta.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        # Fragmento de livro que parte de um diagrama: montar a posicao no
+        # tabuleiro e um caminho muito mais curto do que escrever a FEN a mao.
+        self.btn_start_fen = QPushButton("Posicao inicial")
+        self.btn_start_fen.setToolTip("Grava a posicao do tabuleiro como [FEN] inicial desta partida")
+        self.btn_start_fen.clicked.connect(self.start_fen_requested_signal.emit)
+
         controls.addWidget(self.btn_prev)
         controls.addWidget(self.lbl_status, 1)
         controls.addWidget(self.lbl_meta)
+        controls.addWidget(self.btn_start_fen)
         controls.addWidget(self.btn_next)
         layout.addLayout(controls)
 

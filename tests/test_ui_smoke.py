@@ -12,6 +12,7 @@ from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from pgn_live_editor.ui.editor_panel import EditorPanel  # noqa: E402
+from pgn_live_editor.ui.header_dialog import HeaderDialog  # noqa: E402
 from pgn_live_editor.ui.main_window import MainWindow  # noqa: E402
 
 BOOK_TEXT = "{Defesa Siciliana} 1.e4 c5 2.Nf3 e6 3.d4 cxd4 (3... Nf6 4.e5) 4.Nxd4"
@@ -188,6 +189,7 @@ class MainWindowSmokeTests(unittest.TestCase):
     def setUp(self):
         self.window = MainWindow()
         self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
 
     def test_window_builds_and_wires_the_panels(self):
         self.window.editor_panel.load_document_text(BOOK_TEXT)
@@ -278,6 +280,161 @@ class MainWindowSmokeTests(unittest.TestCase):
 
         self.window.project.raw_text = BOOK_TEXT
         self.assertFalse(self.window._is_dirty())
+
+
+BOOK_DOCUMENT = (
+    '[Event "Torneio"]\n[Site "Moscou"]\n[White "Smyslov"]\n[Black "Rudakovsky"]\n[Result "1-0"]\n'
+    "\n1.e4 c5 2.Nf3 e6 1-0\n"
+    "\n=== Estudo 2 ===\n"
+    '[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]\n[SetUp "1"]\n'
+    "\n1.e4 Kf6 2.e5+ Kf5 *\n"
+)
+
+
+class BookWindowTests(unittest.TestCase):
+    """Fase 4: um documento com varias partidas."""
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
+        self.window.editor_panel.load_document_text(BOOK_DOCUMENT)
+
+    def test_the_games_panel_lists_every_game(self):
+        panel = self.window.games_panel
+
+        self.assertEqual(2, panel.list_widget.count())
+        self.assertIn("Smyslov", panel.list_widget.item(0).text())
+        self.assertIn("partida 1/2", panel.lbl_progress.text())
+
+    def test_the_status_bar_shows_where_in_the_book_we_are(self):
+        self.assertIn("partida 1/2", self.window.lbl_book.text())
+        self.assertIn("4 lances", self.window.lbl_book.text())
+
+    def test_moving_the_cursor_switches_the_active_game(self):
+        cursor = self.window.editor_panel.text_edit.textCursor()
+        cursor.setPosition(BOOK_DOCUMENT.index("Kf6"))
+        self.window.editor_panel.text_edit.setTextCursor(cursor)
+
+        self.assertEqual(1, self.window.editor_panel.analysis.active_index)
+        # O tabuleiro passa a partir do diagrama do estudo, nao da posicao inicial.
+        self.assertEqual("8/8/8/4k3/8/8/4P3/4K3 w - - 0 1", self.window.chess_panel.start_fen)
+        self.assertEqual(["e4", "Kf6", "e5+", "Kf5"], [
+            move.display_san for move in self.window.editor_panel.current_ast.moves
+        ])
+
+    def test_stepping_to_the_next_game_moves_the_cursor_there(self):
+        self.window._step_game(1)
+
+        self.assertEqual(1, self.window.editor_panel.analysis.active_index)
+        self.assertIn("partida 2/2", self.window.lbl_book.text())
+
+        self.window._step_game(1)
+        self.assertEqual(0, self.window.editor_panel.analysis.active_index, "deve dar a volta")
+
+    def test_clicking_a_game_in_the_list_navigates_to_it(self):
+        self.window.games_panel.list_widget.setCurrentRow(1)
+
+        self.assertEqual(1, self.window.editor_panel.analysis.active_index)
+
+    def test_marking_a_game_as_done_is_unsaved_work(self):
+        self.window.project.raw_text = self.window.editor_panel.document_text()
+        self.assertFalse(self.window._is_dirty())
+
+        self.window.games_panel.list_widget.setCurrentRow(1)
+        self.window.games_panel.toggle_current_completion()
+
+        self.assertEqual([1], self.window.project.state.completed_games)
+        self.assertTrue(self.window._is_dirty(), "marcar como concluida nao pode sumir ao fechar")
+        self.assertIn("1 concluida", self.window.lbl_book.text())
+
+    def test_analyzing_the_book_fills_in_the_list(self):
+        self.window._analyze_book()
+
+        self.assertIn("4 lances", self.window.games_panel.list_widget.item(1).text())
+
+    def test_headers_are_written_into_the_game_under_the_cursor(self):
+        self.window._step_game(1)
+
+        self.window.editor_panel.action_apply_headers({
+            "Event": "Final de peoes",
+            "White": "Estudo",
+            "FEN": "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1",
+            "SetUp": "1",
+        })
+        text = self.window.editor_panel.document_text()
+
+        self.assertEqual(1, text.count('[Event "Final de peoes"]'))
+        self.assertIn('[White "Smyslov"]', text, "a primeira partida nao pode ser tocada")
+        self.assertGreater(text.index("Final de peoes"), text.index("Estudo 2"))
+
+    def test_the_board_position_becomes_the_start_of_the_current_game(self):
+        self.window.chess_panel.go_next()
+        self.window.chess_panel.go_next()
+        expected = self.window.chess_panel.board.fen()
+
+        self.window._set_start_fen_from_board()
+
+        segment = self.window.editor_panel.active_segment()
+        self.assertEqual(expected, segment.headers["FEN"])
+        self.assertEqual("1", segment.headers["SetUp"])
+
+    def test_diagram_markers_become_comments(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 [D] 2.Nf3")
+
+        self.window._normalize_diagrams()
+
+        self.assertEqual("1.e4 e5 {[#]} 2.Nf3", self.window.editor_panel.document_text())
+
+    def test_renumbering_repairs_every_game_of_the_book(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 7.Nf3\n\n=== 2 ===\n\n1.d4 d5 9.c4")
+
+        self.window.editor_panel.action_renumber()
+
+        self.assertEqual(
+            "1. e4 e5 2. Nf3\n\n=== 2 ===\n\n1. d4 d5 2. c4",
+            self.window.editor_panel.document_text(),
+        )
+
+    def test_a_single_game_document_keeps_the_list_out_of_the_way(self):
+        self.window.editor_panel.load_document_text("1.e4 e5 2.Nf3 Nc6")
+
+        self.assertEqual(1, self.window.games_panel.list_widget.count())
+        self.assertFalse(self.window.games_panel.isVisibleTo(self.window.splitter))
+        self.assertNotIn("partida", self.window.lbl_book.text())
+
+
+class HeaderDialogTests(unittest.TestCase):
+    def test_empty_fields_do_not_become_empty_headers(self):
+        dialog = HeaderDialog({"Event": "Torneio", "White": "Smyslov"})
+        self.addCleanup(dialog.deleteLater)
+
+        self.assertEqual({"Event": "Torneio", "White": "Smyslov"}, dialog.values())
+
+    def test_the_book_template_only_carries_what_repeats(self):
+        dialog = HeaderDialog({
+            "Event": "Torneio", "Site": "Moscou", "Date": "1945.??.??",
+            "White": "Smyslov", "Black": "Rudakovsky",
+        })
+        self.addCleanup(dialog.deleteLater)
+
+        self.assertEqual(
+            {"Event": "Torneio", "Site": "Moscou", "Date": "1945.??.??"},
+            dialog.book_template_values(),
+        )
+
+    def test_applying_a_template_does_not_overwrite_this_game(self):
+        dialog = HeaderDialog(
+            {"White": "Smyslov", "Event": "Ja preenchido"},
+            {"Event": "Torneio do livro", "Site": "Moscou"},
+        )
+        self.addCleanup(dialog.deleteLater)
+
+        dialog.combo_templates.setCurrentIndex(0)
+        dialog._apply_template()
+
+        self.assertEqual("Ja preenchido", dialog.values()["Event"])
+        self.assertEqual("Moscou", dialog.values()["Site"])
 
 
 if __name__ == "__main__":

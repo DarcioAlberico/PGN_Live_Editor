@@ -2,7 +2,6 @@ import re
 from collections.abc import Callable, Sequence
 
 import chess
-from PyQt6.QtCore import QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
@@ -18,13 +17,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..core.normalizer import LiveTextNormalizer
-from ..core.parser import GameAST, TolerantParser
+from ..core.fen_tools import normalize_diagram_marks, set_start_fen
+from ..core.game_splitter import GameSegment
+from ..core.parser import GameAST
 from ..core.paste_cleanup import clean_pdf_text
-from ..core.pgn_headers import extract_pgn_headers, insert_or_replace_headers, validate_headers
+from ..core.pgn_headers import insert_or_replace_headers, upsert_headers
 from ..core.text_insertion import build_board_move_insertion
 from ..core.text_ops import (
     OperationResult,
+    TextEdit,
     check_balance,
     paragraph_to_comment,
     renumber_document,
@@ -32,7 +33,12 @@ from ..core.text_ops import (
     wrap_as_comment,
     wrap_as_variation,
 )
-from ..core.tokenizer import PGNTokenizer
+from ..services.parse_worker import (
+    AsyncParser,
+    DocumentAnalysis,
+    ParseConfig,
+    SegmentAnalysis,
+)
 
 SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = (
     ("!", "$1", "Bom lance"),
@@ -143,16 +149,17 @@ class PGNTextEdit(QPlainTextEdit):
 
 class EditorPanel(QWidget):
     text_parsed_signal = Signal(object)
+    document_analyzed_signal = Signal(object)
     cursor_position_changed_signal = Signal(int)
 
     def __init__(self):
         super().__init__()
 
         self.locale = 'pt'
-        self.normalizer = LiveTextNormalizer(locale=self.locale)
-        self.tokenizer = PGNTokenizer()
-        self.parser = TolerantParser(locale=self.locale)
+        self.async_parser = AsyncParser(ParseConfig.build(locale=self.locale), parent=self)
+        self.async_parser.analysis_ready_signal.connect(self._on_background_analysis)
 
+        self.analysis = DocumentAnalysis()
         self.current_ast = GameAST()
         self.current_start_fen = chess.STARTING_FEN
         self.current_move_span = None
@@ -192,12 +199,12 @@ class EditorPanel(QWidget):
         self.highlighter = MoveHighlighter(self.text_edit.document())
         layout.addWidget(self.text_edit)
 
-        self.debounce_timer = QTimer()
-        self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.timeout.connect(self._do_reparse)
-
         self.text_edit.textChanged.connect(self._on_text_changed)
         self.text_edit.cursorPositionChanged.connect(self._on_cursor_position_changed)
+
+    def shutdown(self):
+        """Encerra a thread de analise. A janela chama isto ao fechar."""
+        self.async_parser.shutdown()
 
     # ------------------------------------------------------------------
     # Documento
@@ -216,7 +223,10 @@ class EditorPanel(QWidget):
         cursor.setPosition(max(0, min(cursor_position, len(text))))
         self.text_edit.setTextCursor(cursor)
         self.text_edit.document().setModified(False)
-        self.reparse_now()
+        # Uma vez, ao abrir: e o que faz o livro inteiro nascer realcado e com a
+        # lista de partidas preenchida. Depois disso so a partida editada e
+        # reanalisada.
+        self.analyze_whole_book()
 
     def replace_all_text(self, new_text: str):
         """Substitui todo o texto **preservando o historico de desfazer**.
@@ -342,61 +352,117 @@ class EditorPanel(QWidget):
         self._apply_current_selection()
 
     def _on_text_changed(self):
-        self.debounce_timer.start(300)
+        # A analise sai da thread de UI enquanto se digita; o resultado so e
+        # aplicado se ainda corresponder ao texto que esta na tela.
+        self.async_parser.schedule(self.text_edit.toPlainText(), self.cursor_position())
 
     def _on_cursor_position_changed(self):
+        position = self.text_edit.textCursor().position()
+
+        # Ao entrar noutra partida do livro, o tabuleiro e o preview passam a
+        # segui-la. Vem do cache, entao nao ha custo de analise aqui.
+        if self.analysis.segments and self.analysis.active_index != self._segment_index_at(position):
+            self._do_reparse()
+
         if self._suspend_cursor_sync:
             return
-        self.cursor_position_changed_signal.emit(self.text_edit.textCursor().position())
+        self.cursor_position_changed_signal.emit(position)
+
+    def _segment_index_at(self, position: int) -> int:
+        segment = self.analysis.segment_at(position)
+        return segment.index if segment else 0
 
     def _do_reparse(self):
-        raw_text = self.text_edit.toPlainText()
-        headers, body_text, body_offset = extract_pgn_headers(raw_text)
+        analysis = self.async_parser.parse_now(self.text_edit.toPlainText(), self.cursor_position())
+        self._apply_analysis(analysis)
 
-        if not raw_text.strip():
-            self.current_ast = GameAST()
-            self.current_start_fen = chess.STARTING_FEN
+    def _on_background_analysis(self, analysis: DocumentAnalysis):
+        # O texto pode ter mudado enquanto a thread trabalhava: nesse caso ja ha
+        # um pedido mais novo a caminho e este resultado nao vale nada.
+        if analysis.raw_text != self.text_edit.toPlainText():
+            return
+        self._apply_analysis(analysis)
+
+    def _apply_analysis(self, analysis: DocumentAnalysis):
+        self.analysis = analysis
+        self.current_ast = analysis.ast
+        self.current_start_fen = analysis.start_fen
+
+        if not analysis.raw_text.strip():
             self.current_move_span = None
-            self._apply_highlights(self.current_ast)
-            self.text_parsed_signal.emit(self.current_ast)
+
+        self._apply_highlights(analysis)
+        self.document_analyzed_signal.emit(analysis)
+        self.text_parsed_signal.emit(self.current_ast)
+
+    # ------------------------------------------------------------------
+    # Segmentos (fase 4)
+    # ------------------------------------------------------------------
+
+    def segments(self) -> list[GameSegment]:
+        return self.analysis.segments
+
+    def active_segment(self) -> GameSegment | None:
+        segments = self.analysis.segments
+        if not segments:
+            return None
+        return segments[min(self.analysis.active_index, len(segments) - 1)]
+
+    def active_region(self) -> tuple[int, int]:
+        """Limites da partida sob o cursor -- toda edicao de cabecalho usa isto."""
+        segment = self.active_segment()
+        if segment is None:
+            return (0, len(self.document_text()))
+        return (segment.content_offset, segment.end_offset)
+
+    def go_to_segment(self, index: int):
+        segments = self.analysis.segments
+        if not 0 <= index < len(segments):
             return
 
-        # Fragmento de livro que parte de um diagrama: o parser sempre soube
-        # receber uma posicao inicial, mas o editor nunca a repassava.
-        start_fen = headers.get("FEN", chess.STARTING_FEN)
-        try:
-            chess.Board(start_fen)
-        except ValueError:
-            start_fen = chess.STARTING_FEN
+        segment = segments[index]
+        cursor = self.text_edit.textCursor()
+        cursor.setPosition(min(segment.raw_offset, len(self.document_text())))
+        self.text_edit.setTextCursor(cursor)
+        self.text_edit.centerCursor()
+        self.text_edit.setFocus()
+        self.reparse_now()
 
-        normalized = self.normalizer.normalize_with_mapping(body_text, base_offset=body_offset)
-        tokens = self.tokenizer.tokenize(normalized)
-        ast = self.parser.parse(tokens, start_fen=start_fen)
-        ast.headers = list(headers.items())
-        ast.issues.extend(validate_headers(headers, raw_text))
-
-        self.current_ast = ast
-        self.current_start_fen = start_fen
-        self._apply_highlights(ast)
-        self.text_parsed_signal.emit(ast)
+    def analyze_whole_book(self) -> list[SegmentAnalysis]:
+        """Analisa todas as partidas -- exportacao em lote e contagens da lista."""
+        raw_text = self.document_text()
+        analyses = self.async_parser.pipeline.analyze_all(raw_text)
+        self._apply_analysis(self.async_parser.parse_now(raw_text, self.cursor_position()))
+        return analyses
 
     # ------------------------------------------------------------------
     # Configuracao do reconhecimento
     # ------------------------------------------------------------------
 
+    def _reconfigure(self, **changes):
+        config = self.async_parser.config
+        self.async_parser.configure(ParseConfig.build(
+            locale=changes.get("locale", config.locale),
+            dictionary=changes.get("dictionary", config.dictionary_map),
+            ignored_tokens=changes.get("ignored_tokens", config.ignored_tokens),
+            separator_pattern=changes.get("separator_pattern", config.separator_pattern),
+        ))
+        self.reparse_now()
+
+    def configure_recognition(self, locale: str, dictionary: dict[str, str], ignored_tokens):
+        """Idioma, dicionario e silenciados de uma vez -- uma unica reanalise."""
+        self.locale = locale
+        self._reconfigure(locale=locale, dictionary=dictionary, ignored_tokens=ignored_tokens)
+
     def set_locale(self, locale: str):
         self.locale = locale
-        self.normalizer.locale = locale
-        self.parser.set_locale(locale)
-        self.reparse_now()
+        self._reconfigure(locale=locale)
 
     def set_dictionary(self, dictionary: dict[str, str]):
-        self.parser.set_dictionary(dictionary)
-        self.reparse_now()
+        self._reconfigure(dictionary=dictionary)
 
     def set_ignored_tokens(self, tokens):
-        self.parser.set_ignored_tokens(tokens)
-        self.reparse_now()
+        self._reconfigure(ignored_tokens=tokens)
 
     def wrap_span_as_comment(self, start_index: int, end_index: int):
         """Envolve um trecho do texto bruto em chaves, de forma undoavel."""
@@ -453,7 +519,43 @@ class EditorPanel(QWidget):
         )
 
     def action_renumber(self) -> str:
-        return self.apply_operation(renumber_document(self.document_text(), self.current_ast))
+        """Ctrl+R -- renumera o **livro inteiro**, nao so a partida sob o cursor."""
+        text = self.document_text()
+        edits: list[TextEdit] = []
+        for analysis in self.analyze_whole_book():
+            edits.extend(renumber_document(text, analysis.ast).edits)
+
+        if not edits:
+            return "A numeracao ja esta correta."
+        return self.apply_operation(
+            OperationResult(edits, f"{len(edits)} numero(s) de lance corrigido(s).")
+        )
+
+    def action_normalize_diagrams(self) -> str:
+        return self.apply_operation(normalize_diagram_marks(self.document_text()))
+
+    def action_set_start_fen(self, fen: str) -> str:
+        """Grava a posicao do tabuleiro como inicio da partida sob o cursor."""
+        region_start, region_end = self.active_region()
+        return self.apply_operation(set_start_fen(self.document_text(), fen, region_start, region_end))
+
+    def action_apply_headers(self, headers: dict[str, str]) -> str:
+        """Reescreve o bloco de cabecalhos da partida sob o cursor."""
+        text = self.document_text()
+        region_start, region_end = self.active_region()
+
+        segment = self.active_segment()
+        current = dict(segment.headers) if segment else {}
+        # Um cabecalho que existia e voltou vazio deve sumir, nao virar `""`.
+        updates: dict[str, str | None] = {tag: None for tag in current if tag not in headers}
+        updates.update(headers)
+
+        change = upsert_headers(text, updates, region_start, region_end)
+        if change is None:
+            return "Os cabecalhos ja estao assim."
+
+        start, end, block = change
+        return self.apply_operation(OperationResult([TextEdit(start, end, block)], "Cabecalhos atualizados."))
 
     def action_clean_paste(self, options) -> str:
         report = clean_pdf_text(self.document_text(), options)
@@ -467,8 +569,7 @@ class EditorPanel(QWidget):
         return check_balance(self.document_text())
 
     def reparse_now(self) -> GameAST:
-        if self.debounce_timer.isActive():
-            self.debounce_timer.stop()
+        self.async_parser.cancel_pending()
         self._do_reparse()
         return self.current_ast
 
@@ -480,15 +581,13 @@ class EditorPanel(QWidget):
         selection.format = text_format
         return selection
 
-    def _iter_moves_with_depth(self, moves, depth: int = 0):
-        for move in moves:
-            yield move, depth
-            for variation in move.variations:
-                yield from self._iter_moves_with_depth(variation, depth + 1)
+    def _apply_highlights(self, analysis: DocumentAnalysis):
+        """Realce do **livro inteiro**, e nao so da partida sob o cursor.
 
-    def _apply_highlights(self, ast: GameAST):
-        highlight_ranges = []
-
+        As partidas que nao estao sendo editadas vem do resumo em cache, ja
+        deslocado para a posicao atual delas -- por isso elas nao apagam quando
+        uma edicao acima empurra o texto.
+        """
         fmt_valid = QTextCharFormat()
         fmt_valid.setForeground(QColor("#78aefc"))
         fmt_valid.setFontWeight(QFont.Weight.Bold)
@@ -525,25 +624,21 @@ class EditorPanel(QWidget):
         fmt_error_variation = QTextCharFormat(fmt_error)
         fmt_error_variation.setFontWeight(QFont.Weight.Normal)
 
-        for move, depth in self._iter_moves_with_depth(ast.moves):
-            if move.start_index < 0 or move.end_index <= move.start_index:
-                continue
+        formats = {
+            ("valid", False): fmt_valid,
+            ("valid", True): fmt_valid_variation,
+            ("fixed", False): fmt_fixed,
+            ("fixed", True): fmt_fixed_variation,
+            ("review", False): fmt_review,
+            ("review", True): fmt_review_variation,
+            ("error", False): fmt_error,
+            ("error", True): fmt_error_variation,
+        }
 
-            valid_format = fmt_valid if depth == 0 else fmt_valid_variation
-            fixed_format = fmt_fixed if depth == 0 else fmt_fixed_variation
-            review_format = fmt_review if depth == 0 else fmt_review_variation
-            error_format = fmt_error if depth == 0 else fmt_error_variation
-
-            if not move.is_valid:
-                highlight_ranges.append((move.start_index, move.end_index, error_format))
-            elif move.needs_review:
-                highlight_ranges.append((move.start_index, move.end_index, review_format))
-            elif move.corrected_san:
-                highlight_ranges.append((move.start_index, move.end_index, fixed_format))
-            else:
-                highlight_ranges.append((move.start_index, move.end_index, valid_format))
-
-        self.highlighter.set_ranges(highlight_ranges)
+        self.highlighter.set_ranges([
+            (start, end, formats[(kind, in_variation)])
+            for start, end, kind, in_variation in analysis.highlight_spans
+        ])
         self._apply_current_selection()
 
     def _apply_current_selection(self):

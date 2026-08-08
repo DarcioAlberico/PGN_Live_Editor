@@ -8,6 +8,8 @@ linha principal divergirem, o usuario e avisado antes de salvar.
 from __future__ import annotations
 
 import io
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -133,3 +135,66 @@ def write_pgn(path: Path, pgn_text: str) -> None:
     if not pgn_text.endswith("\n"):
         pgn_text += "\n"
     path.write_text(pgn_text, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Livro inteiro (fase 4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BookExportReport:
+    """Laudo da exportacao de varias partidas de uma vez."""
+
+    games: int = 0
+    nodes: int = 0
+    failed_games: list[tuple[int, RoundTripReport]] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed_games
+
+    def summary(self) -> str:
+        if self.ok:
+            return f"{self.games} partida(s) exportada(s), {self.nodes} lances conferidos."
+
+        detail = "\n".join(
+            f"- partida {index + 1}: {report.problems[0] if report.problems else 'divergencia'}"
+            for index, report in self.failed_games[:8]
+        )
+        return f"{len(self.failed_games)} de {self.games} partida(s) nao conferem:\n{detail}"
+
+
+def build_book_pgn(games: Sequence[tuple[GameAST, str]]) -> tuple[str, BookExportReport]:
+    """Um unico PGN com todas as partidas, cada uma conferida por round-trip."""
+    report = BookExportReport(games=len(games))
+    texts: list[str] = []
+
+    for index, (ast, start_fen) in enumerate(games):
+        pgn_text, game_report = build_pgn(ast, start_fen)
+        texts.append(pgn_text.rstrip("\n"))
+        report.nodes += game_report.actual_nodes
+        if not game_report.ok:
+            report.failed_games.append((index, game_report))
+
+    # Duas quebras entre partidas: e o separador que o padrao PGN exige.
+    return ("\n\n".join(texts) + "\n" if texts else "", report)
+
+
+def game_file_name(index: int, headers: dict[str, str], fallback_stem: str = "partida") -> str:
+    """`03_Smyslov-Rudakovsky.pgn` -- nome legivel e ordenavel."""
+    white = _file_safe(headers.get("White", ""))
+    black = _file_safe(headers.get("Black", ""))
+
+    if white or black:
+        label = f"{white or 'x'}-{black or 'x'}"
+    else:
+        label = _file_safe(headers.get("Event", "")) or _file_safe(fallback_stem) or "partida"
+
+    return f"{index + 1:02d}_{label[:60]}.pgn"
+
+
+def _file_safe(value: str) -> str:
+    cleaned = re.sub(r'[^\w\s.-]', "", (value or "").strip(), flags=re.UNICODE)
+    cleaned = re.sub(r'\s+', "_", cleaned).strip("._-")
+    return "" if cleaned in {"", "?"} else cleaned
