@@ -69,6 +69,10 @@ INVALID_DATE = "INVALID_DATE"
 INVALID_RESULT = "INVALID_RESULT"
 MISSING_SETUP = "MISSING_SETUP"
 
+# Fase 5: nao vem do parser, vem do motor de xadrez (services/engine_service.py).
+# Lance de linha principal que despenca a avaliacao sem o livro marcar com '?'.
+SUSPECT_BLUNDER = "SUSPECT_BLUNDER"
+
 SEVERITY_ORDER: dict[str, int] = {"error": 0, "warning": 1, "info": 2}
 
 SEVERITY_LABEL: dict[str, str] = {

@@ -11,6 +11,14 @@ from PyQt6.QtGui import QTextCursor  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
+# `tests/` nao e pacote: o discover (e o pytest) poem a pasta no sys.path.
+from test_engine import HANGING_KNIGHT_FEN, shallow_search  # noqa: E402
+
+from pgn_live_editor.core.issues import SUSPECT_BLUNDER  # noqa: E402
+from pgn_live_editor.services.engine_service import (  # noqa: E402
+    EngineSettings,
+    scan_mainline,
+)
 from pgn_live_editor.ui.editor_panel import EditorPanel  # noqa: E402
 from pgn_live_editor.ui.header_dialog import HeaderDialog  # noqa: E402
 from pgn_live_editor.ui.main_window import MainWindow  # noqa: E402
@@ -289,6 +297,84 @@ BOOK_DOCUMENT = (
     '[FEN "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1"]\n[SetUp "1"]\n'
     "\n1.e4 Kf6 2.e5+ Kf5 *\n"
 )
+
+
+class EngineIssuesInTheWindowTests(unittest.TestCase):
+    """Fase 5: a suspeita do motor convive com os alertas do parser.
+
+    Nenhum teste aqui abre motor nenhum: a varredura roda com o avaliador
+    material dos testes de `test_engine`, e o que se verifica e a costura com a
+    janela -- os alertas entram na lista, sobrevivem a uma edicao acima e somem
+    quando a partida deles muda.
+    """
+
+    GAME = "1. Nd5"
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
+
+    def _scan(self, text: str = "") -> None:
+        """Faz o que `_scan_with_engine` faria, sem o processo do motor."""
+        self.window.editor_panel.load_document_text(text or self.GAME)
+        ast = self.window.editor_panel.reparse_now()
+        segment = self.window.editor_panel.active_segment()
+
+        self.window._pending_engine_segment = (
+            segment.body if segment else self.window.editor_panel.document_text(),
+            segment.raw_offset if segment else 0,
+        )
+        report = scan_mainline(
+            ast,
+            self.window.editor_panel.current_start_fen,
+            shallow_search,
+            EngineSettings(threshold_cp=250),
+        )
+        self.window._on_engine_scan_finished(report)
+        return report
+
+    def test_a_suspect_move_reaches_the_issues_panel(self):
+        self._scan(f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n{self.GAME}')
+
+        codes = [issue.code for issue in self.window.issues_panel.issues]
+        self.assertIn(SUSPECT_BLUNDER, codes)
+        self.assertGreater(self.window.issues_panel.table.rowCount(), 0)
+
+    def test_accepting_the_engine_suggestion_rewrites_the_raw_text(self):
+        self._scan(f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n{self.GAME}')
+
+        issue = next(i for i in self.window.issues_panel.issues if i.code == SUSPECT_BLUNDER)
+        self.assertEqual(issue.best_candidate.san, "Nd1")
+
+        self.window._accept_issue(issue)
+        self.assertIn("1. Nd1", self.window.editor_panel.document_text())
+
+    def test_dismissing_a_suspicion_does_not_touch_the_text(self):
+        """'Ignorar' um alerta do motor nao pode virar token silenciado no parser."""
+        self._scan(f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n{self.GAME}')
+        before = self.window.editor_panel.document_text()
+
+        issue = next(i for i in self.window.issues_panel.issues if i.code == SUSPECT_BLUNDER)
+        self.window._ignore_issue(issue)
+
+        self.assertEqual(before, self.window.editor_panel.document_text())
+        self.assertEqual([], self.window.project.state.ignored_issue_tokens)
+        self.assertNotIn(SUSPECT_BLUNDER, [i.code for i in self.window.issues_panel.issues])
+
+    def test_editing_the_scanned_game_drops_the_stale_suspicion(self):
+        self._scan(f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n{self.GAME}')
+        self.assertIn(SUSPECT_BLUNDER, [i.code for i in self.window.issues_panel.issues])
+
+        # O lance conferido mudou: o alerta falava de outro texto.
+        self.window.editor_panel.load_document_text(
+            f'[FEN "{HANGING_KNIGHT_FEN}"]\n[SetUp "1"]\n\n1. Nd1'
+        )
+        self.window.editor_panel.reparse_now()
+        self.window._refresh_issues()
+
+        self.assertNotIn(SUSPECT_BLUNDER, [i.code for i in self.window.issues_panel.issues])
+        self.assertIsNone(self.window._engine_findings)
 
 
 class BookWindowTests(unittest.TestCase):

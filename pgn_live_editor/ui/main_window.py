@@ -1,4 +1,5 @@
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
@@ -14,9 +15,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
 from ..core.text_ops import promote_variation
 from ..services.clipboard_service import COPY_FORMATS
+from ..services.engine_service import (
+    ENGINE_ENV_VAR,
+    EngineScanner,
+    EngineSettings,
+    ScanFindings,
+    discover_engine_path,
+    load_engine_settings,
+    save_engine_settings,
+)
 from ..services.export_service import (
     build_book_pgn,
     build_pgn,
@@ -56,6 +67,11 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self._chars_since_autosave = 0
         self._last_autosaved_text = ""
+        # Motor de xadrez (fase 5): opcional, sob demanda, fora da thread de UI.
+        self.engine_settings: EngineSettings = load_engine_settings()
+        self.engine_scanner = EngineScanner(self)
+        self._engine_findings: ScanFindings | None = None
+        self._pending_engine_segment: tuple[str, int] = ("", 0)
         # Marcas de partida concluida e template do livro nao estao no texto
         # bruto -- sem isto elas sumiriam sem aviso ao fechar a janela.
         self._state_dirty = False
@@ -118,6 +134,8 @@ class MainWindow(QMainWindow):
         self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
         self.issues_panel.learn_requested_signal.connect(self._learn_issue)
         self.issues_panel.comment_requested_signal.connect(self._comment_issue)
+        self.engine_scanner.finished_signal.connect(self._on_engine_scan_finished)
+        self.engine_scanner.failed_signal.connect(self._on_engine_scan_failed)
 
         self.editor_panel.text_edit.textChanged.connect(self._on_text_changed)
 
@@ -199,6 +217,9 @@ class MainWindow(QMainWindow):
         self._add_action(review_menu, "Proximo alerta", "F8", lambda: self.issues_panel.go_to_next_issue(1))
         self._add_action(review_menu, "Alerta anterior", "Shift+F8", lambda: self.issues_panel.go_to_next_issue(-1))
         self._add_action(review_menu, "Aceitar correcao", "F4", self.issues_panel.accept_selected)
+        review_menu.addSeparator()
+        self._add_action(review_menu, "Conferir a partida com o motor", "Ctrl+E", self._scan_with_engine)
+        self._add_action(review_menu, "Motor de xadrez...", None, self._configure_engine)
         review_menu.addSeparator()
         self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
 
@@ -376,7 +397,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_parsed(self, ast):
-        self.issues_panel.set_issues(ast.issues)
+        self.issues_panel.set_issues(ast.issues + self._live_engine_issues())
         self.chess_panel.start_fen = self.editor_panel.current_start_fen
 
     # ------------------------------------------------------------------
@@ -541,12 +562,133 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"'{issue.raw_text}' virou comentario.", 4000)
 
     def _ignore_issue(self, issue):
+        if issue.code == SUSPECT_BLUNDER:
+            # Suspeita do motor nao e token de OCR: silenciar aqui e so tirar da
+            # lista. Mandar o parser tratar o lance como texto destruiria a partida.
+            self._dismiss_engine_issue(issue)
+            self.statusBar().showMessage(f"Suspeita do motor sobre '{issue.raw_text}' dispensada.", 4000)
+            return
+
         token = issue.raw_text
         if not token or token in self.project.state.ignored_issue_tokens:
             return
         self.project.state.ignored_issue_tokens.append(token)
         self.editor_panel.set_ignored_tokens(self.project.state.ignored_issue_tokens)
         self.statusBar().showMessage(f"'{token}' passa a ser tratado como texto neste projeto.", 5000)
+
+    # ------------------------------------------------------------------
+    # Motor de xadrez (fase 5)
+    # ------------------------------------------------------------------
+
+    def _live_engine_issues(self) -> list:
+        """Alertas do motor que ainda valem para a partida sob o cursor.
+
+        A varredura custa segundos e a reanalise acontece a cada tecla: sem esta
+        conferencia, os alertas do motor ou sumiriam no primeiro caractere ou
+        ficariam apontando para o lugar errado.
+        """
+        findings = self._engine_findings
+        segment = self.editor_panel.active_segment()
+        if findings is None:
+            return []
+
+        body = segment.body if segment else self.editor_panel.document_text()
+        if not findings.matches(body):
+            # O texto desta partida mudou: a varredura falava de outro texto.
+            self._engine_findings = None
+            return []
+
+        return findings.shifted_to(segment.raw_offset if segment else 0)
+
+    def _refresh_issues(self):
+        self.issues_panel.set_issues(self.editor_panel.current_ast.issues + self._live_engine_issues())
+
+    def _scan_with_engine(self):
+        if self.engine_scanner.is_running:
+            self._report("O motor ja esta conferindo uma partida.")
+            return
+
+        if not discover_engine_path(self.engine_settings.path):
+            self._offer_engine_setup()
+            return
+
+        ast = self.editor_panel.reparse_now()
+        if not ast.moves:
+            self._report("Nao ha linha principal para o motor conferir.")
+            return
+
+        segment = self.editor_panel.active_segment()
+        self._pending_engine_segment = (
+            segment.body if segment else self.editor_panel.document_text(),
+            segment.raw_offset if segment else 0,
+        )
+        self.statusBar().showMessage("Motor conferindo a linha principal...")
+        self.engine_scanner.scan(ast, self.editor_panel.current_start_fen, self.engine_settings)
+
+    def _on_engine_scan_finished(self, report):
+        body, offset = self._pending_engine_segment
+        self._engine_findings = ScanFindings(segment_body=body, raw_offset=offset, issues=list(report.issues))
+
+        live = self._live_engine_issues()
+        self._refresh_issues()
+
+        if report.issues and not live:
+            self._report("O texto mudou durante a conferencia; rode o motor de novo.")
+            return
+        self._report(report.summary())
+
+    def _on_engine_scan_failed(self, message: str):
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, "Motor de xadrez", message)
+
+    def _dismiss_engine_issue(self, issue):
+        """Tira uma suspeita do motor da lista, sem tocar no texto bruto."""
+        findings = self._engine_findings
+        if findings is None:
+            return
+
+        segment = self.editor_panel.active_segment()
+        delta = (segment.raw_offset if segment else 0) - findings.raw_offset
+        original_start = issue.raw_start - delta
+        findings.issues = [
+            other
+            for other in findings.issues
+            if not (other.code == issue.code and other.raw_start == original_start)
+        ]
+        self._refresh_issues()
+
+    def _configure_engine(self):
+        current = discover_engine_path(self.engine_settings.path)
+        file_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Executavel do motor UCI",
+            current or str(Path.cwd()),
+            "Executaveis (*.exe);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+
+        self.engine_settings = replace(self.engine_settings, path=file_path)
+        save_engine_settings(self.engine_settings)
+        self._report(f"Motor de xadrez: {Path(file_path).name}")
+
+    def _offer_engine_setup(self):
+        choice = QMessageBox.question(
+            self,
+            "Motor de xadrez",
+            "Nenhum motor UCI foi encontrado.\n\n"
+            "O motor e opcional. Ele serve para desconfiar de um lance de linha\n"
+            "principal que derruba a avaliacao sem o livro marcar com '?' -- que\n"
+            "quase sempre e erro de leitura, nao erro do mestre.\n\n"
+            f"Instale o Stockfish no PATH, aponte o caminho em {ENGINE_ENV_VAR},\n"
+            "ou escolha o executavel agora.",
+            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Open,
+        )
+        if choice == QMessageBox.StandardButton.Open:
+            self._configure_engine()
+
+    # ------------------------------------------------------------------
 
     def _learn_issue(self, issue):
         candidate = issue.best_candidate
@@ -780,6 +922,7 @@ class MainWindow(QMainWindow):
                 return
 
         self.editor_panel.shutdown()
+        self.engine_scanner.shutdown()
         clear_recovery_snapshot()
         event.accept()
 
