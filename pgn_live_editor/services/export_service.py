@@ -8,6 +8,7 @@ linha principal divergirem, o usuario e avisado antes de salvar.
 from __future__ import annotations
 
 import io
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -179,6 +180,118 @@ def build_book_pgn(games: Sequence[tuple[GameAST, str]]) -> tuple[str, BookExpor
 
     # Duas quebras entre partidas: e o separador que o padrao PGN exige.
     return ("\n\n".join(texts) + "\n" if texts else "", report)
+
+
+# ---------------------------------------------------------------------------
+# Outras saidas (SPEC 5.5)
+# ---------------------------------------------------------------------------
+
+
+def _move_to_dict(move: MoveNode) -> dict:
+    payload: dict = {
+        "san": move.display_san,
+        "raw": move.raw_text,
+        # O span e o que liga a analise de volta ao texto bruto -- e o dado que
+        # uma ferramenta externa nao consegue reconstruir sozinha.
+        "span": [move.san_start_index, move.san_end_index],
+        "valid": move.is_valid,
+        "confidence": round(move.confidence, 3),
+    }
+    if move.number:
+        payload["number"] = move.number
+    if move.corrected_san:
+        payload["read_as"] = move.san
+    if move.needs_review:
+        payload["needs_review"] = True
+    if move.nags:
+        payload["nags"] = list(move.nags)
+    if move.comments_before:
+        payload["comments_before"] = list(move.comments_before)
+    if move.comments_after:
+        payload["comments_after"] = list(move.comments_after)
+    if move.parent_fen:
+        payload["fen_before"] = move.parent_fen
+    if move.variations:
+        payload["variations"] = [
+            [_move_to_dict(child) for child in variation] for variation in move.variations
+        ]
+    return payload
+
+
+def build_structural_json(games: Sequence[tuple[GameAST, str]]) -> str:
+    """A analise inteira, com spans -- para ferramenta externa (SPEC 5.5).
+
+    E a unica saida que **nao** perde nada: o PGN descarta a confianca, o span
+    no texto bruto e o que o programa leu antes de corrigir. Quem quiser
+    conferir o trabalho com outro programa precisa disto, nao do PGN.
+    """
+    payload = {
+        "format": "pgn-live-editor/structural",
+        "version": 1,
+        "games": [
+            {
+                "index": index,
+                "headers": dict(ast.headers),
+                "start_fen": start_fen,
+                "result": ast.result,
+                "moves": [_move_to_dict(move) for move in ast.moves],
+                "issues": [
+                    {
+                        "severity": issue.severity,
+                        "code": issue.code,
+                        "message": issue.message,
+                        "span": [issue.raw_start, issue.raw_end],
+                        "raw": issue.raw_text,
+                        "candidates": [
+                            {
+                                "san": candidate.san,
+                                "confidence": candidate.confidence,
+                                "source": candidate.source,
+                            }
+                            for candidate in issue.candidates
+                        ],
+                    }
+                    for issue in ast.issues
+                ],
+            }
+            for index, (ast, start_fen) in enumerate(games)
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def build_normalized_text(games: Sequence[tuple[GameAST, str]]) -> str:
+    """Texto limpo, uma partida por bloco -- para conferir ao lado do livro.
+
+    Sem chaves, sem parenteses, sem cabecalho: so numero de lance e lance, com
+    quebra a cada cinco lances brancos. E a forma de passar o olho pela partida
+    comparando com a pagina impressa, que e como se acha o lance trocado.
+    """
+    blocks: list[str] = []
+
+    for index, (ast, _start_fen) in enumerate(games):
+        headers = dict(ast.headers)
+        title = " - ".join(part for part in (headers.get("White"), headers.get("Black")) if part)
+        header_line = f"# {index + 1}. {title or headers.get('Event', 'Partida')}"
+
+        lines: list[str] = [header_line]
+        current: list[str] = []
+        for move in ast.moves:
+            if move.number:
+                if current and len(current) >= 10:
+                    lines.append(" ".join(current))
+                    current = []
+                current.append(move.number)
+            current.append(move.display_san)
+
+        if current:
+            lines.append(" ".join(current))
+        if ast.result:
+            lines.append(ast.result)
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
 def game_file_name(index: int, headers: dict[str, str], fallback_stem: str = "partida") -> str:

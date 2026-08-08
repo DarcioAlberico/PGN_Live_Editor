@@ -32,7 +32,9 @@ from ..services.engine_service import (
 )
 from ..services.export_service import (
     build_book_pgn,
+    build_normalized_text,
     build_pgn,
+    build_structural_json,
     game_file_name,
     write_pgn,
 )
@@ -191,6 +193,8 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Exportar esta partida...", "Ctrl+Shift+E", self.export_pgn)
         self._add_action(file_menu, "Exportar o livro num arquivo...", None, self.export_book)
         self._add_action(file_menu, "Exportar uma partida por arquivo...", None, self.export_games_separately)
+        self._add_action(file_menu, "Exportar analise em .json...", None, self.export_structural_json)
+        self._add_action(file_menu, "Exportar texto normalizado em .txt...", None, self.export_normalized_text)
 
         file_menu.addSeparator()
         file_menu.addSeparator()
@@ -1015,6 +1019,51 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         return choice == QMessageBox.StandardButton.Save
+
+    def _export_other_format(self, title: str, suffix: str, builder, file_filter: str):
+        """Caminho comum das saidas que nao sao PGN (SPEC 5.5)."""
+        analyses = self.editor_panel.analyze_whole_book()
+        games = build_games_for_export(analyses)
+        if not games:
+            QMessageBox.information(self, title, "Nao ha partida analisada para exportar.")
+            return
+
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            title,
+            str(Path.cwd() / f"{self.project.display_name}{suffix}"),
+            file_filter,
+        )
+        if not file_path:
+            return
+
+        output_path = Path(file_path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(suffix)
+
+        try:
+            output_path.write_text(builder(games), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, title, f"Nao foi possivel gravar o arquivo.\n\n{exc}")
+            return
+
+        self._report(f"{len(games)} partida(s) em {output_path.name}.")
+
+    def export_structural_json(self):
+        self._export_other_format(
+            "Exportar analise em .json",
+            ".json",
+            build_structural_json,
+            "Arquivos JSON (*.json);;Todos os arquivos (*)",
+        )
+
+    def export_normalized_text(self):
+        self._export_other_format(
+            "Exportar texto normalizado",
+            ".txt",
+            build_normalized_text,
+            "Arquivos de texto (*.txt);;Todos os arquivos (*)",
+        )
 
     def export_book(self):
         analyses = self._book_analyses()

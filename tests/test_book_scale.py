@@ -7,6 +7,7 @@ analise incremental por segmento e a exportacao em lote.
 from __future__ import annotations
 
 import io
+import json
 import os
 import unittest
 
@@ -33,6 +34,8 @@ from pgn_live_editor.core.game_splitter import (  # noqa: E402
 from pgn_live_editor.core.text_ops import apply_edits  # noqa: E402
 from pgn_live_editor.services.export_service import (  # noqa: E402
     build_book_pgn,
+    build_normalized_text,
+    build_structural_json,
     game_file_name,
 )
 from pgn_live_editor.services.parse_worker import (  # noqa: E402
@@ -432,3 +435,71 @@ class AsyncParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OtherExportFormatsTests(unittest.TestCase):
+    """Fase 6: as saidas que nao sao PGN (SPEC 5.5)."""
+
+    BOOK = (
+        '[Event "Torneio"]\n[White "Smyslov"]\n[Black "Rudakovsky"]\n\n'
+        "1.e4 c5 {Siciliana} 2.Nf3 e6 (2... d6 3.d4) 3.Bh5 1-0\n"
+    )
+
+    def _games(self):
+        pipeline = ParsePipeline(ParseConfig.build(locale="pt"))
+        return build_games_for_export(pipeline.analyze_all(self.BOOK))
+
+    def test_the_structural_json_keeps_what_the_pgn_throws_away(self):
+        payload = json.loads(build_structural_json(self._games()))
+
+        self.assertEqual("pgn-live-editor/structural", payload["format"])
+        game = payload["games"][0]
+        self.assertEqual("Smyslov", game["headers"]["White"])
+        self.assertEqual("1-0", game["result"])
+
+        # O span no texto bruto e a confianca sao justamente o que o PGN perde.
+        first = game["moves"][0]
+        self.assertEqual("e4", first["san"])
+        self.assertEqual(2, len(first["span"]))
+        self.assertEqual(self.BOOK[first["span"][0]:first["span"][1]], "e4")
+        self.assertIn("confidence", first)
+
+    def test_a_corrected_move_records_what_was_read(self):
+        payload = json.loads(build_structural_json(self._games()))
+        moves = payload["games"][0]["moves"]
+
+        corrected = [move for move in moves if "read_as" in move]
+        self.assertEqual(["Bh5"], [move["read_as"] for move in corrected])
+        self.assertEqual(["Bb5"], [move["san"] for move in corrected])
+
+    def test_the_variation_is_nested_in_the_json(self):
+        payload = json.loads(build_structural_json(self._games()))
+        moves = payload["games"][0]["moves"]
+
+        with_variation = [move for move in moves if move.get("variations")]
+        self.assertEqual(1, len(with_variation))
+        self.assertEqual("d6", with_variation[0]["variations"][0][0]["san"])
+
+    def test_the_json_is_valid_even_with_no_games(self):
+        payload = json.loads(build_structural_json([]))
+        self.assertEqual([], payload["games"])
+
+    def test_the_normalized_text_is_for_reading_beside_the_book(self):
+        text = build_normalized_text(self._games())
+
+        self.assertIn("# 1. Smyslov - Rudakovsky", text)
+        self.assertIn("1. e4 c5", text)
+        # Sem chaves, sem parenteses: e para passar o olho, nao para importar.
+        self.assertNotIn("{", text)
+        self.assertNotIn("(", text)
+        self.assertTrue(text.rstrip().endswith("1-0"))
+
+    def test_the_normalized_text_breaks_lines_instead_of_running_on(self):
+        long_game = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 4.Ba4 Nf6 5.O-O Be7 6.Re1 b5 7.Bb3 d6"
+        pipeline = ParsePipeline(ParseConfig.build(locale="pt"))
+        games = build_games_for_export(pipeline.analyze_all(long_game))
+
+        lines = [line for line in build_normalized_text(games).splitlines() if line and not line.startswith("#")]
+
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(len(line) < 80 for line in lines))
