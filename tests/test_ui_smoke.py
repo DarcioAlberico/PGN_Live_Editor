@@ -83,7 +83,7 @@ class EditorPanelEditingTests(unittest.TestCase):
         self.assertTrue(all(move.is_valid for move in self.panel.current_ast.moves))
 
     def test_invalid_fen_falls_back_to_the_initial_position(self):
-        self.panel.load_document_text('[FEN "isto nao e um fen"]\n\n1.e4 e5')
+        self.panel.load_document_text('[FEN "isto não e um fen"]\n\n1.e4 e5')
 
         self.assertEqual(["e4", "e5"], [move.display_san for move in self.panel.current_ast.moves])
 
@@ -136,13 +136,13 @@ class EditorGestureTests(unittest.TestCase):
         self.assertEqual(text, self.panel.document_text())
 
     def test_unwrap_gesture(self):
-        text = "1.e4 e5 {um comentario} 2.Nf3"
+        text = "1.e4 e5 {um comentário} 2.Nf3"
         self.panel.load_document_text(text)
-        self._place(text.index("comentario"))
+        self._place(text.index("comentário"))
 
         self.panel.action_unwrap()
 
-        self.assertEqual("1.e4 e5 um comentario 2.Nf3", self.panel.document_text())
+        self.assertEqual("1.e4 e5 um comentário 2.Nf3", self.panel.document_text())
 
     def test_paragraph_to_comment_gesture(self):
         text = "1.e4 e5 2.Nf3 recurso tatico fortissimo 3.Bb5"
@@ -161,13 +161,13 @@ class EditorGestureTests(unittest.TestCase):
         self.assertEqual("1. e4 e5 2. Nf3 Nc6 3. Bb5 (3. Bc4 d6)", self.panel.document_text())
 
     def test_typing_an_opening_brace_wraps_the_selection(self):
-        text = "1.e4 e5 comentario solto 2.Nf3"
+        text = "1.e4 e5 comentário solto 2.Nf3"
         self.panel.load_document_text(text)
-        self._select(text.index("comentario"), text.index(" 2.Nf3"))
+        self._select(text.index("comentário"), text.index(" 2.Nf3"))
 
         QTest.keyClicks(self.panel.text_edit, "{")
 
-        self.assertEqual("1.e4 e5 {comentario solto} 2.Nf3", self.panel.document_text())
+        self.assertEqual("1.e4 e5 {comentário solto} 2.Nf3", self.panel.document_text())
 
     def test_typing_an_opening_brace_auto_closes_it(self):
         self.panel.load_document_text("1.e4 e5 ")
@@ -542,7 +542,7 @@ class BookWindowTests(unittest.TestCase):
         self.window.games_panel.toggle_current_completion()
 
         self.assertEqual([1], self.window.project.state.completed_games)
-        self.assertTrue(self.window._is_dirty(), "marcar como concluida nao pode sumir ao fechar")
+        self.assertTrue(self.window._is_dirty(), "marcar como concluida não pode sumir ao fechar")
         self.assertIn("1 concluida", self.window.lbl_book.text())
 
     def test_analyzing_the_book_fills_in_the_list(self):
@@ -554,16 +554,16 @@ class BookWindowTests(unittest.TestCase):
         self.window._step_game(1)
 
         self.window.editor_panel.action_apply_headers({
-            "Event": "Final de peoes",
+            "Event": "Final de peões",
             "White": "Estudo",
             "FEN": "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1",
             "SetUp": "1",
         })
         text = self.window.editor_panel.document_text()
 
-        self.assertEqual(1, text.count('[Event "Final de peoes"]'))
-        self.assertIn('[White "Smyslov"]', text, "a primeira partida nao pode ser tocada")
-        self.assertGreater(text.index("Final de peoes"), text.index("Estudo 2"))
+        self.assertEqual(1, text.count('[Event "Final de peões"]'))
+        self.assertIn('[White "Smyslov"]', text, "a primeira partida não pode ser tocada")
+        self.assertGreater(text.index("Final de peões"), text.index("Estudo 2"))
 
     def test_the_board_position_becomes_the_start_of_the_current_game(self):
         self.window.chess_panel.go_next()
@@ -622,7 +622,7 @@ class HeaderDialogTests(unittest.TestCase):
 
     def test_applying_a_template_does_not_overwrite_this_game(self):
         dialog = HeaderDialog(
-            {"White": "Smyslov", "Event": "Ja preenchido"},
+            {"White": "Smyslov", "Event": "Já preenchido"},
             {"Event": "Torneio do livro", "Site": "Moscou"},
         )
         self.addCleanup(dialog.deleteLater)
@@ -630,7 +630,7 @@ class HeaderDialogTests(unittest.TestCase):
         dialog.combo_templates.setCurrentIndex(0)
         dialog._apply_template()
 
-        self.assertEqual("Ja preenchido", dialog.values()["Event"])
+        self.assertEqual("Já preenchido", dialog.values()["Event"])
         self.assertEqual("Moscou", dialog.values()["Site"])
 
 

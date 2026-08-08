@@ -244,10 +244,10 @@ class StartFenTests(unittest.TestCase):
         self.assertFalse(clear_start_fen("1.e4 e5").ok)
 
     def test_an_invalid_fen_is_refused(self):
-        result = set_start_fen("1.e4 e5", "isto nao e um fen")
+        result = set_start_fen("1.e4 e5", "isto não e um fen")
 
         self.assertFalse(result.ok)
-        self.assertIn("invalida", result.message)
+        self.assertIn("inválida", result.message)
 
 
 class ParsePipelineTests(unittest.TestCase):
@@ -259,7 +259,7 @@ class ParsePipelineTests(unittest.TestCase):
 
         self.assertEqual(3, analysis.game_count)
         self.assertEqual(1, analysis.active_index)
-        self.assertEqual(1, len(analysis.digests), "as demais partidas nao deviam ter sido analisadas")
+        self.assertEqual(1, len(analysis.digests), "as demais partidas não deviam ter sido analisadas")
         self.assertEqual(["d4", "Nf6", "c4", "e6"], [move.display_san for move in analysis.ast.moves])
 
     def test_move_spans_are_absolute_in_the_whole_document(self):
@@ -386,7 +386,7 @@ class BookExportTests(unittest.TestCase):
 
         self.assertFalse(report.ok)
         self.assertEqual([1], [index for index, _game_report in report.failed_games])
-        self.assertIn("nao conferem", report.summary())
+        self.assertIn("não conferem", report.summary())
 
     def test_file_names_are_readable_and_sortable(self):
         self.assertEqual(

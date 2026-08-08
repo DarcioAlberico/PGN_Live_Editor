@@ -55,7 +55,7 @@ class CorpusRoundTripTests(unittest.TestCase):
         return sorted(CORPUS_DIR.glob("*.pgn"))
 
     def test_corpus_is_available(self):
-        self.assertTrue(self.corpus_files(), f"Nenhum PGN de referencia em {CORPUS_DIR}")
+        self.assertTrue(self.corpus_files(), f"Nenhum PGN de referência em {CORPUS_DIR}")
 
     def test_saved_work_survives_reopen_and_reexport(self):
         for path in self.corpus_files():
@@ -63,7 +63,7 @@ class CorpusRoundTripTests(unittest.TestCase):
                 source = path.read_text(encoding="utf-8")
 
                 original = chess.pgn.read_game(io.StringIO(source))
-                self.assertIsNotNone(original, "arquivo de referencia ilegivel")
+                self.assertIsNotNone(original, "arquivo de referência ilegível")
                 original_nodes = count_nodes(original)
                 original_mainline = [move.uci() for move in original.mainline_moves()]
 
@@ -91,7 +91,7 @@ class CorpusRoundTripTests(unittest.TestCase):
             with self.subTest(arquivo=path.name):
                 ast, _start_fen = parse_document(path.read_text(encoding="utf-8"))
                 errors = [issue for issue in ast.issues if issue[-1] == "error"]
-                self.assertEqual([], errors, f"{path.name} passou a gerar erros de analise")
+                self.assertEqual([], errors, f"{path.name} passou a gerar erros de análise")
 
 
 class RoundTripValidatorTests(unittest.TestCase):

@@ -158,7 +158,7 @@ class CandidateResolver:
         #    E o mais especifico que existe, e por isso o mais confiavel.
         token_map = self.active.token_map(self.locale)
         if token in token_map:
-            push(token_map[token], 0.99, "dicionario", f"{token} -> {token_map[token]} (dicionario)")
+            push(token_map[token], 0.99, "dicionário", f"{token} -> {token_map[token]} (dicionário)")
 
         # As etapas seguintes sao cumulativas: cada uma trabalha sobre o que a
         # anterior produziu, e a confianca e o produto dos fatores aplicados.
@@ -182,7 +182,7 @@ class CandidateResolver:
         stripped = ANNOTATION_SUFFIX_RE.sub("", token)
         if stripped == token or not stripped:
             return None
-        return (stripped, 1.0, "anotacao", f"sem o sinal de avaliacao: {token} -> {stripped}")
+        return (stripped, 1.0, "anotação", f"sem o sinal de avaliação: {token} -> {stripped}")
 
     def _strip_novelty(self, token: str):
         # `Nf3N` = novidade teorica. Nao confundir com promocao `e8=N`.
@@ -210,7 +210,7 @@ class CandidateResolver:
     def _free_substitution(self, token: str):
         """Escopo `livre`: troca em qualquer trecho do token.
 
-        Nao ha risco de corromper prosa aqui -- so chegam tokens com cara de
+        Não há risco de corromper prosa aqui -- so chegam tokens com cara de
         lance, e o resultado ainda precisa ser legal. O risco e outro: e o
         escopo que mais produz lance legal **errado**, e por isso vale menos
         que os demais e a interface o marca como arriscado.
@@ -219,13 +219,13 @@ class CandidateResolver:
             if pattern and pattern in token:
                 converted = token.replace(pattern, replacement)
                 if converted and converted != token:
-                    return (converted, 0.88, "livre", f"substituicao livre: {token} -> {converted}")
+                    return (converted, 0.88, "livre", f"substituição livre: {token} -> {converted}")
         return None
 
     def _fix_case(self, token: str):
         if token[:1].islower() and token[:1] in "kqrbnptcdlsaf":
             converted = token[0].upper() + token[1:]
-            return (converted, 0.96, "caixa", f"letra de peca minuscula: {token} -> {converted}")
+            return (converted, 0.96, "caixa", f"letra de peça minuscula: {token} -> {converted}")
         return None
 
     def _locale_piece(self, token: str):
@@ -233,7 +233,7 @@ class CandidateResolver:
         letter = token[:1]
         if letter in mapping and mapping[letter] != letter and len(token) > 1:
             converted = mapping[letter] + token[1:]
-            return (converted, 0.95, "idioma", f"notacao {self.locale}: {token} -> {converted}")
+            return (converted, 0.95, "idioma", f"notação {self.locale}: {token} -> {converted}")
         return None
 
     # ------------------------------------------------------------------
@@ -266,7 +266,7 @@ class CandidateResolver:
         elif _destination(core) != _destination(best_san):
             confidence = min(confidence, 0.70)
 
-        rationale = f"lance legal mais proximo ({best_distance} caractere(s) de diferenca)"
+        rationale = f"lance legal mais próximo ({best_distance} caractere(s) de diferenca)"
         if tied:
             others = ", ".join(san for distance, san in scored[1:3] if distance == best_distance)
             rationale += f"; empatado com {others}"
@@ -288,7 +288,7 @@ class CandidateResolver:
         exemplo -- nada muda e `Rc7` continua sendo a torre.
         """
         if self.notation_confirmed and self.collides_with_english(token):
-            return (0.80, f"leitura inglesa de '{token}'; o documento usa notacao {self.locale}")
+            return (0.80, f"leitura inglesa de '{token}'; o documento usa notação {self.locale}")
         return (1.0, "lance legal")
 
     def resolve(self, token: str, board: chess.Board) -> list[Candidate]:

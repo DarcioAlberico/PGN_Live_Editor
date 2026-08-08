@@ -87,17 +87,17 @@ def set_start_fen(
     """
     fen = (fen or "").strip()
     if not is_valid_fen(fen):
-        return OperationResult([], "FEN invalida; a posicao inicial nao foi alterada.")
+        return OperationResult([], "FEN inválida; a posição inicial não foi alterada.")
 
     if fen == chess.STARTING_FEN:
         return clear_start_fen(raw_text, region_start, region_end)
 
     change = upsert_headers(raw_text, {"FEN": fen, "SetUp": "1"}, region_start, region_end)
     if change is None:
-        return OperationResult([], "Esta partida ja parte desta posicao.")
+        return OperationResult([], "Esta partida já parte desta posição.")
 
     start, end, block = change
-    return OperationResult([TextEdit(start, end, block)], "Posicao inicial da partida atualizada.")
+    return OperationResult([TextEdit(start, end, block)], "Posição inicial da partida atualizada.")
 
 
 def clear_start_fen(
@@ -109,13 +109,13 @@ def clear_start_fen(
     region_end = len(raw_text) if region_end is None else region_end
     existing, _body, _consumed = extract_pgn_headers(raw_text[region_start:region_end])
     if not existing.keys() & {"FEN", "SetUp"}:
-        # Sem cabecalho de posicao nao ha o que remover -- e criar um bloco de
+        # Sem cabecalho de posicao não há o que remover -- e criar um bloco de
         # cabecalhos inteiro seria o oposto do que foi pedido.
-        return OperationResult([], "Esta partida ja comeca na posicao inicial.")
+        return OperationResult([], "Esta partida já comeca na posição inicial.")
 
     change = upsert_headers(raw_text, {"FEN": None, "SetUp": None}, region_start, region_end)
     if change is None:
-        return OperationResult([], "Esta partida ja comeca na posicao inicial.")
+        return OperationResult([], "Esta partida já comeca na posição inicial.")
 
     start, end, block = change
-    return OperationResult([TextEdit(start, end, block)], "A partida volta a comecar da posicao inicial.")
+    return OperationResult([TextEdit(start, end, block)], "A partida volta a comecar da posição inicial.")

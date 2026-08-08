@@ -224,7 +224,7 @@ class CorePipelineTests(unittest.TestCase):
 
     def test_reanchored_variation_keeps_mainline_comment_when_variation_has_its_own_intro(self):
         text = (
-            "1.e4 e5 2.Nf3 {comentario principal} "
+            "1.e4 e5 2.Nf3 {comentário principal} "
             "({intro da variante} 2.Bc4 {linha secundaria}) 2...Nc6"
         )
 
@@ -232,11 +232,11 @@ class CorePipelineTests(unittest.TestCase):
         ast = TolerantParser().parse(tokens)
         rendered = render_game_movetext(ast)
 
-        self.assertEqual(ast.moves[2].comments_after, ['comentario principal'])
+        self.assertEqual(ast.moves[2].comments_after, ['comentário principal'])
         self.assertEqual(ast.moves[1].variations[0][0].comments_before, ['intro da variante'])
         self.assertEqual(
             rendered,
-            "1. e4 e5 2. Nf3 {comentario principal} ( {intro da variante} 2. Bc4 {linha secundaria} ) 2... Nc6 *"
+            "1. e4 e5 2. Nf3 {comentário principal} ( {intro da variante} 2. Bc4 {linha secundaria} ) 2... Nc6 *"
         )
 
     def test_render_game_movetext_preserves_user_comment_text(self):

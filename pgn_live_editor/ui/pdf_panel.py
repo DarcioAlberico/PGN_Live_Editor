@@ -13,7 +13,7 @@ conferir na imagem se o extrator comeu alguma coisa.
 
 `Ctrl+Enter` manda a selecao (ou a pagina inteira, se nao houver selecao) para
 o cursor do editor. O botao *Proxima pagina* avanca e ja anexa, para percorrer
-um capitulo sem sair do teclado.
+um capítulo sem sair do teclado.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class PdfPanel(QWidget):
         self.txt_page = QPlainTextEdit()
         self.txt_page.setReadOnly(True)
         self.txt_page.setPlaceholderText(
-            "O texto da pagina aparece aqui. Selecione o trecho e mande para o "
+            "O texto da página aparece aqui. Selecione o trecho e mande para o "
             "editor com Ctrl+Enter."
         )
         splitter.addWidget(self.txt_page)
@@ -96,8 +96,8 @@ class PdfPanel(QWidget):
         actions = QHBoxLayout()
         self.btn_send = QPushButton("Mandar ao cursor (Ctrl+Enter)")
         self.btn_send.clicked.connect(self.send_to_editor)
-        self.btn_next = QPushButton("Proxima pagina e anexar")
-        self.btn_next.setToolTip("Manda a pagina inteira e avanca -- para percorrer um capitulo sem sair do teclado")
+        self.btn_next = QPushButton("Próxima página e anexar")
+        self.btn_next.setToolTip("Manda a página inteira e avanca -- para percorrer um capítulo sem sair do teclado")
         self.btn_next.clicked.connect(self.append_and_advance)
         actions.addWidget(self.btn_send)
         actions.addWidget(self.btn_next)
@@ -147,7 +147,7 @@ class PdfPanel(QWidget):
             payload = path.read_bytes()
         except OSError as exc:
             self.close_pdf()
-            return f"Nao foi possivel ler {path.name}: {exc.strerror or exc}."
+            return f"Não foi possível ler {path.name}: {exc.strerror or exc}."
 
         buffer = QBuffer(self)
         buffer.setData(QByteArray(payload))
@@ -156,7 +156,7 @@ class PdfPanel(QWidget):
         self.document.load(buffer)
         if self.document.error() != QPdfDocument.Error.None_ or self.document.pageCount() <= 0:
             self.close_pdf()
-            return f"Nao foi possivel abrir {path.name}: o arquivo nao parece um PDF valido."
+            return f"Não foi possível abrir {path.name}: o arquivo não parece um PDF válido."
 
         # O leitor le do buffer enquanto o documento existir: ele precisa
         # sobreviver a esta funcao.
@@ -211,10 +211,10 @@ class PdfPanel(QWidget):
     # ------------------------------------------------------------------
 
     def selected_text(self) -> str:
-        """A selecao do usuario, ou a pagina inteira quando nao ha selecao."""
+        """A selecao do usuario, ou a pagina inteira quando não há selecao."""
         chosen = self.txt_page.textCursor().selectedText()
         if chosen:
-            # O Qt usa separador de paragrafo proprio na selecao.
+            # O Qt usa separador de parágrafo proprio na selecao.
             return chosen.replace(" ", "\n")
         return self.txt_page.toPlainText()
 

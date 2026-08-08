@@ -22,10 +22,10 @@ from dataclasses import dataclass
 #
 # Duas exigencias opostas se encontram aqui. Uma pagina de livro quebra o texto
 # em linhas, entao um comentario legitimo **precisa** poder ocupar varias linhas.
-# Ao mesmo tempo, uma `{` recem-digitada nao pode engolir o resto do capitulo
-# (era o D7). A regra que atende as duas: **se existe `}` no mesmo paragrafo, o
+# Ao mesmo tempo, uma `{` recem-digitada nao pode engolir o resto do capítulo
+# (era o D7). A regra que atende as duas: **se existe `}` no mesmo parágrafo, o
 # comentario vai ate la, atravessando quantas linhas forem; se nao existe, ele
-# para no fim da linha.** A linha em branco e o limite porque nenhum paragrafo
+# para no fim da linha.** A linha em branco e o limite porque nenhum parágrafo
 # de livro tem uma no meio -- e uma `}` do outro lado dela pertence a outro
 # comentario, nao a este.
 COMMENT_PATTERN = (
@@ -73,7 +73,7 @@ class LiveTextNormalizer:
         '´': "'",
         '“': '"',
         '”': '"',
-        '­': '',   # hifen condicional herdado do PDF
+        '­': '',   # hífen condicional herdado do PDF
         '​': '',   # espaco de largura zero
         '﻿': '',   # BOM no meio do texto
     }
@@ -180,7 +180,7 @@ class LiveTextNormalizer:
 
         O limite do comentario e o de `comment_span_end`: fechado, ele pode
         ocupar varias linhas; aberto, para no fim da linha, para que digitar `{`
-        nao faca o resto do capitulo parar de ser analisado.
+        nao faca o resto do capítulo parar de ser analisado.
         """
         parts: list[str] = []
         spans: list[tuple[int, int]] = []

@@ -57,15 +57,15 @@ class AnnotationFormatTests(unittest.TestCase):
         self.assertEqual([], annotations.squares)
 
     def test_the_prose_survives_when_the_commands_are_replaced(self):
-        original = "Ameaca mate. [%cal Ge2e4]"
+        original = "Ameaça mate. [%cal Ge2e4]"
 
         updated = apply_annotations(original, VisualAnnotations([Arrow(chess.D1, chess.H5, "R")], []))
 
-        self.assertEqual("Ameaca mate. [%cal Rd1h5]", updated)
-        self.assertEqual("Ameaca mate.", strip_annotations(updated))
+        self.assertEqual("Ameaça mate. [%cal Rd1h5]", updated)
+        self.assertEqual("Ameaça mate.", strip_annotations(updated))
 
     def test_removing_every_annotation_leaves_only_the_prose(self):
-        self.assertEqual("Ameaca mate.", apply_annotations("Ameaca mate. [%cal Ge2e4]", VisualAnnotations([], [])))
+        self.assertEqual("Ameaça mate.", apply_annotations("Ameaça mate. [%cal Ge2e4]", VisualAnnotations([], [])))
 
     def test_drawing_the_same_arrow_twice_erases_it(self):
         annotations = VisualAnnotations([], [])

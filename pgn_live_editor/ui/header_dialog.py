@@ -66,7 +66,7 @@ class HeaderDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Cabecalhos da partida")
+        self.setWindowTitle("Cabeçalhos da partida")
         self.setModal(True)
         self.resize(520, 420)
 
@@ -85,7 +85,7 @@ class HeaderDialog(QDialog):
 
         fen = (headers.get("FEN") or "").strip()
         self.lbl_fen = QLabel(
-            f"Posicao inicial: {fen}" if fen else "Posicao inicial: padrao (sem FEN)"
+            f"Posição inicial: {fen}" if fen else "Posição inicial: padrão (sem FEN)"
         )
         self.lbl_fen.setWordWrap(True)
         self.lbl_fen.setStyleSheet("color: #9aa6b8;")
@@ -109,7 +109,7 @@ class HeaderDialog(QDialog):
         template_row.addWidget(btn_apply)
 
         btn_save = QPushButton("Guardar como template do livro")
-        btn_save.setToolTip("As proximas partidas deste projeto ja nascem com estes valores")
+        btn_save.setToolTip("As proximas partidas deste projeto já nascem com estes valores")
         btn_save.clicked.connect(self._remember_template)
         template_row.addWidget(btn_save)
 

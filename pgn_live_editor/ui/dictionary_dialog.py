@@ -50,14 +50,14 @@ class DictionaryDialog(QDialog):
         self.service = service
         self.document_text = document_text
 
-        self.setWindowTitle("Dicionario de OCR")
+        self.setWindowTitle("Dicionário de OCR")
         self.resize(760, 520)
 
         layout = QVBoxLayout(self)
 
         intro = QLabel(
-            "As tres camadas na ordem em que sao consultadas. A de baixo vence:\n"
-            "embutido → meu dicionario → deste projeto."
+            "As três camadas na ordem em que são consultadas. A de baixo vence:\n"
+            "embutido → meu dicionário → deste projeto."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -114,7 +114,7 @@ class DictionaryDialog(QDialog):
         self.btn_remove = QPushButton("Remover")
         self.btn_remove.clicked.connect(self._remove_selected)
         self.btn_promote = QPushButton("Valer para todos os livros")
-        self.btn_promote.setToolTip("Move a regra do projeto para o meu dicionario")
+        self.btn_promote.setToolTip("Move a regra do projeto para o meu dicionário")
         self.btn_promote.clicked.connect(self._promote_selected)
         actions.addWidget(self.btn_remove)
         actions.addWidget(self.btn_promote)
@@ -188,7 +188,7 @@ class DictionaryDialog(QDialog):
         if self.cmb_scope.currentData() == SCOPE_FREE:
             self.lbl_warning.setText(
                 "Escopo livre troca o trecho em qualquer lugar do lance. Dentro de um token de "
-                "notacao isso e seguro -- prosa nunca chega aqui -- mas e o escopo que mais "
+                "notação isso e seguro -- prosa nunca chega aqui -- mas e o escopo que mais "
                 "produz lance legal errado. Confira a coluna Alcance antes de gravar."
             )
         else:

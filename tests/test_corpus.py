@@ -9,7 +9,7 @@ Por isso a comparacao e por **lista de lances e contagem de nos**, nao por
 texto: comentario, espacamento e ordem de cabecalho nao mudam a partida, mas um
 lance a menos muda. E a metrica da SPEC 6.3: zero lances perdidos em silencio.
 
-Como acrescentar uma pagina esta em `corpus/README.md`. Nao ha registro para
+Como acrescentar uma pagina esta em `corpus/README.md`. Não há registro para
 atualizar: o runner acha os arquivos sozinho.
 """
 
@@ -105,7 +105,7 @@ class CorpusTests(unittest.TestCase):
         self.entries = entries()
 
     def test_the_corpus_exists(self):
-        self.assertTrue(self.entries, f"Nenhuma pagina de corpus em {CORPUS_DIR}")
+        self.assertTrue(self.entries, f"Nenhuma página de corpus em {CORPUS_DIR}")
 
     def test_every_page_produces_the_expected_game(self):
         for entry in self.entries:
@@ -117,7 +117,7 @@ class CorpusTests(unittest.TestCase):
                 self.assertEqual(
                     len(expected),
                     len(produced),
-                    f"{entry.name}: numero de partidas diferente do esperado",
+                    f"{entry.name}: número de partidas diferente do esperado",
                 )
                 if entry.games is not None:
                     self.assertEqual(entry.games, len(produced), f"{entry.name}: contagem de partidas")

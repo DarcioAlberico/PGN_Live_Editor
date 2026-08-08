@@ -33,7 +33,7 @@ SCOPES = (SCOPE_TOKEN, SCOPE_PREFIX, SCOPE_FREE)
 
 SCOPE_LABEL = {
     SCOPE_TOKEN: "token inteiro",
-    SCOPE_PREFIX: "inicio do lance",
+    SCOPE_PREFIX: "início do lance",
     SCOPE_FREE: "qualquer trecho (arriscado)",
 }
 
@@ -45,7 +45,7 @@ LAYER_ORDER = (LAYER_BASE, LAYER_GLOBAL, LAYER_PROJECT)
 
 LAYER_LABEL = {
     LAYER_BASE: "embutido",
-    LAYER_GLOBAL: "meu dicionario",
+    LAYER_GLOBAL: "meu dicionário",
     LAYER_PROJECT: "deste projeto",
 }
 

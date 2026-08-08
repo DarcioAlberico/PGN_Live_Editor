@@ -171,16 +171,16 @@ def wrap_as_comment(text: str, start: int, end: int) -> OperationResult:
     """Ctrl+K -- envolve a selecao em chaves."""
     start, end = _trim_selection(text, start, end)
     if start >= end:
-        return OperationResult([], "Selecione o texto que deve virar comentario.")
+        return OperationResult([], "Selecione o texto que deve virar comentário.")
 
     body = text[start:end]
     if body.startswith("{") and body.endswith("}"):
-        return OperationResult([], "Este trecho ja e um comentario.")
+        return OperationResult([], "Este trecho já é um comentário.")
 
     replacement = "{" + _sanitize_comment_body(body) + "}"
     return OperationResult(
         [TextEdit(start, end, replacement)],
-        "Trecho transformado em comentario.",
+        "Trecho transformado em comentário.",
         select_start=start,
         select_end=start + len(replacement),
     )
@@ -199,7 +199,7 @@ def wrap_as_variation(text: str, start: int, end: int, ast: GameAST) -> Operatio
 
     body = text[start:end].strip()
     if body.startswith("(") and body.endswith(")"):
-        return OperationResult([], "Este trecho ja e uma variante.")
+        return OperationResult([], "Este trecho já é uma variante.")
 
     inner_moves = moves_in_span(ast, start, end)
     edits: list[TextEdit] = []
@@ -236,11 +236,11 @@ def unwrap_at(text: str, position: int) -> OperationResult:
     """Ctrl+Shift+K -- tira os delimitadores em volta do cursor."""
     found = find_enclosing_delimiter(text, position)
     if not found:
-        return OperationResult([], "O cursor nao esta dentro de um comentario nem de uma variante.")
+        return OperationResult([], "O cursor não esta dentro dé um comentário nem dé uma variante.")
 
     open_index, close_index, kind = found
     body = text[open_index + 1 : close_index].strip()
-    label = "Comentario" if kind == "{}" else "Variante"
+    label = "Comentário" if kind == "{}" else "Variante"
     return OperationResult(
         [TextEdit(open_index, close_index + 1, body)],
         f"{label} desenvolvido.",
@@ -253,7 +253,7 @@ def paragraph_to_comment(text: str, position: int, ast: GameAST) -> OperationRes
     """Ctrl+Shift+C -- pega a prosa solta em volta do cursor e vira comentario.
 
     "Prosa solta" e o trecho continuo, entre os lances vizinhos, que ainda nao
-    esta entre chaves. E o caso classico do paragrafo que veio do PDF entre dois
+    esta entre chaves. E o caso classico do parágrafo que veio do PDF entre dois
     lances.
     """
     if not 0 <= position <= len(text):
@@ -279,7 +279,7 @@ def paragraph_to_comment(text: str, position: int, ast: GameAST) -> OperationRes
 
     start, end = _trim_selection(text, lower, upper)
     if start >= end:
-        return OperationResult([], "Nao ha prosa solta sob o cursor.")
+        return OperationResult([], "Não ha prosa solta sob o cursor.")
 
     return wrap_as_comment(text, start, end)
 
@@ -288,7 +288,7 @@ def renumber_document(text: str, ast: GameAST) -> OperationResult:
     """Ctrl+R -- reescreve todos os numeros de lance a partir do tabuleiro.
 
     Conserta de uma vez os `10... .` herdados do OCR, os numeros que faltam
-    depois de uma variante e a numeracao que o livro trouxe errada.
+    depois dé uma variante e a numeracao que o livro trouxe errada.
     """
     edits: list[TextEdit] = []
 
@@ -333,8 +333,8 @@ def renumber_document(text: str, ast: GameAST) -> OperationResult:
     walk(ast.moves)
 
     if not edits:
-        return OperationResult([], "A numeracao ja esta correta.")
-    return OperationResult(edits, f"{len(edits)} numero(s) de lance corrigido(s).")
+        return OperationResult([], "A numeracao já esta correta.")
+    return OperationResult(edits, f"{len(edits)} número(s) de lance corrigido(s).")
 
 
 def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index: int) -> OperationResult:
@@ -344,7 +344,7 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
     `( V ) M` vira `V ( M )` quando ela parte da posicao depois de `A`.
     """
     if variation_index >= len(owner.variation_spans):
-        return OperationResult([], "Variante sem posicao registrada no texto.")
+        return OperationResult([], "Variante sem posição registrada no texto.")
 
     open_index, close_index = owner.variation_spans[variation_index]
     if close_index <= open_index:
@@ -371,7 +371,7 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
 
     demoted = " ".join(part for part in (demoted_head, mainline_tail) if part)
     if not demoted:
-        return OperationResult([], "Nao ha linha principal para trocar com a variante.")
+        return OperationResult([], "Não ha linha principal para trocar com a variante.")
 
     # A regiao comeca colada ao lance ancora; sem isto sairia `e52.Bc4`.
     separator = "" if region_start == 0 or text[region_start - 1].isspace() else " "
@@ -386,20 +386,20 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
 
 
 def move_variation(text: str, owner: MoveNode, variation_index: int, delta: int) -> OperationResult:
-    """Sobe ou desce uma variante entre as irmas do mesmo lance.
+    """Sobe ou descé uma variante entre as irmas do mesmo lance.
 
     A ordem das variantes nao e decorativa: em livro, a primeira e a principal
     alternativa e as seguintes sao secundarias. Trocar duas de lugar e so trocar
-    dois trechos de texto -- e como nao ha aninhamento entre irmas, uma troca
+    dois trechos de texto -- e como não há aninhamento entre irmas, uma troca
     nunca invalida a posicao da outra.
     """
     spans = owner.variation_spans
     target_index = variation_index + delta
 
     if not 0 <= variation_index < len(spans):
-        return OperationResult([], "Variante sem posicao registrada no texto.")
+        return OperationResult([], "Variante sem posição registrada no texto.")
     if not 0 <= target_index < len(spans):
-        return OperationResult([], "A variante ja esta no fim da lista.")
+        return OperationResult([], "A variante já esta no fim da lista.")
 
     first, second = sorted((spans[variation_index], spans[target_index]))
     if first[1] > second[0]:
@@ -423,24 +423,24 @@ def reanchor_variation(
 ) -> OperationResult:
     """Pendura a variante noutro lance, quando a heuristica de ancora errar.
 
-    A ancoragem por legalidade acerta quase sempre, mas quando erra nao havia
+    A ancoragem por legalidade acerta quase sempre, mas quando erra não hávia
     saida nenhuma a nao ser recortar e colar a mao. Aqui a variante e movida
     inteira -- parenteses incluidos -- para logo depois (ou logo antes) do lance
     escolhido, e o primeiro lance dela ganha o numero certo da posicao nova.
     """
     if not 0 <= variation_index < len(owner.variation_spans):
-        return OperationResult([], "Variante sem posicao registrada no texto.")
+        return OperationResult([], "Variante sem posição registrada no texto.")
 
     open_index, close_index = owner.variation_spans[variation_index]
     if close_index <= open_index:
         return OperationResult([], "Variante sem parentese de fechamento.")
 
     if new_owner is owner:
-        return OperationResult([], "A variante ja esta neste lance.")
+        return OperationResult([], "A variante já esta neste lance.")
 
     destination = new_owner.san_end_index if anchor_after else new_owner.start_index
     if open_index <= destination <= close_index:
-        return OperationResult([], "Nao da para pendurar a variante nela mesma.")
+        return OperationResult([], "Não da para pendurar a variante nela mesma.")
 
     body = text[open_index + 1 : close_index - 1].strip()
     if not body:
@@ -528,7 +528,7 @@ def set_move_annotations(text: str, move: MoveNode, annotations: VisualAnnotatio
     """Grava as setas e casas coloridas no comentario do lance.
 
     O PGN guarda anotacao visual dentro do comentario, entao e isso que se
-    edita -- nao ha estrutura paralela nenhuma, e o texto bruto continua sendo a
+    edita -- não há estrutura paralela nenhuma, e o texto bruto continua sendo a
     fonte da verdade. Se o lance ja tem comentario, a prosa dele e preservada e
     so os comandos `[%cal]`/`[%csl]` sao trocados; se nao tem, um comentario
     novo nasce logo depois do lance.
@@ -549,20 +549,20 @@ def set_move_annotations(text: str, move: MoveNode, annotations: VisualAnnotatio
             # Sem prosa e sem anotacao, o comentario deixa de ter razao de ser.
             return OperationResult(
                 [TextEdit(insert_at, end, "")],
-                "Anotacoes removidas.",
+                "Anotações removidas.",
             )
         return OperationResult(
             [TextEdit(cursor, end, "{" + updated + "}")],
-            "Anotacoes gravadas no comentario.",
+            "Anotações gravadas no comentário.",
         )
 
     commands = format_annotations(annotations)
     if not commands:
-        return OperationResult([], "Nao ha anotacao para gravar.")
+        return OperationResult([], "Não ha anotação para gravar.")
 
     return OperationResult(
         [TextEdit(insert_at, insert_at, " {" + commands + "}")],
-        "Anotacoes gravadas.",
+        "Anotações gravadas.",
     )
 
 
@@ -585,7 +585,7 @@ def check_balance(text: str) -> list[BalanceProblem]:
             close = text.find("}", index)
             line_end = text.find("\n", index)
             if close == -1 or (line_end != -1 and line_end < close):
-                problems.append(BalanceProblem(index, "Comentario aberto com '{' e nunca fechado."))
+                problems.append(BalanceProblem(index, "Comentário aberto com '{' e nunca fechado."))
                 index = line_end if line_end != -1 else len(text)
             else:
                 index = close + 1

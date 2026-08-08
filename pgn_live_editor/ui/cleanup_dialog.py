@@ -17,9 +17,9 @@ from ..core.paste_cleanup import CleanupOptions, clean_pdf_text
 
 OPTION_LABELS: tuple[tuple[str, str], ...] = (
     ("dehyphenate", "Remontar palavras cortadas no fim da linha (ma-\\nnobra)"),
-    ("join_wrapped_lines", "Juntar linhas quebradas pela largura da pagina"),
-    ("remove_page_numbers", "Remover numeros de pagina"),
-    ("remove_repeated_headers", "Remover cabecalhos e rodapes que se repetem"),
+    ("join_wrapped_lines", "Juntar linhas quebradas pela largura da página"),
+    ("remove_page_numbers", "Remover números de página"),
+    ("remove_repeated_headers", "Remover cabeçalhos e rodapés que se repetem"),
     ("remove_footnote_marks", "Remover marcas de nota de rodape coladas em lances"),
     ("remove_invisible", "Remover caracteres invisiveis do PDF"),
     ("collapse_whitespace", "Normalizar espacos"),
@@ -37,7 +37,7 @@ class CleanupDialog(QDialog):
 
         intro = QLabel(
             "Escolha o que limpar. A previa abaixo mostra o resultado; nada e aplicado "
-            "ate voce confirmar, e o Ctrl+Z desfaz tudo de uma vez."
+            "até você confirmar, e o Ctrl+Z desfaz tudo de uma vez."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)

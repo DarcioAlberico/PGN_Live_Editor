@@ -51,12 +51,12 @@ class PdfPanelTests(unittest.TestCase):
         self.assertIn("1.e4 c5", self.panel.txt_page.toPlainText())
 
     def test_a_file_that_is_not_a_pdf_reports_instead_of_crashing(self):
-        broken = Path(self._temp.name) / "nao-e-pdf.pdf"
-        broken.write_text("isto nao e um PDF", encoding="utf-8")
+        broken = Path(self._temp.name) / "não-e-pdf.pdf"
+        broken.write_text("isto não e um PDF", encoding="utf-8")
 
         problem = self.panel.open_pdf(broken)
 
-        self.assertIn("Nao foi possivel abrir", problem)
+        self.assertIn("Não foi possível abrir", problem)
         self.assertFalse(self.panel.has_document())
 
     def test_changing_the_page_changes_the_extracted_text(self):
@@ -185,7 +185,7 @@ class PdfInTheWindowTests(unittest.TestCase):
     def test_a_project_whose_pdf_moved_away_opens_anyway(self):
         project = Project(raw_text="1.e4")
         project.state.pdf_path = str(self.tmp / "sumiu.pdf")
-        path = save_project(project, self.tmp / "orfao")
+        path = save_project(project, self.tmp / "órfão")
 
         self.window._load_project_path(path)
 

@@ -249,7 +249,7 @@ class EngineDiscoveryTests(unittest.TestCase):
             os.environ[ENGINE_ENV_VAR] = self._saved
 
     def test_a_path_that_does_not_exist_is_not_accepted(self):
-        self.assertNotEqual(discover_engine_path("C:/nao/existe/stockfish.exe"), "C:/nao/existe/stockfish.exe")
+        self.assertNotEqual(discover_engine_path("C:/não/existe/stockfish.exe"), "C:/não/existe/stockfish.exe")
 
     def test_environment_variable_is_honoured(self):
         # Qualquer arquivo serve para o teste: o que se verifica e a ordem de busca.

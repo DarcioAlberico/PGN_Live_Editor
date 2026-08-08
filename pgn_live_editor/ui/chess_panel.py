@@ -83,8 +83,8 @@ class ChessPanel(QWidget):
 
         # Fragmento de livro que parte de um diagrama: montar a posicao no
         # tabuleiro e um caminho muito mais curto do que escrever a FEN a mao.
-        self.btn_start_fen = QPushButton("Posicao inicial")
-        self.btn_start_fen.setToolTip("Grava a posicao do tabuleiro como [FEN] inicial desta partida")
+        self.btn_start_fen = QPushButton("Posição inicial")
+        self.btn_start_fen.setToolTip("Grava a posição do tabuleiro como [FEN] inicial desta partida")
         self.btn_start_fen.clicked.connect(self.start_fen_requested_signal.emit)
 
         # O botao direito ja tem dono (entrar em variante). Anotar visualmente e
@@ -93,8 +93,8 @@ class ChessPanel(QWidget):
         self.btn_annotate = QPushButton("Setas")
         self.btn_annotate.setCheckable(True)
         self.btn_annotate.setToolTip(
-            "Modo anotacao: arrastar com o botao direito desenha seta, clicar marca a casa. "
-            "Alt vermelho, Ctrl amarelo, Shift azul. Sai como [%cal] e [%csl] no comentario."
+            "Modo anotação: arrastar com o botao direito desenha seta, clicar marca a casa. "
+            "Alt vermelho, Ctrl amarelo, Shift azul. Sai como [%cal] e [%csl] no comentário."
         )
         self.btn_annotate.toggled.connect(self._on_annotate_toggled)
 
@@ -281,7 +281,7 @@ class ChessPanel(QWidget):
         return " ".join(label_parts)
 
     def _current_position_label(self, entry: MoveEntry) -> str:
-        return f"apos {self._entry_label(entry)}"
+        return f"após {self._entry_label(entry)}"
 
     def _restore_status_label(self):
         if self.input_mode == "variation":
@@ -303,7 +303,7 @@ class ChessPanel(QWidget):
     def _anchor_variant_builder_to_current(self):
         current_entry = self._current_entry()
         if current_entry is None:
-            self.variant_builder.set_anchor(self.start_fen, "posicao inicial")
+            self.variant_builder.set_anchor(self.start_fen, "posição inicial")
             return
 
         board = chess.Board(self.start_fen)
@@ -320,7 +320,7 @@ class ChessPanel(QWidget):
     def _anchor_variant_builder_to_previous(self):
         current_entry = self._current_entry()
         if current_entry is None:
-            self.variant_builder.set_anchor(self.start_fen, "posicao inicial")
+            self.variant_builder.set_anchor(self.start_fen, "posição inicial")
             return
 
         board = chess.Board(self.start_fen)
@@ -442,7 +442,7 @@ class ChessPanel(QWidget):
             dict(self.game_ast.headers),
         )
         if not text:
-            self.lbl_status.setText("Nao ha o que copiar nesta posicao.")
+            self.lbl_status.setText("Não ha o que copiar nesta posição.")
             return ""
 
         QGuiApplication.clipboard().setText(text)
@@ -562,7 +562,7 @@ class ChessPanel(QWidget):
             self.lbl_status.setText(f"Selecionado {chess.square_name(square)}")
             return
 
-        self.lbl_status.setText("Destino ilegal para a peca selecionada")
+        self.lbl_status.setText("Destino ilegal para a peça selecionada")
 
     def _on_board_drag_finished(self, origin: int, target: int, button_value: int, modifiers: int):
         """Arrastar da origem ao destino: lance com o botao esquerdo, seta com o direito."""
@@ -596,7 +596,7 @@ class ChessPanel(QWidget):
     def _on_annotate_toggled(self, enabled: bool):
         self.annotate_mode = enabled
         if enabled:
-            self.lbl_status.setText("Modo anotacao: direito arrasta seta, direito clica marca casa")
+            self.lbl_status.setText("Modo anotação: direito arrasta seta, direito clica marca casa")
         else:
             self._restore_status_label()
 

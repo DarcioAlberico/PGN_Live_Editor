@@ -9,7 +9,7 @@ por outra razao: gravacao atomica. O programa grava preferencia ao fechar a
 janela, que e exatamente quando a maquina pode ser desligada no meio -- e um
 JSON truncado nessa hora perde tudo, enquanto o SQLite ou grava ou nao grava.
 
-Os valores sao JSON numa unica tabela `chave -> valor`. Nao ha esquema para
+Os valores sao JSON numa unica tabela `chave -> valor`. Não há esquema para
 migrar: chave que nao existe devolve o padrao, chave desconhecida e ignorada.
 """
 
@@ -32,11 +32,11 @@ THEMES = (THEME_DARK, THEME_LIGHT)
 
 LOCALES = ("pt", "en", "es", "de", "fr", "it")
 LOCALE_LABEL = {
-    "pt": "Portugues (C, D, T, B, R)",
-    "en": "Ingles (N, Q, R, B, K)",
+    "pt": "Português (C, D, T, B, R)",
+    "en": "Inglês (N, Q, R, B, K)",
     "es": "Espanhol (C, D, T, A, R)",
-    "de": "Alemao (S, D, T, L, K)",
-    "fr": "Frances (C, D, T, F, R)",
+    "de": "Alemão (S, D, T, L, K)",
+    "fr": "Francês (C, D, T, F, R)",
     "it": "Italiano (C, D, T, A, R)",
 }
 

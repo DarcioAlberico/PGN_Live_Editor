@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Exportar esta partida...", "Ctrl+Shift+E", self.export_pgn)
         self._add_action(file_menu, "Exportar o livro num arquivo...", None, self.export_book)
         self._add_action(file_menu, "Exportar uma partida por arquivo...", None, self.export_games_separately)
-        self._add_action(file_menu, "Exportar analise em .json...", None, self.export_structural_json)
+        self._add_action(file_menu, "Exportar análise em .json...", None, self.export_structural_json)
         self._add_action(file_menu, "Exportar texto normalizado em .txt...", None, self.export_normalized_text)
 
         file_menu.addSeparator()
@@ -208,14 +208,14 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Sair", QKeySequence.StandardKey.Quit, self.close)
 
         book_menu = self.menuBar().addMenu("&Partidas")
-        self._add_action(book_menu, "Proxima partida", "Ctrl+Shift+P", lambda: self._step_game(1))
+        self._add_action(book_menu, "Próxima partida", "Ctrl+Shift+P", lambda: self._step_game(1))
         self._add_action(book_menu, "Partida anterior", "Ctrl+Shift+O", lambda: self._step_game(-1))
         book_menu.addSeparator()
-        self._add_action(book_menu, "Cabecalhos da partida...", "Ctrl+H", self.edit_headers)
+        self._add_action(book_menu, "Cabeçalhos da partida...", "Ctrl+H", self.edit_headers)
         self._add_action(book_menu, "Marcar como concluida", "Ctrl+Shift+D", self.games_panel.toggle_current_completion)
         self._add_action(book_menu, "Analisar o livro inteiro", None, self._analyze_book)
         book_menu.addSeparator()
-        self._add_action(book_menu, "Usar a posicao do tabuleiro como inicial", None, self._set_start_fen_from_board)
+        self._add_action(book_menu, "Usar a posição do tabuleiro como inicial", None, self._set_start_fen_from_board)
         self._add_action(book_menu, "Converter marcadores de diagrama", None, self._normalize_diagrams)
         book_menu.addSeparator()
         self._add_action(book_menu, "Mostrar/ocultar lista de partidas", "F10", self._toggle_games_panel)
@@ -224,10 +224,10 @@ class MainWindow(QMainWindow):
         self._add_action(book_menu, "Mostrar/ocultar o PDF", "F11", self._toggle_pdf_panel)
 
         structure_menu = self.menuBar().addMenu("&Estrutura")
-        self._add_action(structure_menu, "Envolver em comentario", "Ctrl+K", self._wrap_comment)
+        self._add_action(structure_menu, "Envolver em comentário", "Ctrl+K", self._wrap_comment)
         self._add_action(structure_menu, "Envolver em variante", "Ctrl+9", self._wrap_variation)
         self._add_action(structure_menu, "Desenvolver (tirar delimitador)", "Ctrl+Shift+K", self._unwrap)
-        self._add_action(structure_menu, "Paragrafo vira comentario", "Ctrl+Shift+C", self._paragraph_to_comment)
+        self._add_action(structure_menu, "Parágrafo vira comentário", "Ctrl+Shift+C", self._paragraph_to_comment)
         structure_menu.addSeparator()
         self._add_action(structure_menu, "Renumerar documento", "Ctrl+R", self._renumber)
         self._add_action(structure_menu, "Promover variante", "Ctrl+Shift+Up", self._promote_variation)
@@ -252,24 +252,24 @@ class MainWindow(QMainWindow):
 
         move_menu = self.menuBar().addMenu("&Lances")
         self._add_action(move_menu, "Lance anterior", "Ctrl+Left", self.chess_panel.go_prev)
-        self._add_action(move_menu, "Proximo lance", "Ctrl+Right", self.chess_panel.go_next)
+        self._add_action(move_menu, "Próximo lance", "Ctrl+Right", self.chess_panel.go_next)
         move_menu.addSeparator()
         self._add_action(move_menu, "Inverter tabuleiro", "Ctrl+F", self.chess_panel.flip_board)
         move_menu.addSeparator()
         self._add_action(move_menu, "Primeiro lance", "Ctrl+Home", self.chess_panel.go_first)
-        self._add_action(move_menu, "Ultimo lance", "Ctrl+End", self.chess_panel.go_last)
+        self._add_action(move_menu, "Último lance", "Ctrl+End", self.chess_panel.go_last)
         self._add_action(move_menu, "Sugerir lance legal", "Ctrl+Space", self._suggest_legal_move)
-        self._add_action(move_menu, "Paleta de simbolos", "Ctrl+D", self.editor_panel.open_symbol_palette)
+        self._add_action(move_menu, "Paleta de símbolos", "Ctrl+D", self.editor_panel.open_symbol_palette)
 
-        review_menu = self.menuBar().addMenu("&Revisao")
-        self._add_action(review_menu, "Proximo alerta", "F8", lambda: self.issues_panel.go_to_next_issue(1))
+        review_menu = self.menuBar().addMenu("&Revisão")
+        self._add_action(review_menu, "Próximo alerta", "F8", lambda: self.issues_panel.go_to_next_issue(1))
         self._add_action(review_menu, "Alerta anterior", "Shift+F8", lambda: self.issues_panel.go_to_next_issue(-1))
-        self._add_action(review_menu, "Aceitar correcao", "F4", self.issues_panel.accept_selected)
+        self._add_action(review_menu, "Aceitar correção", "F4", self.issues_panel.accept_selected)
         review_menu.addSeparator()
         self._add_action(review_menu, "Conferir a partida com o motor", "Ctrl+E", self._scan_with_engine)
         self._add_action(review_menu, "Motor de xadrez...", None, self._configure_engine)
         review_menu.addSeparator()
-        self._add_action(review_menu, "Dicionario de OCR...", "Ctrl+Shift+I", self.edit_dictionary)
+        self._add_action(review_menu, "Dicionário de OCR...", "Ctrl+Shift+I", self.edit_dictionary)
         review_menu.addSeparator()
         self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
         self.action_review_mode = self._add_action(
@@ -318,8 +318,8 @@ class MainWindow(QMainWindow):
 
         choice = QMessageBox.question(
             self,
-            "Trabalho nao salvo",
-            "Ha alteracoes que ainda nao foram salvas no projeto.\n\nDeseja salvar antes de continuar?",
+            "Trabalho não salvo",
+            "Ha alterações que ainda não foram salvas no projeto.\n\nDeseja salvar antes de continuar?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Save,
         )
@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         try:
             project = load_project(path)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Abrir projeto", f"Nao foi possivel abrir o projeto.\n\n{exc}")
+            QMessageBox.critical(self, "Abrir projeto", f"Não foi possível abrir o projeto.\n\n{exc}")
             return
 
         self.project = project
@@ -423,7 +423,7 @@ class MainWindow(QMainWindow):
         try:
             saved_path = save_project(self.project, path)
         except OSError as exc:
-            QMessageBox.critical(self, "Salvar projeto", f"Nao foi possivel salvar o projeto.\n\n{exc}")
+            QMessageBox.critical(self, "Salvar projeto", f"Não foi possível salvar o projeto.\n\n{exc}")
             return False
 
         self._last_autosaved_text = self.project.raw_text
@@ -453,7 +453,7 @@ class MainWindow(QMainWindow):
         try:
             text = import_text_file(path)
         except OSError as exc:
-            QMessageBox.critical(self, "Importar", f"Nao foi possivel ler o arquivo.\n\n{exc}")
+            QMessageBox.critical(self, "Importar", f"Não foi possível ler o arquivo.\n\n{exc}")
             return
 
         self.project = Project()
@@ -623,7 +623,7 @@ class MainWindow(QMainWindow):
 
         owner, variation_index = self.chess_panel.variation_owner_of(entry)
         if owner is None:
-            self._report("Este lance ja esta na linha principal.")
+            self._report("Este lance já esta na linha principal.")
             return
 
         result = promote_variation(self.editor_panel.document_text(), self.editor_panel.current_ast, owner, variation_index)
@@ -684,14 +684,14 @@ class MainWindow(QMainWindow):
         """Ctrl+Espaco: o que e legal aqui, quando o livro esta ilegivel."""
         suggestions = self.editor_panel.legal_move_suggestions()
         if not suggestions:
-            self._report("Nao da para saber a posicao neste ponto do texto.")
+            self._report("Não da para saber a posição neste ponto do texto.")
             return
         self._report("Legais aqui: " + ", ".join(suggestions))
 
     def _clean_paste(self):
         text = self.editor_panel.document_text()
         if not text.strip():
-            self._report("Nao ha texto para limpar.")
+            self._report("Não ha texto para limpar.")
             return
 
         dialog = CleanupDialog(text, self)
@@ -705,7 +705,7 @@ class MainWindow(QMainWindow):
             return
 
         self.editor_panel.focus_span(problems[0].position, problems[0].position + 1)
-        detail = "\n".join(f"- posicao {problem.position}: {problem.message}" for problem in problems[:12])
+        detail = "\n".join(f"- posição {problem.position}: {problem.message}" for problem in problems[:12])
         QMessageBox.warning(
             self,
             "Delimitadores",
@@ -800,7 +800,7 @@ class MainWindow(QMainWindow):
         if touched:
             self._report(f"Dupla visao: {touched} lance(s) que o programa mexeu, de {sum(counts.values())}.")
         else:
-            self._report("Dupla visao: o programa nao mexeu em nenhum lance deste livro.")
+            self._report("Dupla visao: o programa não mexeu em nenhum lance deste livro.")
 
     def _update_touch_status(self):
         """A conta que o modo dupla visao existe para mostrar."""
@@ -813,7 +813,7 @@ class MainWindow(QMainWindow):
             f"confirmados {counts['confirmado']} | "
             f"corrigidos {counts['corrigido']} | "
             f"por conferir {counts['por_conferir']} | "
-            f"nao entendidos {counts['nao_entendido']}"
+            f"não entendidos {counts['nao_entendido']}"
         )
 
     def _accept_issue(self, issue):
@@ -827,7 +827,7 @@ class MainWindow(QMainWindow):
 
     def _comment_issue(self, issue):
         self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
-        self.statusBar().showMessage(f"'{issue.raw_text}' virou comentario.", 4000)
+        self.statusBar().showMessage(f"'{issue.raw_text}' virou comentário.", 4000)
 
     def _ignore_issue(self, issue):
         if issue.code == SUSPECT_BLUNDER:
@@ -873,7 +873,7 @@ class MainWindow(QMainWindow):
 
     def _scan_with_engine(self):
         if self.engine_scanner.is_running:
-            self._report("O motor ja esta conferindo uma partida.")
+            self._report("O motor já esta conferindo uma partida.")
             return
 
         if not discover_engine_path(self.engine_settings.path):
@@ -882,7 +882,7 @@ class MainWindow(QMainWindow):
 
         ast = self.editor_panel.reparse_now()
         if not ast.moves:
-            self._report("Nao ha linha principal para o motor conferir.")
+            self._report("Não ha linha principal para o motor conferir.")
             return
 
         segment = self.editor_panel.active_segment()
@@ -901,7 +901,7 @@ class MainWindow(QMainWindow):
         self._refresh_issues()
 
         if report.issues and not live:
-            self._report("O texto mudou durante a conferencia; rode o motor de novo.")
+            self._report("O texto mudou durante a conferência; rode o motor de novo.")
             return
         self._report(report.summary())
 
@@ -929,9 +929,9 @@ class MainWindow(QMainWindow):
         current = discover_engine_path(self.engine_settings.path)
         file_path, _filter = QFileDialog.getOpenFileName(
             self,
-            "Executavel do motor UCI",
+            "Executável do motor UCI",
             current or str(Path.cwd()),
-            "Executaveis (*.exe);;Todos os arquivos (*)",
+            "Executáveis (*.exe);;Todos os arquivos (*)",
         )
         if not file_path:
             return
@@ -946,10 +946,10 @@ class MainWindow(QMainWindow):
             "Motor de xadrez",
             "Nenhum motor UCI foi encontrado.\n\n"
             "O motor e opcional. Ele serve para desconfiar de um lance de linha\n"
-            "principal que derruba a avaliacao sem o livro marcar com '?' -- que\n"
-            "quase sempre e erro de leitura, nao erro do mestre.\n\n"
+            "principal que derruba a avaliação sem o livro marcar com '?' -- que\n"
+            "quase sempre e erro de leitura, não erro do mestre.\n\n"
             f"Instale o Stockfish no PATH, aponte o caminho em {ENGINE_ENV_VAR},\n"
-            "ou escolha o executavel agora.",
+            "ou escolha o executável agora.",
             QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Open,
         )
@@ -964,7 +964,7 @@ class MainWindow(QMainWindow):
             return
         self._learn_substitution(issue.raw_text, candidate.san)
         self.statusBar().showMessage(
-            f"Dicionario do projeto: '{issue.raw_text}' -> '{candidate.san}'. Salve o projeto para guardar.",
+            f"Dicionário do projeto: '{issue.raw_text}' -> '{candidate.san}'. Salve o projeto para guardar.",
             6000,
         )
 
@@ -999,9 +999,9 @@ class MainWindow(QMainWindow):
 
         choice = QMessageBox.question(
             self,
-            "Aprender esta correcao",
-            f"Voce ja aceitou '{issue.raw_text}' -> '{candidate.san}' {times} vezes.\n\n"
-            "Gravar no dicionario para o programa passar a fazer isso sozinho?",
+            "Aprender esta correção",
+            f"Você já aceitou '{issue.raw_text}' -> '{candidate.san}' {times} vezes.\n\n"
+            "Gravar no dicionário para o programa passar a fazer isso sozinho?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
     def export_pgn(self):
         ast = self.editor_panel.reparse_now()
         if not ast.moves and not ast.result:
-            QMessageBox.information(self, "Exportar PGN", "Nao ha PGN analisado para exportar.")
+            QMessageBox.information(self, "Exportar PGN", "Não ha PGN analisado para exportar.")
             return
 
         pgn_text, report = build_pgn(ast, self.editor_panel.current_start_fen)
@@ -1025,9 +1025,9 @@ class MainWindow(QMainWindow):
             preview = ", ".join(f"{move.san} -> {move.display_san}" for move in pending[:5])
             choice = QMessageBox.warning(
                 self,
-                "Correcoes por conferir",
+                "Correções por conferir",
                 f"{len(pending)} lance(s) foram corrigidos automaticamente sem certeza e ainda\n"
-                f"nao foram conferidos:\n\n{preview}\n\n"
+                f"não foram conferidos:\n\n{preview}\n\n"
                 "Exportar assim mesmo?",
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
@@ -1038,8 +1038,8 @@ class MainWindow(QMainWindow):
         if not report.ok:
             choice = QMessageBox.warning(
                 self,
-                "Conferencia do PGN",
-                "O PGN gerado nao confere com o que foi analisado:\n\n"
+                "Conferência do PGN",
+                "O PGN gerado não confere com o que foi analisado:\n\n"
                 f"{report.summary()}\n\n"
                 "Salvar assim mesmo?",
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
@@ -1065,7 +1065,7 @@ class MainWindow(QMainWindow):
         try:
             write_pgn(output_path, pgn_text)
         except OSError as exc:
-            QMessageBox.critical(self, "Exportar PGN", f"Nao foi possivel gravar o arquivo.\n\n{exc}")
+            QMessageBox.critical(self, "Exportar PGN", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
 
         self.statusBar().showMessage(f"{report.actual_nodes} lances exportados para {output_path}", 6000)
@@ -1088,7 +1088,7 @@ class MainWindow(QMainWindow):
 
         choice = QMessageBox.warning(
             self,
-            "Conferencia do livro",
+            "Conferência do livro",
             f"{report.summary()}\n\nSalvar assim mesmo?",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -1100,7 +1100,7 @@ class MainWindow(QMainWindow):
         analyses = self.editor_panel.analyze_whole_book()
         games = build_games_for_export(analyses)
         if not games:
-            QMessageBox.information(self, title, "Nao ha partida analisada para exportar.")
+            QMessageBox.information(self, title, "Não ha partida analisada para exportar.")
             return
 
         file_path, _filter = QFileDialog.getSaveFileName(
@@ -1119,14 +1119,14 @@ class MainWindow(QMainWindow):
         try:
             output_path.write_text(builder(games), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, title, f"Nao foi possivel gravar o arquivo.\n\n{exc}")
+            QMessageBox.critical(self, title, f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
 
         self._report(f"{len(games)} partida(s) em {output_path.name}.")
 
     def export_structural_json(self):
         self._export_other_format(
-            "Exportar analise em .json",
+            "Exportar análise em .json",
             ".json",
             build_structural_json,
             "Arquivos JSON (*.json);;Todos os arquivos (*)",
@@ -1143,7 +1143,7 @@ class MainWindow(QMainWindow):
     def export_book(self):
         analyses = self._book_analyses()
         if not analyses:
-            QMessageBox.information(self, "Exportar livro", "Nao ha partida analisada para exportar.")
+            QMessageBox.information(self, "Exportar livro", "Não ha partida analisada para exportar.")
             return
 
         pgn_text, report = build_book_pgn(build_games_for_export(analyses))
@@ -1166,7 +1166,7 @@ class MainWindow(QMainWindow):
         try:
             write_pgn(output_path, pgn_text)
         except OSError as exc:
-            QMessageBox.critical(self, "Exportar livro", f"Nao foi possivel gravar o arquivo.\n\n{exc}")
+            QMessageBox.critical(self, "Exportar livro", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
 
         self.statusBar().showMessage(f"{report.summary()} Arquivo: {output_path}", 8000)
@@ -1174,7 +1174,7 @@ class MainWindow(QMainWindow):
     def export_games_separately(self):
         analyses = self._book_analyses()
         if not analyses:
-            QMessageBox.information(self, "Exportar partidas", "Nao ha partida analisada para exportar.")
+            QMessageBox.information(self, "Exportar partidas", "Não ha partida analisada para exportar.")
             return
 
         _book_text, report = build_book_pgn(build_games_for_export(analyses))
@@ -1194,7 +1194,7 @@ class MainWindow(QMainWindow):
                 write_pgn(target_dir / name, pgn_text)
                 written.append(target_dir / name)
         except OSError as exc:
-            QMessageBox.critical(self, "Exportar partidas", f"Nao foi possivel gravar os arquivos.\n\n{exc}")
+            QMessageBox.critical(self, "Exportar partidas", f"Não foi possível gravar os arquivos.\n\n{exc}")
             return
 
         self.statusBar().showMessage(f"{len(written)} arquivo(s) gravado(s) em {target_dir}", 8000)
@@ -1223,7 +1223,7 @@ class MainWindow(QMainWindow):
             return
 
         self._last_autosaved_text = text
-        self.lbl_autosave.setText("recuperacao gravada")
+        self.lbl_autosave.setText("recuperação gravada")
         QTimer.singleShot(4000, lambda: self.lbl_autosave.setText(""))
 
     def _offer_session_recovery(self):
@@ -1237,7 +1237,7 @@ class MainWindow(QMainWindow):
 
         choice = QMessageBox.question(
             self,
-            "Recuperar sessao",
+            "Recuperar sessão",
             f"O editor foi fechado sem salvar.\n\n"
             f"Origem: {origin}\n"
             f"Gravado {when} ({len(snapshot.raw_text)} caracteres).\n\n"
@@ -1251,7 +1251,7 @@ class MainWindow(QMainWindow):
                 self.project.path = snapshot.origin_path
             self._last_autosaved_text = snapshot.raw_text
             self._update_window_title()
-            self.statusBar().showMessage("Sessao recuperada. Salve o projeto para consolidar.", 8000)
+            self.statusBar().showMessage("Sessão recuperada. Salve o projeto para consolidar.", 8000)
         else:
             clear_recovery_snapshot()
 
@@ -1260,7 +1260,7 @@ class MainWindow(QMainWindow):
             choice = QMessageBox.question(
                 self,
                 "Sair",
-                "Ha alteracoes que ainda nao foram salvas no projeto.\n\nDeseja salvar antes de sair?",
+                "Ha alterações que ainda não foram salvas no projeto.\n\nDeseja salvar antes de sair?",
                 QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
                 | QMessageBox.StandardButton.Cancel,

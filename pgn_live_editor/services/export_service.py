@@ -84,7 +84,7 @@ def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.START
     game = chess.pgn.read_game(io.StringIO(pgn_text))
     if game is None:
         report.ok = False
-        report.problems.append("O PGN gerado nao pode ser lido de volta pelo python-chess.")
+        report.problems.append("O PGN gerado não pode ser lido de volta pelo python-chess.")
         return report
 
     report.reader_errors = [str(error) for error in game.errors]
@@ -100,7 +100,7 @@ def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.START
     if report.expected_nodes != report.actual_nodes:
         report.ok = False
         report.problems.append(
-            f"Contagem de lances divergente: a analise entendeu {report.expected_nodes}, "
+            f"Contagem de lances divergente: a análise entendeu {report.expected_nodes}, "
             f"o PGN relido tem {report.actual_nodes}."
         )
 
@@ -121,7 +121,7 @@ def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.START
     if report.invalid_moves:
         report.ok = False
         preview = ", ".join(report.invalid_moves[:5])
-        report.problems.append(f"{len(report.invalid_moves)} lance(s) nao reconhecido(s) ficaram de fora: {preview}")
+        report.problems.append(f"{len(report.invalid_moves)} lance(s) não reconhecido(s) ficaram de fora: {preview}")
 
     return report
 
@@ -163,7 +163,7 @@ class BookExportReport:
             f"- partida {index + 1}: {report.problems[0] if report.problems else 'divergencia'}"
             for index, report in self.failed_games[:8]
         )
-        return f"{len(self.failed_games)} de {self.games} partida(s) nao conferem:\n{detail}"
+        return f"{len(self.failed_games)} de {self.games} partida(s) não conferem:\n{detail}"
 
 
 def build_book_pgn(games: Sequence[tuple[GameAST, str]]) -> tuple[str, BookExportReport]:

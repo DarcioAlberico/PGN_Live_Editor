@@ -26,7 +26,7 @@ PROMOTION_CHOICES: tuple[tuple[int, str, str, str], ...] = (
 class PromotionDialog(QDialog):
     def __init__(self, color: chess.Color, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Promocao")
+        self.setWindowTitle("Promoção")
         self.setModal(True)
         self._piece_type: int = chess.QUEEN
 

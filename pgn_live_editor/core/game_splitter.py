@@ -171,7 +171,7 @@ def _clean(value: str | None) -> str:
 
 
 def _body_snippet(body: str, limit: int = 46) -> str:
-    """Primeira linha util do corpo -- serve de titulo enquanto nao ha cabecalho."""
+    """Primeira linha util do corpo -- serve de titulo enquanto não há cabecalho."""
     for line in body.splitlines():
         text = line.strip().strip("{}").strip()
         if text:

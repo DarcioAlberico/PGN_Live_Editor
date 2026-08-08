@@ -51,7 +51,7 @@ class CleanupReport:
 
 
 def _repeated_lines(lines: list[str], minimum_occurrences: int = 3) -> set[str]:
-    """Cabecalhos e rodapes correntes: a mesma linha curta repetida a cada pagina."""
+    """Cabecalhos e rodapés correntes: a mesma linha curta repetida a cada pagina."""
     counter = Counter(line.strip() for line in lines if 3 <= len(line.strip()) <= 80)
     return {line for line, count in counter.items() if count >= minimum_occurrences}
 
@@ -92,7 +92,7 @@ def clean_pdf_text(text: str, options: CleanupOptions | None = None) -> CleanupR
         report.removed_marks = count
 
     if options.join_wrapped_lines:
-        # Quebra simples vira espaco; linha em branco (paragrafo) e preservada.
+        # Quebra simples vira espaco; linha em branco (parágrafo) e preservada.
         text, count = re.subn(r'(?<!\n)\n(?!\n)', ' ', text)
         report.joined_lines = count
 

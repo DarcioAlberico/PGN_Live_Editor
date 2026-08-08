@@ -2,7 +2,7 @@
 
 Duas coisas moram aqui e em nenhum outro lugar: a conta que transforma pixel em
 casa (com o tabuleiro invertido ou nao) e o arrasto. O arrasto e feito com peca
-fantasma -- a peca segue o cursor com transparencia -- porque sem ela nao ha
+fantasma -- a peca segue o cursor com transparencia -- porque sem ela não há
 como saber se o programa entendeu de onde a peca saiu.
 
 Clique-clique continua funcionando: quem prefere apontar origem e destino nao

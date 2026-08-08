@@ -46,10 +46,10 @@ class WrapAsCommentTests(unittest.TestCase):
         self.assertEqual("1.e4 e5 {as brancas ficam melhor} 2.Nf3", apply_edits(text, result.edits))
 
     def test_edges_of_the_selection_are_trimmed(self):
-        text = "1.e4 e5   comentario   2.Nf3"
-        result = wrap_as_comment(text, text.index("  comentario"), text.index("  2.Nf3") + 2)
+        text = "1.e4 e5   comentário   2.Nf3"
+        result = wrap_as_comment(text, text.index("  comentário"), text.index("  2.Nf3") + 2)
 
-        self.assertEqual("1.e4 e5   {comentario}   2.Nf3", apply_edits(text, result.edits))
+        self.assertEqual("1.e4 e5   {comentário}   2.Nf3", apply_edits(text, result.edits))
 
     def test_inner_braces_become_parentheses_because_pgn_does_not_nest_them(self):
         text = "1.e4 texto {com chave} dentro 2.Nf3"
@@ -66,7 +66,7 @@ class WrapAsCommentTests(unittest.TestCase):
         self.assertIn("Selecione", result.message)
 
     def test_already_a_comment_is_left_alone(self):
-        text = "1.e4 {ja e comentario} 2.Nf3"
+        text = "1.e4 {já e comentário} 2.Nf3"
         result = wrap_as_comment(text, text.index("{"), text.index("}") + 1)
 
         self.assertFalse(result.ok)
@@ -124,10 +124,10 @@ class WrapAsVariationTests(unittest.TestCase):
 
 class UnwrapTests(unittest.TestCase):
     def test_removes_the_braces_around_the_cursor(self):
-        text = "1.e4 e5 {um comentario} 2.Nf3"
-        applied = apply_edits(text, unwrap_at(text, text.index("comentario")).edits)
+        text = "1.e4 e5 {um comentário} 2.Nf3"
+        applied = apply_edits(text, unwrap_at(text, text.index("comentário")).edits)
 
-        self.assertEqual("1.e4 e5 um comentario 2.Nf3", applied)
+        self.assertEqual("1.e4 e5 um comentário 2.Nf3", applied)
 
     def test_removes_the_parentheses_around_the_cursor(self):
         text = "1.e4 e5 2.Nf3 (2... Nc6 3.Bb5) 3.d4"
@@ -145,7 +145,7 @@ class UnwrapTests(unittest.TestCase):
         result = unwrap_at("1.e4 e5 2.Nf3", 3)
 
         self.assertFalse(result.ok)
-        self.assertIn("nao esta dentro", result.message)
+        self.assertIn("não esta dentro", result.message)
 
 
 class ParagraphToCommentTests(unittest.TestCase):
@@ -164,10 +164,10 @@ class ParagraphToCommentTests(unittest.TestCase):
         self.assertEqual("1.e4 e5 2.Nf3 {excelente desenvolvimento}", applied)
 
     def test_does_not_cross_an_existing_comment(self):
-        text = "1.e4 {ja comentado} solto 2.Nf3"
+        text = "1.e4 {já comentado} solto 2.Nf3"
         applied = run(text, lambda t, ast: paragraph_to_comment(t, t.index("solto"), ast))
 
-        self.assertEqual("1.e4 {ja comentado} {solto} 2.Nf3", applied)
+        self.assertEqual("1.e4 {já comentado} {solto} 2.Nf3", applied)
 
 
 class RenumberTests(unittest.TestCase):
@@ -200,7 +200,7 @@ class RenumberTests(unittest.TestCase):
         result = renumber_document("1. e4 e5 2. Nf3 Nc6", parse("1. e4 e5 2. Nf3 Nc6"))
 
         self.assertFalse(result.ok)
-        self.assertIn("ja esta correta", result.message)
+        self.assertIn("já esta correta", result.message)
 
     def test_renumbering_stops_at_an_unrecognized_move(self):
         """Depois de um lance perdido o tabuleiro nao vale: nada de inventar numeros."""
@@ -287,7 +287,7 @@ class BalanceTests(unittest.TestCase):
         self.assertIn("sem '('", problems[0].message)
 
     def test_unclosed_brace_is_reported(self):
-        problems = check_balance("1.e4 {comentario aberto\n2.Nf3")
+        problems = check_balance("1.e4 {comentário aberto\n2.Nf3")
 
         self.assertEqual(1, len(problems))
         self.assertIn("nunca fechado", problems[0].message)
@@ -320,9 +320,9 @@ class PasteCleanupTests(unittest.TestCase):
         self.assertIn("3.d4", report.text)
 
     def test_paragraph_breaks_survive_the_line_join(self):
-        report = clean_pdf_text("primeira linha\nquebrada aqui\n\nsegundo paragrafo")
+        report = clean_pdf_text("primeira linha\nquebrada aqui\n\nsegundo parágrafo")
 
-        self.assertEqual("primeira linha quebrada aqui\n\nsegundo paragrafo", report.text)
+        self.assertEqual("primeira linha quebrada aqui\n\nsegundo parágrafo", report.text)
 
     def test_footnote_marks_glued_to_moves_are_removed(self):
         report = clean_pdf_text("1.e4 Nf3¹ e5", CleanupOptions(join_wrapped_lines=False))
@@ -332,6 +332,8 @@ class PasteCleanupTests(unittest.TestCase):
     def test_soft_hyphen_and_zero_width_characters_are_dropped(self):
         report = clean_pdf_text("posi­cao com​ ruido", CleanupOptions(join_wrapped_lines=False))
 
+        # A limpeza tira o hífen condicional e o caractere invisivel; acento ela
+        # nao poe -- o texto sai como o OCR entregou.
         self.assertEqual("posicao com ruido", report.text)
 
     def test_cleanup_keeps_the_moves_parseable(self):

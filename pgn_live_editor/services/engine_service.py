@@ -67,7 +67,7 @@ Evaluator = Callable[[chess.Board], int]
 
 
 class EngineUnavailable(RuntimeError):
-    """Nao ha executavel de motor utilizavel."""
+    """Não há executavel de motor utilizavel."""
 
 
 @dataclass(frozen=True)
@@ -186,7 +186,7 @@ class EngineSession:
         if not self.path:
             raise EngineUnavailable(
                 "Nenhum motor UCI encontrado. Instale o Stockfish, ou aponte o "
-                f"executavel em {ENGINE_ENV_VAR} ou no menu Conferir."
+                f"executável em {ENGINE_ENV_VAR} ou no menu Conferir."
             )
 
         # Import tardio: `chess.engine` puxa asyncio, e quem nunca usa o motor
@@ -196,7 +196,7 @@ class EngineSession:
         try:
             self._engine = chess.engine.SimpleEngine.popen_uci(self.path)
         except (OSError, ValueError) as exc:
-            raise EngineUnavailable(f"Nao foi possivel iniciar o motor em {self.path}.\n\n{exc}") from exc
+            raise EngineUnavailable(f"Não foi possível iniciar o motor em {self.path}.\n\n{exc}") from exc
         return self
 
     def close(self) -> None:
@@ -226,7 +226,7 @@ class EngineSession:
     def evaluate(self, board: chess.Board) -> int:
         """Centipeoes do ponto de vista de quem tem a vez."""
         if self._engine is None:
-            raise EngineUnavailable("A sessao do motor nao foi aberta.")
+            raise EngineUnavailable("A sessão do motor não foi aberta.")
 
         key = board.fen()
         cached = self._cache.get(key)
@@ -271,7 +271,7 @@ class ScanReport:
 
     def summary(self) -> str:
         if not self.scanned_moves:
-            return "Nao ha linha principal para conferir."
+            return "Não ha linha principal para conferir."
         parts = [f"{self.scanned_moves} lance(s) conferido(s) pelo motor"]
         parts.append(f"{len(self.issues)} suspeita(s)" if self.issues else "nenhuma suspeita")
         if self.truncated:
@@ -412,7 +412,7 @@ def repair_candidates(
                 confidence=0.75,
                 source="motor",
                 rationale=(
-                    f"a um caractere de '{played}', e o unico que o motor nao ve "
+                    f"a um caractere de '{played}', e o único que o motor não ve "
                     f"perdendo material ({drop / 100:+.1f})"
                 ),
             )
@@ -433,7 +433,7 @@ def repair_candidates(
 def _blunder_issue(move: ScannedMove, candidates: list[Candidate]) -> Issue:
     pawns = move.drop_cp / 100
     message = (
-        f"'{move.san}' derruba a avaliacao em {pawns:.1f} peao(oes) e o livro nao "
+        f"'{move.san}' derruba a avaliação em {pawns:.1f} peão(oes) e o livro não "
         f"marca com '?'. Provavel erro de leitura."
     )
     if candidates and candidates[0].confidence >= 0.60:

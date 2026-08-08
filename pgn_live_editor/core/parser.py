@@ -436,7 +436,7 @@ class TolerantParser:
             self._add_issue(
                 'warning',
                 AMBIGUOUS_MOVE,
-                f"'{token.value}' provavelmente e '{best.san}', mas nao ha certeza ({best.rationale}). Confira.",
+                f"'{token.value}' provavelmente e '{best.san}', mas não ha certeza ({best.rationale}). Confira.",
                 token,
                 candidates,
                 [ACTION_ACCEPT, ACTION_IGNORE, ACTION_LEARN, ACTION_TO_COMMENT],
@@ -447,9 +447,9 @@ class TolerantParser:
         node.is_valid = False
         node.confidence = best.confidence if best else 0.0
         if best is not None:
-            message = f"'{token.value}' nao foi reconhecido. Hipotese fraca: {best.san} ({best.confidence:.0%})."
+            message = f"'{token.value}' não foi reconhecido. Hipotese fraca: {best.san} ({best.confidence:.0%})."
         else:
-            message = f"'{token.value}' nao e um lance legal nesta posicao e nao foi possivel adivinhar."
+            message = f"'{token.value}' não e um lance legal nesta posição e não foi possível adivinhar."
         self._add_issue(
             'error',
             UNRECOGNIZED_MOVE,
@@ -573,7 +573,7 @@ class TolerantParser:
                     self._add_issue(
                         'warning',
                         ORPHAN_VARIATION,
-                        "Variante ignorada: nao ha lance anterior para ancora-la.",
+                        "Variante ignorada: não ha lance anterior para ancora-la.",
                         token,
                     )
 
@@ -616,7 +616,7 @@ class TolerantParser:
                     self._add_issue(
                         'warning',
                         UNCLOSED_BRACE,
-                        "Comentario sem '}' de fechamento; vale ate o fim da linha.",
+                        "Comentário sem '}' de fechamento; vale até o fim da linha.",
                         token,
                     )
 

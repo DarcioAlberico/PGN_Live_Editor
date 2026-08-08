@@ -26,7 +26,7 @@ from pgn_live_editor.services.project_service import (
 )
 
 BOOK_TEXT = (
-    '[Event "XIV Campeonato Sovietico"]\n'
+    '[Event "XIV Campeonato Soviético"]\n'
     '[White "V. SMYSLOV"]\n\n'
     "{Defesa Siciliana} 1.e4 c5 2.Nf3 e6 3.d4 cxd4 (3... Nf6 4.e5) 4.Nxd4\n"
 )
@@ -83,16 +83,16 @@ class ProjectRoundTripTests(unittest.TestCase):
         self.assertEqual(text, load_project(path).raw_text)
 
     def test_saving_over_an_existing_project_is_atomic(self):
-        path = save_project(Project(raw_text="versao 1"), self.tmp / "trabalho")
-        save_project(Project(raw_text="versao 2"), path)
+        path = save_project(Project(raw_text="versão 1"), self.tmp / "trabalho")
+        save_project(Project(raw_text="versão 2"), path)
 
-        self.assertEqual("versao 2", load_project(path).raw_text)
+        self.assertEqual("versão 2", load_project(path).raw_text)
         self.assertEqual([], list(self.tmp.glob("*.tmp")), "sobrou arquivo temporario")
         self.assertEqual(1, len(list(self.tmp.glob(f"*{PROJECT_SUFFIX}"))))
 
     def test_opening_a_file_that_is_not_a_project_fails_clearly(self):
         stray = self.tmp / "qualquer.plez"
-        stray.write_text("isto nao e um zip", encoding="utf-8")
+        stray.write_text("isto não e um zip", encoding="utf-8")
 
         with self.assertRaises(ValueError):
             load_project(stray)

@@ -83,7 +83,7 @@ class Project:
     def display_name(self) -> str:
         if self.path:
             return self.path.stem
-        return self.meta.title or "Sem titulo"
+        return self.meta.title or "Sem título"
 
 
 def _read_json(archive: zipfile.ZipFile, name: str, fallback: dict) -> dict:
@@ -128,12 +128,12 @@ def save_project(project: Project, path: Path) -> Path:
 def load_project(path: Path) -> Project:
     """Le um `.plez`. Levanta ValueError se o arquivo nao for um projeto valido."""
     if not zipfile.is_zipfile(path):
-        raise ValueError("O arquivo nao e um projeto do PGN Live Editor.")
+        raise ValueError("O arquivo não e um projeto do PGN Live Editor.")
 
     with zipfile.ZipFile(path, "r") as archive:
         names = set(archive.namelist())
         if "raw.txt" not in names:
-            raise ValueError("Projeto invalido: nao contem o texto bruto (raw.txt).")
+            raise ValueError("Projeto inválido: não contem o texto bruto (raw.txt).")
 
         raw_text = archive.read("raw.txt").decode("utf-8")
         meta_payload = _read_json(archive, "meta.json", {})

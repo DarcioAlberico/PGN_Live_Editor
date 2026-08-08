@@ -40,7 +40,7 @@ class VariantBuilderPanel(QWidget):
         header.addWidget(self.lbl_title)
         header.addStretch()
 
-        self.btn_anchor_current = QPushButton("Posicao Atual")
+        self.btn_anchor_current = QPushButton("Posição Atual")
         self.btn_anchor_previous = QPushButton("Antes do Lance")
         self.btn_clear = QPushButton("Limpar")
         header.addWidget(self.btn_anchor_current)
@@ -48,7 +48,7 @@ class VariantBuilderPanel(QWidget):
         header.addWidget(self.btn_clear)
         layout.addLayout(header)
 
-        self.lbl_anchor = QLabel("Base: posicao inicial")
+        self.lbl_anchor = QLabel("Base: posição inicial")
         self.lbl_anchor.setStyleSheet("color: #8fa2b9;")
         layout.addWidget(self.lbl_anchor)
 
@@ -100,21 +100,21 @@ class VariantBuilderPanel(QWidget):
     def copy_text(self):
         text = self.text_box.toPlainText().strip()
         if not text:
-            self.lbl_status.setText("Nao ha variante para copiar.")
+            self.lbl_status.setText("Não ha variante para copiar.")
             return
 
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(text)
-        self.lbl_status.setText("Variante copiada para a area de transferencia.")
+        self.lbl_status.setText("Variante copiada para a área de transferencia.")
 
     def _emit_insert_requested(self):
         text = self.text_box.toPlainText().strip()
         if not text:
-            self.lbl_status.setText("Nao ha variante para inserir.")
+            self.lbl_status.setText("Não ha variante para inserir.")
             return
 
         self.insert_requested_signal.emit(text)
-        self.lbl_status.setText("Variante enviada para insercao no editor.")
+        self.lbl_status.setText("Variante enviada para inserção no editor.")
 
     def render_board(self):
         width = max(self.board_view.width(), 360)
@@ -208,7 +208,7 @@ class VariantBuilderPanel(QWidget):
         if square == self.selected_square:
             self.selected_square = None
             self.render_board()
-            self.lbl_status.setText("Selecao cancelada.")
+            self.lbl_status.setText("Seleção cancelada.")
             return
 
         if self._try_commit_to_square(square):
@@ -220,7 +220,7 @@ class VariantBuilderPanel(QWidget):
             self.lbl_status.setText(f"Selecionado {chess.square_name(square)}.")
             return
 
-        self.lbl_status.setText("Destino ilegal para a peca selecionada.")
+        self.lbl_status.setText("Destino ilegal para a peça selecionada.")
 
     def _on_square_released(self, square: chess.Square, button_value: int):
         if Qt.MouseButton(button_value) != Qt.MouseButton.LeftButton:

@@ -65,12 +65,12 @@ class SymbolPaletteDialog(QDialog):
         super().__init__(parent)
         self._insert_symbol = insert_symbol
 
-        self.setWindowTitle("Paleta de Simbolos")
+        self.setWindowTitle("Paleta de Símbolos")
         self.setModal(False)
         self.resize(420, 320)
 
         layout = QVBoxLayout(self)
-        intro = QLabel("Clique em um simbolo para inseri-lo no cursor do Text Editor.")
+        intro = QLabel("Clique em um símbolo para inseri-lo no cursor do Text Editor.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -87,7 +87,7 @@ class SymbolPaletteDialog(QDialog):
 
         layout.addLayout(grid)
 
-        note = QLabel("No PGN salvo, os simbolos sao convertidos para o NAG canonico correspondente.")
+        note = QLabel("No PGN salvo, os símbolos são convertidos para o NAG canonico correspondente.")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -209,12 +209,12 @@ class EditorPanel(QWidget):
         btn_clean.setToolTip("Removes awkward newlines from PDF copy")
         btn_clean.clicked.connect(self.action_join_lines)
 
-        btn_palette = QPushButton("Paleta de Simbolos")
-        btn_palette.setToolTip("Insere sinais de avaliacao no cursor do editor")
+        btn_palette = QPushButton("Paleta de Símbolos")
+        btn_palette.setToolTip("Insere sinais de avaliação no cursor do editor")
         btn_palette.clicked.connect(self.open_symbol_palette)
 
         btn_headers = QPushButton("Inserir Headers")
-        btn_headers.setToolTip("Insere ou atualiza os headers PGN padrao no topo do editor")
+        btn_headers.setToolTip("Insere ou atualiza os headers PGN padrão no topo do editor")
         btn_headers.clicked.connect(self.insert_default_headers)
 
         toolbar.addWidget(lbl)
@@ -266,7 +266,7 @@ class EditorPanel(QWidget):
 
         Usar sempre isto no lugar de `setPlainText` para transformacoes do
         proprio usuario: `setPlainText` apaga a pilha de Ctrl+Z e joga o cursor
-        para o inicio, o que ja custou trabalho perdido em capitulos grandes.
+        para o inicio, o que ja custou trabalho perdido em capítulos grandes.
         """
         if new_text == self.text_edit.toPlainText():
             return
@@ -393,7 +393,7 @@ class EditorPanel(QWidget):
         position = self.text_edit.textCursor().position()
 
         # Ao entrar noutra partida do livro, o tabuleiro e o preview passam a
-        # segui-la. Vem do cache, entao nao ha custo de analise aqui.
+        # segui-la. Vem do cache, entao não há custo de analise aqui.
         if self.analysis.segments and self.analysis.active_index != self._segment_index_at(position):
             self._do_reparse()
 
@@ -559,9 +559,9 @@ class EditorPanel(QWidget):
             edits.extend(renumber_document(text, analysis.ast).edits)
 
         if not edits:
-            return "A numeracao ja esta correta."
+            return "A numeracao já esta correta."
         return self.apply_operation(
-            OperationResult(edits, f"{len(edits)} numero(s) de lance corrigido(s).")
+            OperationResult(edits, f"{len(edits)} número(s) de lance corrigido(s).")
         )
 
     def action_normalize_diagrams(self) -> str:
@@ -585,10 +585,10 @@ class EditorPanel(QWidget):
 
         change = upsert_headers(text, updates, region_start, region_end)
         if change is None:
-            return "Os cabecalhos ja estao assim."
+            return "Os cabeçalhos já estao assim."
 
         start, end, block = change
-        return self.apply_operation(OperationResult([TextEdit(start, end, block)], "Cabecalhos atualizados."))
+        return self.apply_operation(OperationResult([TextEdit(start, end, block)], "Cabeçalhos atualizados."))
 
     def action_clean_paste(self, options) -> str:
         report = clean_pdf_text(self.document_text(), options)
@@ -691,7 +691,7 @@ class EditorPanel(QWidget):
         """Renumera o trecho colado a partir da posicao do tabuleiro no cursor."""
         if "\n" in text.strip() or not text.strip():
             # Colagem de bloco (uma pagina inteira, por exemplo) nao e uma linha
-            # de lances: nao ha posicao unica de onde renumerar.
+            # de lances: não há posicao unica de onde renumerar.
             return text
 
         board = self.board_at_cursor()

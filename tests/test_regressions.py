@@ -32,7 +32,7 @@ class D1ProseIsNeverRewrittenTests(unittest.TestCase):
 
     PROSE = [
         "Cada lance conta",
-        "Dada a posicao",
+        "Dada a posição",
         "Cabe notar",
         "Cede o centro",
         "Chega a hora",
@@ -57,7 +57,7 @@ class D2LiteralSubstitutionsTests(unittest.TestCase):
     """D2: `ch`->`+` e `mate`->`#` eram aplicados como substring, em qualquer palavra."""
 
     def test_words_containing_ch_and_mate_are_preserved(self):
-        for sentence in ("as chances das brancas", "o Cavalo chega a c3", "ameacando mate rapido", "checagem"):
+        for sentence in ("as chances das brancas", "o Cavalo chega a c3", "ameaçando mate rapido", "checagem"):
             with self.subTest(frase=sentence):
                 self.assertEqual(sentence, normalize(sentence))
 
@@ -117,7 +117,7 @@ class D4DangerousRescueTests(unittest.TestCase):
         ast = parse("1.e4 e5 2.Nc6")
 
         move = ast.moves[-1]
-        self.assertTrue(move.needs_review, "correcao duvidosa deveria pedir revisao")
+        self.assertTrue(move.needs_review, "correção duvidosa deveria pedir revisão")
         self.assertLess(move.confidence, 0.90)
         self.assertEqual("AMBIGUOUS_MOVE", ast.issues[0].code)
         self.assertEqual("warning", ast.issues[0].severity)
@@ -183,13 +183,13 @@ class D7UnclosedBraceTests(unittest.TestCase):
     """D7: uma `{` sem fechamento engolia o resto do documento."""
 
     def test_unclosed_brace_stops_at_the_end_of_the_line(self):
-        ast = parse("1.e4 e5 {comentario que ficou aberto\n2.Nf3 Nc6 3.Bb5 a6")
+        ast = parse("1.e4 e5 {comentário que ficou aberto\n2.Nf3 Nc6 3.Bb5 a6")
 
         self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], [move.display_san for move in ast.moves])
         self.assertIn("UNCLOSED_BRACE", [issue.code for issue in ast.issues])
 
     def test_unclosed_brace_is_reported_even_on_a_single_line(self):
-        ast = parse("1.e4 e5 {comentario incompleto")
+        ast = parse("1.e4 e5 {comentário incompleto")
 
         self.assertEqual(["e4", "e5"], [move.display_san for move in ast.moves])
         self.assertEqual(["UNCLOSED_BRACE"], [issue.code for issue in ast.issues])
@@ -259,7 +259,7 @@ class CascadeTests(unittest.TestCase):
 
         errors = [issue for issue in ast.issues if issue.severity == "error"]
         self.assertGreaterEqual(len(errors), 2)
-        self.assertFalse(errors[0].is_cascade, "o primeiro erro e a causa, nao cascata")
+        self.assertFalse(errors[0].is_cascade, "o primeiro erro é a causa, não cascata")
         self.assertTrue(any(issue.is_cascade for issue in errors[1:]), "erros seguintes deveriam ser cascata")
 
 
@@ -273,22 +273,22 @@ class D15MultiLineCommentTests(unittest.TestCase):
     """
 
     def test_a_comment_may_span_lines(self):
-        ast = parse("1.e4 e5 {um comentario\nque continua na linha seguinte} 2.Nf3 Nc6")
+        ast = parse("1.e4 e5 {um comentário\nque continua na linha seguinte} 2.Nf3 Nc6")
 
         self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in ast.moves])
         self.assertEqual([], ast.issues)
-        self.assertEqual(["um comentario\nque continua na linha seguinte"], ast.moves[1].comments_after)
+        self.assertEqual(["um comentário\nque continua na linha seguinte"], ast.moves[1].comments_after)
 
     def test_an_unclosed_brace_still_stops_at_the_end_of_the_line(self):
-        """A protecao do D7 continua de pe: nao havendo `}`, vale so a linha."""
-        ast = parse("1.e4 e5 {comentario que ficou aberto\n2.Nf3 Nc6")
+        """A protecao do D7 continua de pe: não hávendo `}`, vale so a linha."""
+        ast = parse("1.e4 e5 {comentário que ficou aberto\n2.Nf3 Nc6")
 
         self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in ast.moves])
         self.assertIn("UNCLOSED_BRACE", [issue.code for issue in ast.issues])
 
     def test_a_blank_line_closes_the_comment_even_with_a_brace_further_down(self):
-        """A `}` do outro lado de um paragrafo pertence a outro comentario."""
-        ast = parse("1.e4 e5 {comentario aberto\n\n2.Nf3 Nc6 {outro} 3.Bb5")
+        """A `}` do outro lado de um parágrafo pertence a outro comentario."""
+        ast = parse("1.e4 e5 {comentário aberto\n\n2.Nf3 Nc6 {outro} 3.Bb5")
 
         self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in ast.moves])
         self.assertIn("UNCLOSED_BRACE", [issue.code for issue in ast.issues])
@@ -364,7 +364,7 @@ class D18MoveBetweenCommentsTests(unittest.TestCase):
     """
 
     def test_a_move_surrounded_by_comments_is_still_a_move(self):
-        ast = parse("1.e4 e5 2.Cf3 {ameaca} Cc6 {defende} 3.Bb5")
+        ast = parse("1.e4 e5 2.Cf3 {ameaça} Cc6 {defende} 3.Bb5")
 
         self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [move.display_san for move in ast.moves])
 
@@ -387,7 +387,7 @@ class D19GluedAnnotationTests(unittest.TestCase):
 
     def test_prose_is_still_not_a_move(self):
         self.assertFalse(looks_like_move("Cada!"))
-        self.assertFalse(looks_like_move("posicao?"))
+        self.assertFalse(looks_like_move("posição?"))
 
 
 class HeaderValidationTests(unittest.TestCase):

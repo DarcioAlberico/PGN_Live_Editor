@@ -25,9 +25,9 @@ class CopyFormat:
 COPY_FORMATS: tuple[CopyFormat, ...] = (
     # "Esta linha" e a variante quando o lance esta dentro de uma; na linha
     # principal, e a propria linha principal.
-    CopyFormat("variation", "Copiar esta linha (entre parenteses)"),
-    CopyFormat("from_here", "Copiar daqui ate o fim"),
-    CopyFormat("no_comments", "Copiar sem comentarios"),
+    CopyFormat("variation", "Copiar esta linha (entre parênteses)"),
+    CopyFormat("from_here", "Copiar daqui até o fim"),
+    CopyFormat("no_comments", "Copiar sem comentários"),
     CopyFormat("fen", "Copiar FEN"),
     CopyFormat("game_from_here", "Copiar como partida (com FEN)"),
     CopyFormat("mainline", "Copiar linha principal", needs_entry=False),

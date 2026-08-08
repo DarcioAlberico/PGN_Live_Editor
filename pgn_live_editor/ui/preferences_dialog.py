@@ -53,10 +53,10 @@ class PreferencesDialog(QDialog):
             self.cmb_locale.addItem(LOCALE_LABEL[locale], locale)
         self.cmb_locale.setCurrentIndex(max(0, LOCALES.index(preferences.locale)))
         self.cmb_locale.setToolTip(
-            "Idioma da notacao dos livros. O programa ainda confirma pelo proprio "
+            "Idioma da notação dos livros. O programa ainda confirma pelo proprio "
             "documento antes de ler 'R' como Rei."
         )
-        form.addRow("Notacao dos livros:", self.cmb_locale)
+        form.addRow("Notação dos livros:", self.cmb_locale)
 
         self.cmb_theme = QComboBox()
         for theme, label in THEME_LABEL.items():
@@ -92,7 +92,7 @@ class PreferencesDialog(QDialog):
         self.spn_movetime.setSingleStep(50)
         self.spn_movetime.setSuffix(" ms")
         self.spn_movetime.setValue(preferences.engine_movetime_ms)
-        self.spn_movetime.setToolTip("Tempo por posicao na conferencia do motor")
+        self.spn_movetime.setToolTip("Tempo por posição na conferência do motor")
         form.addRow("Tempo por lance:", self.spn_movetime)
 
         self.spn_threshold = QSpinBox()
@@ -100,14 +100,14 @@ class PreferencesDialog(QDialog):
         self.spn_threshold.setSingleStep(50)
         self.spn_threshold.setSuffix(" centipeoes")
         self.spn_threshold.setValue(preferences.engine_threshold_cp)
-        self.spn_threshold.setToolTip("Queda de avaliacao a partir da qual o lance vira suspeita")
+        self.spn_threshold.setToolTip("Queda de avaliação a partir da qual o lance vira suspeita")
         form.addRow("Limiar de suspeita:", self.spn_threshold)
 
         layout.addLayout(form)
 
         note = QLabel(
             "O layout das janelas e guardado sozinho ao fechar o programa. "
-            "Cabecalho, dicionario do projeto e PDF pertencem ao trabalho, e ficam no .plez."
+            "Cabeçalho, dicionário do projeto e PDF pertencem ao trabalho, e ficam no .plez."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #8a8f98;")
@@ -123,7 +123,7 @@ class PreferencesDialog(QDialog):
     def _choose_engine(self):
         current = self.txt_engine.text() or str(Path.cwd())
         file_path, _filter = QFileDialog.getOpenFileName(
-            self, "Executavel do motor UCI", current, "Executaveis (*.exe);;Todos os arquivos (*)"
+            self, "Executável do motor UCI", current, "Executáveis (*.exe);;Todos os arquivos (*)"
         )
         if file_path:
             self.txt_engine.setText(file_path)

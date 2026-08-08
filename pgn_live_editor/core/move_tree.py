@@ -297,7 +297,7 @@ def render_game_html(ast: GameAST, entries: Sequence[MoveEntry], current_node_id
         if move.corrected_san:
             title = f"Corrigido: {move.san} -> {move.corrected_san}"
         elif not move.is_valid:
-            title = f"Lance invalido: {move.san}"
+            title = f"Lance inválido: {move.san}"
 
         label_parts = []
         if move.number:

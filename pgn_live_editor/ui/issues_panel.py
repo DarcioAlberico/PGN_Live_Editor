@@ -60,15 +60,15 @@ class IssuesPanel(QWidget):
 
         self.btn_cascade = QPushButton("Mostrar cascata")
         self.btn_cascade.setCheckable(True)
-        self.btn_cascade.setToolTip("Erros que so existem porque um lance anterior nao foi entendido")
+        self.btn_cascade.setToolTip("Erros que so existem porque um lance anterior não foi entendido")
         self.btn_cascade.toggled.connect(self._on_cascade_toggled)
 
-        self.btn_accept = QPushButton("Aceitar correcao")
-        self.btn_accept.setToolTip("Grava a correcao no texto bruto (F4)")
-        self.btn_comment = QPushButton("Virar comentario")
+        self.btn_accept = QPushButton("Aceitar correção")
+        self.btn_accept.setToolTip("Grava a correção no texto bruto (F4)")
+        self.btn_comment = QPushButton("Virar comentário")
         self.btn_ignore = QPushButton("Ignorar")
         self.btn_learn = QPushButton("Aprender")
-        self.btn_learn.setToolTip("Grava esta correcao no dicionario do projeto")
+        self.btn_learn.setToolTip("Grava esta correção no dicionário do projeto")
 
         for button in (self.btn_accept, self.btn_comment, self.btn_learn, self.btn_ignore):
             button.setEnabled(False)
@@ -124,7 +124,7 @@ class IssuesPanel(QWidget):
             if counts["warning"]:
                 parts.append(f"{counts['warning']} aviso(s)")
             if counts["info"]:
-                parts.append(f"{counts['info']} correcao(oes)")
+                parts.append(f"{counts['info']} correção(oes)")
             summary = " | ".join(parts)
             if hidden:
                 summary += f"  (+{hidden} em cascata)"

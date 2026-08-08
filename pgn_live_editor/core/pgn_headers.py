@@ -98,7 +98,7 @@ def validate_headers(
             issues.append(Issue(
                 severity="warning",
                 code=INVALID_DATE,
-                message=f"Data '{raw_date}' nao esta no formato PGN; sera exportada como '{normalized}'.",
+                message=f"Data '{raw_date}' não esta no formato PGN; será exportada como '{normalized}'.",
                 raw_start=start,
                 raw_end=end,
                 raw_text=raw_date,
@@ -111,7 +111,7 @@ def validate_headers(
         issues.append(Issue(
             severity="warning",
             code=INVALID_RESULT,
-            message=f"Resultado '{raw_result}' nao e valido; sera exportado como '{normalized}'.",
+            message=f"Resultado '{raw_result}' não e válido; será exportado como '{normalized}'.",
             raw_start=start,
             raw_end=end,
             raw_text=raw_result,

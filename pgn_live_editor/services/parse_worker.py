@@ -4,10 +4,10 @@ Duas ideias sustentam a escala de livro:
 
 1. **Incremental por segmento.** So a partida que contem o cursor e analisada a
    cada tecla; as demais ficam no cache enquanto o texto delas nao mudar. Sem
-   isto, um capitulo de 64 partidas custaria 64 analises por caractere digitado.
+   isto, um capítulo de 64 partidas custaria 64 analises por caractere digitado.
 2. **Fora da thread de UI.** A digitacao nunca espera pelo parser. A thread de
    trabalho tem a **sua propria** `ParsePipeline` -- nenhum objeto e
-   compartilhado entre as duas threads, e por isso nao ha trava nenhuma aqui.
+   compartilhado entre as duas threads, e por isso não há trava nenhuma aqui.
 
 Pedidos pendentes colapsam: existe no maximo um em voo, e o mais recente vence.
 """

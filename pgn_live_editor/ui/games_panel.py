@@ -1,6 +1,6 @@
 """Painel de partidas: o documento visto como livro (SPEC 4.1).
 
-Um capitulo de livro tem 8, 20, 64 partidas no mesmo texto. Sem esta lista, a
+Um capítulo de livro tem 8, 20, 64 partidas no mesmo texto. Sem esta lista, a
 unica forma de saber onde uma acaba e outra comeca era rolar o editor. Aqui
 cada partida tem titulo, marca de concluida e o que a analise ja soube dizer
 dela -- e um clique leva o cursor para la.
