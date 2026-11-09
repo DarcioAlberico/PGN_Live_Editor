@@ -11,6 +11,12 @@
 > = lido no código, sem reprodução. Nada aqui foi corrigido: este documento é a
 > entrada do [ROADMAP_V3.md](ROADMAP_V3.md) e da [SPEC_V3.md](SPEC_V3.md).
 
+> **Andamento (2026-11-09, fase 14 do roadmap v3):** corrigidos e com teste N-01,
+> N-09, N-15, L-09, L-17, S-04, Q-01, Q-02, Q-03, Q-07 e Q-08; O-05 e O-10 resolvidos
+> por remoção (R-008); S-03 parcialmente (excepthook, R-005 — o `_in_flight` preso
+> espera o R-303). O item de §6.5 sobre o diretório corrente era falso positivo.
+> Os demais achados seguem abertos nas fases 15–22.
+
 ## 0. Resumo
 
 | Medida | Valor |

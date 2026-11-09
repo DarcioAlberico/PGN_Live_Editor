@@ -27,7 +27,7 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 
 | Fase | Tema | Itens | Situação |
 |---|---|---|---|
-| 14 | Rede de segurança e alavancas | 11 | ⬜ |
+| 14 | Rede de segurança e alavancas | 11 | ✅ 2026-11-09 (branch `fase-14`) |
 | 15 | Não perder trabalho — parte 2 | 9 | ⬜ |
 | 16 | Parar a corrupção silenciosa — parte 2 | 13 | ⬜ |
 | 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ⬜ |
@@ -44,6 +44,13 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 **Objetivo:** poder mexer em tudo o que vem depois sem medo e com medida.
 É a fase que menos corrige o produto — e a que mais rende, porque todas as
 outras dependem dela.
+
+> **Concluída em 2026-11-09**, no branch `fase-14` (ainda não integrado ao `master`).
+> R-001 → 6 commits por camada (`000a583`…`9f01d2f`), cada camada verificada num
+> worktree limpo (core 251, services 404 e a suíte inteira 601 testes);
+> R-002 → `a3c4aca`; R-011 → `2c4a24f`; R-009 → falso positivo (`94227a5`);
+> R-010 → `2b1dcae`; R-006 → `e937272`; R-003 → `95eac17`; R-005 → `126d09e`;
+> R-004 → `0f1570b`; R-008 → `2ad1c24`; R-007 → o commit desta nota.
 
 | Item | Tam. | O quê | Achados | Aceite verificável |
 |---|---|---|---|---|

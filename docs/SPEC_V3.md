@@ -145,7 +145,9 @@ nem apaga o snapshot da primeira enquanto esta vive.
 - O hook: registra o traceback; tenta gravar o snapshot de recuperação (§2.3);
   mostra um diálogo não modal "Ocorreu um erro — o trabalho foi guardado", com
   botão "Abrir pasta de logs"; **NÃO DEVE** encerrar o processo.
-- `--diagnostico` passa a incluir as últimas 200 linhas do log.
+- `--diagnostico` **não** inclui o log, só o caminho dele: a mensagem de uma
+  exceção pode carregar texto do documento, e o diagnóstico é feito para ser
+  enviado a terceiros (decisão de 2026-11-09, ao implementar a R-005).
 
 ### 3.2 Política de exceções
 

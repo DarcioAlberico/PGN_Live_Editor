@@ -17,26 +17,32 @@ Estimativas em semanas de trabalho de uma pessoa em ritmo de projeto pessoal.
 
 ## Status
 
-| Fase | Situação |
-|---|---|
-| Ganhos imediatos | ✅ concluída |
-| 0 · Fundação | ✅ concluída |
-| 1 · Não perder trabalho | ✅ concluída |
-| 2 · Parar a corrupção silenciosa | ✅ concluída |
-| 3 · Gestos de edição | ✅ concluída |
-| 4 · Escala de livro | ✅ concluída |
-| 5 · Assistentes | ✅ concluída |
-| 6 · Polimento | ✅ concluída |
-| 7 · Livro de repertório | ✅ concluída |
-| 8 · Confiança e revisão | ✅ concluída |
-| 9 · Pipeline PDF profissional | ✅ núcleo concluído |
-| 10 · Edição estrutural acelerada | ✅ núcleo concluído |
-| 11 · Qualidade chess-first | ✅ concluída |
-| 12 · Escala e observabilidade | ✅ concluída |
-| 13 · Operação e suporte pós-produção | ✅ núcleo concluído |
+Desde 2026-11-09, ✅ quer dizer **aceite verificado por teste**, e a coluna
+"Prova" diz qual. ⚠️ quer dizer que a [auditoria](AUDITORIA_2026-11.md) achou um
+defeito que contradiz o aceite da fase; o item que o fecha está no
+[roadmap v3](ROADMAP_V3.md).
 
-Testes passando, cobertura acima de 90 % em `core/`, lint, formatação e tipos limpos.
-O CI roda os quatro (`ruff check`, `ruff format --check`, `mypy`, `coverage`).
+| Fase | Situação | Prova / o que reabriu |
+|---|---|---|
+| Ganhos imediatos | ✅ concluída | `test_regressions`, `test_core` |
+| 0 · Fundação | ✅ concluída | `test_roundtrip`; CI. O trabalho de ago–out estava fora do git (Q-01), commitado em 2026-11-09 |
+| 1 · Não perder trabalho | ⚠️ reaberta | recuperar + salvar apaga cabeçalhos e dicionário (S-01); a rotação de `.bak` pode deixar o projeto sem arquivo (S-02) → R-101, R-102 |
+| 2 · Parar a corrupção silenciosa | ⚠️ reaberta | lances da linha principal viram comentário sem alerta (N-02); ponto final da prosa some (N-04); comentário perdido entre variantes (N-03) → Fase 16 |
+| 3 · Gestos de edição | ⚠️ reaberta | renumerar apaga comentário (N-05); promover variante leva o NAG da âncora (N-06) → R-202 |
+| 4 · Escala de livro | ⚠️ reaberta | N-01 (normalizador quadrático) corrigido em 2026-11-09 (`test_quick_wins`); falta N-16 (prosa longa quadrática) → R-203, R-401 |
+| 5 · Assistentes | ✅ concluída | `test_engine`, `test_stockfish_integration` (determinístico desde 2026-11-09, Q-03), `test_dictionary`, `test_pdf_panel` |
+| 6 · Polimento | ✅ concluída | `test_preferences`, `test_ui_smoke` |
+| 7 · Livro de repertório | ⚠️ reaberta | linha em branco ignorada junta a regressão ao parágrafo anterior (L-03) → R-208 |
+| 8 · Confiança e revisão | ⚠️ reaberta | decisões humanas trocam de token após reanálise (L-04); abrir `.plez` rebaixa decisões aceitas (U-01) → R-302a/b, R-104 |
+| 9 · Pipeline PDF profissional | ⚠️ reaberta | `□` lido como "brancas jogam" (O-01); lado chutado sai como aceito (O-02); colunas não separam (L-05) → R-504–R-506, R-801 |
+| 10 · Edição estrutural acelerada | ⚠️ reaberta | aceitar um alerta depois de digitar corrompe o lance (U-05) → R-302 |
+| 11 · Qualidade chess-first | ✅ concluída | `test_quality_and_diff`, `test_search_and_html` (contagem dupla L-12 fica para R-503) |
+| 12 · Escala e observabilidade | ⚠️ reaberta | S-04 (métrica reescrevendo o arquivo) corrigido em 2026-11-09; falta resultado assíncrono velho reaplicado (S-12) → R-301 |
+| 13 · Operação e suporte pós-produção | ✅ núcleo concluído | `test_diagnostics`, `test_crash_safety` (excepthook desde 2026-11-09) |
+
+Lint, formatação e tipos limpos; cobertura de `core/` acima de 90 %. O CI roda os
+quatro (`ruff check`, `ruff format --check`, `mypy`, `coverage`) com o `uv.lock`, e
+um job de relatórios de qualidade (CRAP, duplicação, mutação).
 
 ### Entregas recentes das fases 8–9
 
