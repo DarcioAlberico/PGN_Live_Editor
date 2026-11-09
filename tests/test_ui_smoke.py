@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,6 +22,7 @@ from pgn_live_editor.services.engine_service import (  # noqa: E402
     EngineSettings,
     scan_mainline,
 )
+from pgn_live_editor.services.project_service import load_project  # noqa: E402
 from pgn_live_editor.ui.dictionary_dialog import DictionaryDialog  # noqa: E402
 from pgn_live_editor.ui.editor_panel import EditorPanel  # noqa: E402
 from pgn_live_editor.ui.header_dialog import HeaderDialog  # noqa: E402
@@ -635,6 +638,103 @@ class HeaderDialogTests(unittest.TestCase):
 
         self.assertEqual("Já preenchido", dialog.values()["Event"])
         self.assertEqual("Moscou", dialog.values()["Site"])
+
+
+class NotationLocaleBoxTests(unittest.TestCase):
+    """A caixa "Idioma do texto" no cabecalho do editor."""
+
+    GERMAN = "1. e4 e5 2. Sf3 Sc6 3. Lb5"
+
+    def setUp(self):
+        self.window = MainWindow()
+        self.addCleanup(self.window.deleteLater)
+        self.addCleanup(self.window.editor_panel.shutdown)
+        self.panel = self.window.editor_panel
+        self.box = self.panel.cmb_notation_locale
+
+    def choose(self, locale: str) -> None:
+        self.box.setCurrentIndex(self.box.findData(locale))
+
+    def test_box_shows_the_language_in_use(self):
+        self.assertEqual(self.panel.locale, self.box.currentData())
+        self.panel.set_locale("en")
+        self.assertEqual("en", self.box.currentData())
+
+    def test_choosing_a_language_reparses_the_text(self):
+        # `S` de Springer so e cavalo em alemao: em portugues o lance nao existe.
+        self.choose("pt")
+        self.panel.load_document_text(self.GERMAN)
+        self.panel.reparse_now()
+        self.assertFalse(self.panel.current_ast.moves[2].is_valid)
+
+        self.choose("de")
+        self.panel.reparse_now()
+
+        self.assertEqual("de", self.panel.locale)
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5"], [m.display_san for m in self.panel.current_ast.moves])
+
+    def test_the_choice_goes_to_the_project_and_marks_it_changed(self):
+        self.choose("pt")
+        self.window._state_dirty = False
+        self.choose("es")
+
+        self.assertEqual("es", self.window.project.meta.notation_locale)
+        self.assertTrue(self.window._is_dirty())
+
+    def test_saving_records_the_language_in_use(self):
+        self.choose("en")
+        self.window.project.meta.notation_locale = "pt"  # projeto antigo, gravado com o padrao
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "livro.plez"
+            self.assertTrue(self.window._write_project(target))
+            self.assertEqual("en", load_project(target).meta.notation_locale)
+
+    def test_new_project_keeps_the_language(self):
+        self.choose("es")
+        with mock.patch.object(self.window, "_confirm_discard", return_value=True):
+            self.window.new_project()
+
+        self.assertEqual("es", self.panel.locale)
+        self.assertEqual("es", self.window.project.meta.notation_locale)
+
+    SPANISH_PAGE = (
+        "1. P4R P4AD 2. C3AR P3R 3. P4D PxP 4. CxP C3AR 5. C3AD A5C 6. P5R C4D "
+        "7. A2D CxC 8. PxC A2R 9. D4C P3C 10. A3D P4D"
+    )
+
+    def test_a_pasted_page_in_another_language_gets_a_suggestion(self):
+        self.choose("pt")
+        self.panel.load_document_text(self.SPANISH_PAGE)
+
+        self.assertTrue(self.panel.btn_locale_hint.isVisibleTo(self.panel))
+        self.assertIn("Espanhol", self.panel.btn_locale_hint.text())
+
+        self.panel.btn_locale_hint.click()
+
+        self.assertEqual("es", self.panel.locale)
+        self.assertEqual("es", self.window.project.meta.notation_locale)
+        self.assertFalse(self.panel.btn_locale_hint.isVisibleTo(self.panel))
+
+    def test_no_suggestion_when_the_language_already_matches(self):
+        self.choose("es")
+        self.panel.load_document_text(self.SPANISH_PAGE)
+
+        self.assertFalse(self.panel.btn_locale_hint.isVisibleTo(self.panel))
+
+    def test_choosing_another_language_dismisses_the_suggestion(self):
+        self.choose("pt")
+        self.panel.load_document_text(self.SPANISH_PAGE)
+        self.choose("en")
+        self.panel._update_locale_hint(self.SPANISH_PAGE)
+
+        self.assertFalse(self.panel.btn_locale_hint.isVisibleTo(self.panel))
+
+    def test_changing_only_the_theme_keeps_the_document_language(self):
+        self.choose("es")
+        self.window._apply_preferences(apply_notation_locale=False)
+
+        self.assertEqual("es", self.panel.locale)
+        self.assertEqual("es", self.box.currentData())
 
 
 if __name__ == "__main__":

@@ -57,6 +57,20 @@ class PreferencesDialog(QDialog):
         )
         form.addRow("Notação dos livros:", self.cmb_locale)
 
+        self.cmb_dictionary_locale = QComboBox()
+        for locale in LOCALES:
+            self.cmb_dictionary_locale.addItem(LOCALE_LABEL[locale], locale)
+        self.cmb_dictionary_locale.setCurrentIndex(max(0, LOCALES.index(preferences.dictionary_locale)))
+        self.cmb_dictionary_locale.setToolTip("Idioma das regras do dicionário OCR")
+        form.addRow("Dicionário OCR:", self.cmb_dictionary_locale)
+
+        self.cmb_interface_locale = QComboBox()
+        for locale in LOCALES:
+            self.cmb_interface_locale.addItem(LOCALE_LABEL[locale], locale)
+        self.cmb_interface_locale.setCurrentIndex(max(0, LOCALES.index(preferences.interface_locale)))
+        self.cmb_interface_locale.setToolTip("Idioma reservado para a interface")
+        form.addRow("Interface:", self.cmb_interface_locale)
+
         self.cmb_theme = QComboBox()
         for theme, label in THEME_LABEL.items():
             self.cmb_theme.addItem(label, theme)
@@ -102,6 +116,14 @@ class PreferencesDialog(QDialog):
         self.spn_threshold.setToolTip("Queda de avaliação a partir da qual o lance vira suspeita")
         form.addRow("Limiar de suspeita:", self.spn_threshold)
 
+        self.chk_engine_variations = QCheckBox("Conferir também as variantes")
+        self.chk_engine_variations.setChecked(preferences.engine_include_variations)
+        self.chk_engine_variations.setToolTip(
+            "Sem esta opção o motor olha só a linha principal: mais rápido, mas um lance mal lido "
+            "numa variante passa sem alerta."
+        )
+        form.addRow("", self.chk_engine_variations)
+
         layout.addLayout(form)
 
         note = QLabel(
@@ -130,6 +152,9 @@ class PreferencesDialog(QDialog):
         return replace(
             self._preferences,
             locale=self.cmb_locale.currentData(),
+            notation_locale=self.cmb_locale.currentData(),
+            dictionary_locale=self.cmb_dictionary_locale.currentData(),
+            interface_locale=self.cmb_interface_locale.currentData(),
             theme=self.cmb_theme.currentData(),
             editor_font_family=self.cmb_font.currentText(),
             editor_font_size=self.spn_font_size.value(),
@@ -137,4 +162,5 @@ class PreferencesDialog(QDialog):
             engine_path=self.txt_engine.text().strip(),
             engine_movetime_ms=self.spn_movetime.value(),
             engine_threshold_cp=self.spn_threshold.value(),
+            engine_include_variations=self.chk_engine_variations.isChecked(),
         ).sanitized()

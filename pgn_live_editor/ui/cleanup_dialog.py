@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 from ..core.paste_cleanup import CleanupOptions, clean_pdf_text
 
 OPTION_LABELS: tuple[tuple[str, str], ...] = (
+    ("map_book_symbols", "Converter os símbolos da fonte do livro (² ³ µ +– © ‚) em avaliações"),
     ("dehyphenate", "Remontar palavras cortadas no fim da linha (ma-\\nnobra)"),
     ("join_wrapped_lines", "Juntar linhas quebradas pela largura da página"),
     ("remove_page_numbers", "Remover números de página"),

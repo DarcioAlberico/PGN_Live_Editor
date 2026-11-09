@@ -55,6 +55,7 @@ class PreferencesStorageTests(unittest.TestCase):
                 editor_font_size=14,
                 engine_path="C:/motor/stockfish.exe",
                 engine_threshold_cp=250,
+                engine_include_variations=False,
                 auto_close_delimiters=False,
             )
         )
@@ -67,6 +68,7 @@ class PreferencesStorageTests(unittest.TestCase):
         self.assertEqual(14, restored.editor_font_size)
         self.assertEqual("C:/motor/stockfish.exe", restored.engine_path)
         self.assertEqual(250, restored.engine_threshold_cp)
+        self.assertFalse(restored.engine_include_variations)
         self.assertFalse(restored.auto_close_delimiters)
 
     def test_the_layout_survives_too(self):
@@ -85,6 +87,12 @@ class PreferencesStorageTests(unittest.TestCase):
         self.assertEqual("pt", restored.locale)
         self.assertEqual(THEME_DARK, restored.theme)
         self.assertEqual(11, restored.editor_font_size)
+
+    def test_notation_and_dictionary_locales_are_independent(self):
+        save_preferences(Preferences(locale="pt", notation_locale="de", dictionary_locale="fr"))
+        restored = load_preferences()
+        self.assertEqual("de", restored.notation_locale)
+        self.assertEqual("fr", restored.dictionary_locale)
 
     def test_a_corrupt_database_does_not_take_the_program_down(self):
         database_path().write_bytes(b"isto nao e um banco")
@@ -145,12 +153,15 @@ class PreferencesInTheWindowTests(unittest.TestCase):
         self.assertFalse(self.window.editor_panel.text_edit.auto_close_enabled)
 
     def test_the_engine_settings_follow_the_preferences(self):
-        self.window.preferences = Preferences(engine_threshold_cp=450, engine_movetime_ms=500)
+        self.window.preferences = Preferences(
+            engine_threshold_cp=450, engine_movetime_ms=500, engine_include_variations=False
+        )
 
         self.window._apply_preferences()
 
         self.assertEqual(450, self.window.engine_settings.threshold_cp)
         self.assertEqual(500, self.window.engine_settings.movetime_ms)
+        self.assertFalse(self.window.engine_settings.include_variations)
 
     def test_the_dialog_gives_back_what_was_chosen(self):
         dialog = PreferencesDialog(Preferences(), self.window)

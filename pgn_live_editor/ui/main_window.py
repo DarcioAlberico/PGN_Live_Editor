@@ -1,7 +1,10 @@
+import hashlib
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
+import chess
 from PyQt6.QtCore import QByteArray, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
@@ -12,19 +15,31 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSplitter,
+    QTabWidget,
     QWidget,
 )
 
+from ..core.diagram_review import upsert_record
 from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
+from ..core.project_diff import compare_projects, format_project_diff
+from ..core.quality_report import format_quality_report, validate_book
+from ..core.recognition_record import build_recognition_records, reconcile_records
+from ..core.review_queue import accept_identical, apply_batch_action, reject_rule
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
 from ..core.text_ops import (
+    OperationResult,
+    TextEdit,
+    insert_comment,
     move_variation,
     promote_variation,
     reanchor_variation,
     set_move_annotations,
 )
 from ..services.clipboard_service import COPY_FORMATS
+from ..services.diagnostics import build_diagnostic_report
+from ..services.diagram_generator import render_diagram_svg, write_png, write_svg
+from ..services.diagram_ocr_worker import AsyncDiagramOcr
 from ..services.dictionary_service import DictionaryService
 from ..services.engine_service import (
     ENGINE_ENV_VAR,
@@ -37,14 +52,18 @@ from ..services.engine_service import (
 )
 from ..services.export_service import (
     build_book_pgn,
+    build_html,
     build_normalized_text,
     build_pgn,
     build_structural_json,
+    export_audit_text,
     game_file_name,
+    validate_pgn_headers,
     write_pgn,
 )
+from ..services.full_pdf_recognition_worker import AsyncFullPdfRecognition
 from ..services.parse_worker import SegmentAnalysis, build_games_for_export
-from ..services.preferences_service import Layout, load_preferences, save_preferences
+from ..services.preferences_service import LOCALE_NAME, Layout, load_preferences, save_preferences
 from ..services.project_service import (
     PROJECT_SUFFIX,
     Project,
@@ -57,22 +76,76 @@ from ..services.project_service import (
     save_project,
     write_recovery_snapshot,
 )
+from .book_import_dialog import BookImportDialog
 from .chess_panel import ChessPanel
 from .cleanup_dialog import CleanupDialog
+from .comment_editor_dialog import CommentEditorDialog
+from .diagram_queue_dialog import DiagramQueueDialog
+from .diagram_review_dialog import DiagramReviewDialog
 from .dictionary_dialog import DictionaryDialog
 from .editor_panel import EditorPanel
 from .games_panel import GamesPanel
 from .header_dialog import HeaderDialog
 from .issues_panel import IssuesPanel
+from .legal_move_dialog import LegalMoveDialog
 from .pdf_panel import PdfPanel
 from .preferences_dialog import PreferencesDialog
+from .qt_helpers import single_shot
+from .review_panel import ReviewPanel
+from .search_dialog import SearchDialog
 from .theme import apply_theme
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
 
 
+def _point_in_bbox(x: float, y: float, bbox: object, padding: float = 8.0) -> bool:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return False
+    left, top, right, bottom = (float(value) for value in bbox)
+    return left - padding <= x <= right + padding and top - padding <= y <= bottom + padding
+
+
+def _same_pdf(saved: object, current: Path) -> bool:
+    try:
+        saved_path = Path(str(saved)).resolve()
+        return saved_path == current.resolve() or saved_path.name.lower() == current.name.lower()
+    except (OSError, ValueError):
+        return False
+
+
+def _diagram_header_block(record: dict[str, object]) -> str:
+    """Formata uma posição de diagrama como partida PGN completa."""
+    pdf_name = Path(str(record.get("pdf_path", ""))).name or "PDF"
+    page = int(record.get("page", 0))
+    diagram = record.get("diagram", "?")
+    fen = str(record.get("fen", ""))
+    confidence = float(record.get("min_confidence", 0.0))
+    review = "1" if str(record.get("review", "pending")) == "pending" else "0"
+    return "\n".join(
+        [
+            '[Event "PDF Diagram OCR"]',
+            f'[Site "{pdf_name} - página {page}"]',
+            '[Date "????.??.??"]',
+            '[Round "?"]',
+            '[White "?"]',
+            '[Black "?"]',
+            '[Result "*"]',
+            '[SetUp "1"]',
+            f'[FEN "{fen}"]',
+            f'[DiagramOCR "{diagram}"]',
+            f'[DiagramOCRConfidence "{confidence:.4f}"]',
+            f'[DiagramOCRReview "{review}"]',
+        ]
+    )
+
+
 class MainWindow(QMainWindow):
+    # O inventário é auxiliar para auditoria e cria um dicionário por token.
+    # Fazer isso automaticamente em um livro de milhões de caracteres trava a
+    # interface e ainda consome centenas de MB; a análise PGN não depende dele.
+    MAX_AUTO_RECOGNITION_CHARS = 500_000
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PGN Live Editor for Chess PDF Text")
@@ -84,10 +157,13 @@ class MainWindow(QMainWindow):
         self._last_autosaved_text = ""
         # Motor de xadrez (fase 5): opcional, sob demanda, fora da thread de UI.
         self.engine_settings: EngineSettings = load_engine_settings()
-        self.dictionary_service = DictionaryService(locale=self.preferences.locale)
+        self.dictionary_service = DictionaryService(locale=self.preferences.effective_dictionary_locale)
         self.engine_scanner = EngineScanner(self)
+        self.diagram_ocr = AsyncDiagramOcr(self)
+        self.full_pdf_recognition = AsyncFullPdfRecognition(self)
         self._engine_findings: ScanFindings | None = None
         self._pending_engine_segment: tuple[str, int] = ("", 0)
+        self._pending_diagram_click: tuple[int, float, float] | None = None
         # Marcas de partida concluida e template do livro nao estao no texto
         # bruto -- sem isto elas sumiriam sem aviso ao fechar a janela.
         self._state_dirty = False
@@ -124,7 +200,11 @@ class MainWindow(QMainWindow):
         self.pdf_panel.setVisible(False)
 
         self.issues_panel = IssuesPanel()
-        self.vertical_splitter.addWidget(self.issues_panel)
+        self.review_panel = ReviewPanel()
+        self.review_tabs = QTabWidget()
+        self.review_tabs.addTab(self.issues_panel, "Alertas")
+        self.review_tabs.addTab(self.review_panel, "Fila de reconhecimento")
+        self.vertical_splitter.addWidget(self.review_tabs)
         self.vertical_splitter.setStretchFactor(0, 4)
         self.vertical_splitter.setStretchFactor(1, 1)
         self.vertical_splitter.setSizes([640, 180])
@@ -148,6 +228,8 @@ class MainWindow(QMainWindow):
 
         self.editor_panel.text_parsed_signal.connect(self._on_parsed)
         self.editor_panel.document_analyzed_signal.connect(self._on_document_analyzed)
+        self.editor_panel.status_message_signal.connect(self._report)
+        self.editor_panel.notation_locale_changed_signal.connect(self._on_notation_locale_changed)
         self.games_panel.game_selected_signal.connect(self.editor_panel.go_to_segment)
         self.games_panel.completion_toggled_signal.connect(self._on_completion_toggled)
         self.games_panel.analyze_book_requested_signal.connect(self._analyze_book)
@@ -158,9 +240,27 @@ class MainWindow(QMainWindow):
         self.issues_panel.ignore_requested_signal.connect(self._ignore_issue)
         self.issues_panel.learn_requested_signal.connect(self._learn_issue)
         self.issues_panel.comment_requested_signal.connect(self._comment_issue)
+        self.review_panel.record_selected_signal.connect(self._focus_review_record)
+        self.review_panel.accept_requested_signal.connect(self._accept_review_records)
+        self.review_panel.reject_rule_requested_signal.connect(self._reject_review_rule)
+        self.review_panel.comment_requested_signal.connect(self._comment_review_records)
+        self.chess_panel.outline_panel.line_selected_signal.connect(self.editor_panel.focus_span)
         self.pdf_panel.text_requested_signal.connect(self._insert_from_pdf)
+        self.pdf_panel.range_status_signal.connect(self._report)
+        self.pdf_panel.book_text_requested_signal.connect(self._convert_from_pdf)
         self.pdf_panel.page_changed_signal.connect(self._on_pdf_page_changed)
         self.pdf_panel.document_opened_signal.connect(self._on_pdf_opened)
+        self.pdf_panel.diagram_ocr_requested_signal.connect(self._read_diagrams_from_pdf)
+        self.pdf_panel.full_pdf_recognition_requested_signal.connect(self._recognize_full_pdf)
+        self.pdf_panel.full_pdf_recognition_cancel_requested_signal.connect(self._cancel_full_pdf_recognition)
+        self.pdf_panel.diagram_ocr_cancel_requested_signal.connect(self._cancel_diagram_ocr)
+        self.pdf_panel.diagram_review_queue_requested_signal.connect(self._review_diagram_queue)
+        self.pdf_panel.diagram_clicked_signal.connect(self._on_diagram_clicked)
+        self.diagram_ocr.finished_signal.connect(self._on_diagrams_read)
+        self.full_pdf_recognition.finished_signal.connect(self._on_full_pdf_recognized)
+        self.full_pdf_recognition.failed_signal.connect(self._on_full_pdf_recognition_failed)
+        self.full_pdf_recognition.progress_signal.connect(self._on_full_pdf_progress)
+        self.diagram_ocr.failed_signal.connect(self._on_diagram_ocr_failed)
         self.engine_scanner.finished_signal.connect(self._on_engine_scan_finished)
         self.engine_scanner.failed_signal.connect(self._on_engine_scan_failed)
 
@@ -174,7 +274,9 @@ class MainWindow(QMainWindow):
         self._apply_preferences()
         self._restore_layout()
         self._update_window_title()
-        QTimer.singleShot(0, self._offer_session_recovery)
+        # Com dono: uma janela ja destruida nao pode abrir dialogo de
+        # recuperacao. Ver `qt_helpers.single_shot`.
+        single_shot(self, 0, self._offer_session_recovery)
 
     # ------------------------------------------------------------------
     # Menu
@@ -200,6 +302,10 @@ class MainWindow(QMainWindow):
         self._add_action(file_menu, "Exportar uma partida por arquivo...", None, self.export_games_separately)
         self._add_action(file_menu, "Exportar análise em .json...", None, self.export_structural_json)
         self._add_action(file_menu, "Exportar texto normalizado em .txt...", None, self.export_normalized_text)
+        self._add_action(file_menu, "Exportar HTML navegável...", None, self.export_html)
+        self._add_action(file_menu, "Exportar diagrama da posição atual...", "Ctrl+Alt+G", self._export_current_diagram)
+        self._add_action(file_menu, "Comparar com outro projeto...", None, self._compare_with_project)
+        self._add_action(file_menu, "Salvar comparação de projetos...", None, self._save_project_comparison)
 
         file_menu.addSeparator()
         file_menu.addSeparator()
@@ -214,6 +320,8 @@ class MainWindow(QMainWindow):
         self._add_action(book_menu, "Cabeçalhos da partida...", "Ctrl+H", self.edit_headers)
         self._add_action(book_menu, "Marcar como concluida", "Ctrl+Shift+D", self.games_panel.toggle_current_completion)
         self._add_action(book_menu, "Analisar o livro inteiro", None, self._analyze_book)
+        self._add_action(book_menu, "Relatório de qualidade", None, self._show_quality_report)
+        self._add_action(book_menu, "Salvar relatório de qualidade...", None, self._save_quality_report)
         book_menu.addSeparator()
         self._add_action(book_menu, "Usar a posição do tabuleiro como inicial", None, self._set_start_fen_from_board)
         self._add_action(book_menu, "Converter marcadores de diagrama", None, self._normalize_diagrams)
@@ -221,6 +329,9 @@ class MainWindow(QMainWindow):
         self._add_action(book_menu, "Mostrar/ocultar lista de partidas", "F10", self._toggle_games_panel)
         book_menu.addSeparator()
         self._add_action(book_menu, "Abrir o PDF do livro...", None, self.pdf_panel.choose_pdf)
+        self._add_action(book_menu, "Ler todos os diagramas da página", "Ctrl+Alt+O", self._read_diagrams_from_pdf)
+        self._add_action(book_menu, "Reconhecer PDF inteiro", "Ctrl+Alt+Shift+O", self._recognize_full_pdf)
+        self._add_action(book_menu, "Revisar pendências de diagramas", None, self._review_diagram_queue)
         self._add_action(book_menu, "Mostrar/ocultar o PDF", "F11", self._toggle_pdf_panel)
 
         structure_menu = self.menuBar().addMenu("&Estrutura")
@@ -228,6 +339,23 @@ class MainWindow(QMainWindow):
         self._add_action(structure_menu, "Envolver em variante", "Ctrl+9", self._wrap_variation)
         self._add_action(structure_menu, "Desenvolver (tirar delimitador)", "Ctrl+Shift+K", self._unwrap)
         self._add_action(structure_menu, "Parágrafo vira comentário", "Ctrl+Shift+C", self._paragraph_to_comment)
+        self._add_action(structure_menu, "Editar comentário do lance atual", "Ctrl+Alt+E", self._edit_current_comment)
+        structure_menu.addSeparator()
+        self._add_action(
+            structure_menu,
+            "Colar comentário antes do lance",
+            "Ctrl+Alt+A",
+            lambda: self._paste_comment(before=True),
+        )
+        self._add_action(
+            structure_menu,
+            "Colar comentário depois do lance",
+            "Ctrl+Alt+D",
+            lambda: self._paste_comment(before=False),
+        )
+        structure_menu.addSeparator()
+        self._add_action(structure_menu, "Dispor em árvore de variantes", "Ctrl+T", self._indent_variations)
+        self._add_action(structure_menu, "Voltar a texto corrido", "Ctrl+Shift+T", self._flatten_variations)
         structure_menu.addSeparator()
         self._add_action(structure_menu, "Renumerar documento", "Ctrl+R", self._renumber)
         self._add_action(structure_menu, "Promover variante", "Ctrl+Shift+Up", self._promote_variation)
@@ -236,8 +364,15 @@ class MainWindow(QMainWindow):
         self._add_action(structure_menu, "Descer a variante", "Alt+Down", lambda: self._move_variation(1))
         self._add_action(structure_menu, "Reancorar a variante aqui", "Ctrl+Shift+A", self._reanchor_variation)
         structure_menu.addSeparator()
+        self._add_action(structure_menu, "Converter texto de livro...", "Ctrl+Shift+L", self._convert_book_text)
         self._add_action(structure_menu, "Limpar texto colado...", "Ctrl+Shift+V", self._clean_paste)
         self._add_action(structure_menu, "Conferir delimitadores", "Ctrl+Shift+B", self._check_balance)
+        self._add_action(structure_menu, "Buscar no documento...", "Ctrl+Shift+F", self._search_document)
+        structure_menu.addSeparator()
+        self._add_action(structure_menu, "Árvore do PGN no editor", "F5", self._toggle_pgn_tree)
+        self._add_action(structure_menu, "Árvore de variantes (ao lado do tabuleiro)", "F7", self._show_outline)
+        self._add_action(structure_menu, "Copiar a árvore indentada", None, self._copy_outline)
+        self._add_action(structure_menu, "Mostrar/ocultar o rodapé de símbolos", "F6", self._toggle_nag_bar)
 
         copy_menu = self.menuBar().addMenu("&Copiar")
         for copy_format in COPY_FORMATS:
@@ -266,10 +401,15 @@ class MainWindow(QMainWindow):
         review_menu.addSeparator()
         self._add_action(review_menu, "Conferir a partida com o motor", "Ctrl+E", self._scan_with_engine)
         self._add_action(review_menu, "Motor de xadrez...", None, self._configure_engine)
+        help_menu = self.menuBar().addMenu("&Ajuda")
+        self._add_action(help_menu, "Copiar diagnóstico", None, self._copy_diagnostic)
+        self._add_action(help_menu, "Salvar diagnóstico...", None, self._save_diagnostic)
+        self._add_action(review_menu, "Fila de revisão de diagramas...", "Ctrl+Alt+R", self._review_diagram_queue)
         review_menu.addSeparator()
         self._add_action(review_menu, "Dicionário de OCR...", "Ctrl+Shift+I", self.edit_dictionary)
         review_menu.addSeparator()
         self._add_action(review_menu, "Mostrar/ocultar alertas", "F9", self._toggle_issues_panel)
+        self._add_action(review_menu, "Fila de reconhecimento", "F10", self._show_review_queue)
         self.action_review_mode = self._add_action(
             review_menu, "Dupla visao: so o que foi mexido", "F12", self._toggle_review_mode
         )
@@ -331,6 +471,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return
         self.project = Project()
+        # O idioma em uso continua: quem abre um projeto novo no meio de um livro
+        # espanhol esta, quase sempre, no mesmo livro.
+        self.project.meta.notation_locale = self.editor_panel.locale
         self.dictionary_service.set_project(self.project.dictionary)
         self.editor_panel.set_dictionary(self.dictionary_service.merged())
         self.editor_panel.load_document_text("")
@@ -361,10 +504,10 @@ class MainWindow(QMainWindow):
             return
 
         self.project = project
-        self.dictionary_service.set_locale(project.meta.locale)
+        self.dictionary_service.set_locale(project.meta.dictionary_locale)
         self.dictionary_service.set_project(project.dictionary)
         self.editor_panel.configure_recognition(
-            locale=project.meta.locale,
+            locale=project.meta.notation_locale,
             dictionary=self.dictionary_service.merged(),
             ignored_tokens=project.state.ignored_issue_tokens,
         )
@@ -391,6 +534,13 @@ class MainWindow(QMainWindow):
         if problem:
             self._report(problem)
             return
+        if project.state.pdf_sha256:
+            try:
+                current_hash = hashlib.sha256(Path(target).read_bytes()).hexdigest()
+            except OSError:
+                current_hash = ""
+            if current_hash and current_hash != project.state.pdf_sha256:
+                self._report("Aviso: o PDF associado foi alterado desde o último salvamento.")
         self.pdf_panel.setVisible(True)
 
     def save_project(self) -> bool:
@@ -416,6 +566,9 @@ class MainWindow(QMainWindow):
 
     def _write_project(self, path: Path) -> bool:
         self.project.raw_text = self.editor_panel.document_text()
+        # O idioma gravado e o que esta analisando o texto agora, e nao o padrao
+        # com que o projeto nasceu -- senao reabrir o `.plez` trocava o idioma.
+        self.project.meta.notation_locale = self.editor_panel.locale
         self.project.state.cursor_position = self.editor_panel.cursor_position()
 
         try:
@@ -427,6 +580,7 @@ class MainWindow(QMainWindow):
         self._last_autosaved_text = self.project.raw_text
         self._chars_since_autosave = 0
         self._state_dirty = False
+        self.editor_panel.text_edit.document().setModified(False)
         clear_recovery_snapshot()
         remember_recent_file(saved_path)
         self._rebuild_recent_menu()
@@ -456,6 +610,7 @@ class MainWindow(QMainWindow):
 
         self.project = Project()
         self.project.meta.title = path.stem
+        self.project.meta.notation_locale = self.editor_panel.locale
         self.games_panel.set_completed([])
         self.editor_panel.load_document_text(text)
         self._last_autosaved_text = ""
@@ -467,6 +622,93 @@ class MainWindow(QMainWindow):
     # Revisao de alertas
     # ------------------------------------------------------------------
 
+    def _set_recognition_action(self, issue, action: str, decision: str = "") -> None:
+        """Persist a human decision for the exact token, when it is known."""
+        start, end = int(issue.raw_start), int(issue.raw_end)
+        changed = False
+        for record in self.project.state.recognition_records:
+            source = record.get("source", {})
+            if not isinstance(source, dict):
+                continue
+            if source.get("start") == start and source.get("end") == end and record.get("raw_text") == issue.raw_text:
+                record["action"] = action
+                record["decided_at"] = time.time()
+                if decision:
+                    record["decision"] = decision
+                changed = True
+                break
+        if changed:
+            self._state_dirty = True
+            self.review_panel.set_records(self.project.state.recognition_records)
+
+    def _show_review_queue(self):
+        self.review_tabs.setCurrentWidget(self.review_panel)
+        self.review_tabs.setVisible(True)
+        self.review_panel.table.setFocus()
+
+    def _focus_review_record(self, record: dict):
+        source = record.get("source", {})
+        if not isinstance(source, dict):
+            return
+        start = int(source.get("start", -1))
+        end = int(source.get("end", start))
+        if start >= 0 and end > start:
+            self.editor_panel.focus_span(start, end)
+        page = source.get("page")
+        pdf_path = source.get("pdf_path") or self.project.state.pdf_path
+        if page is not None:
+            if not self.pdf_panel.has_document() and pdf_path:
+                problem = self.pdf_panel.open_pdf(Path(str(pdf_path)), max(0, int(page) - 1))
+                if problem:
+                    self._report(problem)
+            elif self.pdf_panel.has_document():
+                self.pdf_panel.go_to_page(max(0, int(page) - 1))
+            if self.pdf_panel.has_document():
+                self.pdf_panel.setVisible(True)
+
+    @staticmethod
+    def _review_ids(records: list[dict]) -> set[str]:
+        return {str(record.get("source_id", record.get("id", ""))) for record in records}
+
+    def _accept_review_records(self, records: list[dict]):
+        ids = self._review_ids(records)
+        if not ids or accept_identical(self.project.state.recognition_records, ids) == 0:
+            self._report("Aceitação em lote cancelada: as propostas não são idênticas.")
+            return
+        edits = []
+        for record in records:
+            source = record.get("source", {})
+            replacement = str(record.get("decision") or record.get("normalized_text", ""))
+            if isinstance(source, dict) and int(source.get("end", 0)) > int(source.get("start", 0)):
+                edits.append(TextEdit(int(source["start"]), int(source["end"]), replacement))
+        self.editor_panel.apply_operation(OperationResult(edits, "Correções idênticas aceitas."))
+        self._state_dirty = True
+        self.review_panel.set_records(self.project.state.recognition_records)
+
+    def _reject_review_rule(self, rule_id: str):
+        changed = reject_rule(self.project.state.recognition_records, rule_id)
+        if changed:
+            self._state_dirty = True
+            self.review_panel.set_records(self.project.state.recognition_records)
+            self._report(f"{changed} proposta(s) da regra '{rule_id}' rejeitada(s).")
+
+    def _comment_review_records(self, records: list[dict]):
+        ids = self._review_ids(records)
+        changed = apply_batch_action(self.project.state.recognition_records, ids, "commented")
+        edits = []
+        for record in records:
+            source = record.get("source", {})
+            if isinstance(source, dict):
+                start, end = int(source.get("start", -1)), int(source.get("end", -1))
+                if 0 <= start < end:
+                    text = self.editor_panel.document_text()[start:end]
+                    edits.append(TextEdit(start, end, "{" + text + "}"))
+        if edits:
+            self.editor_panel.apply_operation(OperationResult(edits, "Itens transformados em comentário."))
+        if changed:
+            self._state_dirty = True
+            self.review_panel.set_records(self.project.state.recognition_records)
+
     def _on_parsed(self, ast):
         self.issues_panel.set_issues(ast.issues + self._live_engine_issues())
         self.chess_panel.start_fen = self.editor_panel.current_start_fen
@@ -476,12 +718,39 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_document_analyzed(self, analysis):
+        if len(analysis.raw_text) > self.MAX_AUTO_RECOGNITION_CHARS:
+            # Registros antigos não podem ser associados silenciosamente ao
+            # texto novo. Para livros grandes, a fonte de verdade continua
+            # sendo o PGN e o inventário fica vazio até existir uma ação
+            # explícita para gerá-lo.
+            self.project.state.recognition_records = []
+        else:
+            fresh_records = build_recognition_records(analysis.raw_text)
+            self.project.state.recognition_records = reconcile_records(
+                fresh_records, self.project.state.recognition_records
+            )
+            self._enrich_recognition_records(self.project.state.recognition_records, analysis)
+        self.review_panel.set_records(self.project.state.recognition_records)
         self.games_panel.set_completed(self.project.state.completed_games)
         self.games_panel.set_summaries(analysis.summaries(), analysis.active_index)
         # A lista so aparece quando ha livro: uma partida sozinha nao precisa dela.
         self.games_panel.setVisible(analysis.game_count > 1)
         self._update_book_status(analysis)
         self._update_touch_status()
+
+    def _enrich_recognition_records(self, records: list[dict], analysis) -> None:
+        """Attach stable book/PDF provenance without putting it in token IDs."""
+        for record in records:
+            source = record.get("source", {})
+            if not isinstance(source, dict):
+                continue
+            start = int(source.get("start", -1))
+            segment = analysis.segment_at(start) if start >= 0 else None
+            if segment is not None:
+                record["game"] = segment.index
+            if self.project.state.pdf_path:
+                source["page"] = self.project.state.pdf_page + 1
+                source["pdf_path"] = self.project.state.pdf_path
 
     def _update_book_status(self, analysis):
         moves = len(list(iter_moves(analysis.ast.moves)))
@@ -545,9 +814,254 @@ class MainWindow(QMainWindow):
 
     def _on_pdf_opened(self, path: str):
         self.project.state.pdf_path = path
+        try:
+            self.project.state.pdf_sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except OSError:
+            self.project.state.pdf_sha256 = ""
         self._state_dirty = True
         self.pdf_panel.setVisible(True)
         self._update_window_title()
+
+    def _read_diagrams_from_pdf(self):
+        """Lê os diagramas da página atual e insere posições FEN no documento.
+
+        O reconhecimento é deliberadamente explícito nesta primeira integração:
+        não altera o texto sem a solicitação do usuário. O adapter mantém o
+        OCR pesado opcional; quando indisponível, a mensagem explica como ativá-lo.
+        """
+        pdf_path = self.pdf_panel.path
+        if pdf_path is None:
+            self._report("Abra um PDF antes de ler os diagramas.")
+            return
+
+        self.pdf_panel.btn_ocr.setEnabled(False)
+        self.pdf_panel.btn_cancel_ocr.setVisible(True)
+        self._report("Lendo diagramas da página em segundo plano…")
+        self.diagram_ocr.request(pdf_path, self.pdf_panel.current_page())
+
+    def _recognize_full_pdf(self):
+        pdf_path = self.pdf_panel.path
+        if pdf_path is None:
+            self._report("Abra um PDF antes de reconhecer o documento inteiro.")
+            return
+        self.pdf_panel.btn_full_recognition.setEnabled(False)
+        self.pdf_panel.btn_ocr.setEnabled(False)
+        self.pdf_panel.btn_cancel_full_recognition.setVisible(True)
+        self.pdf_panel.set_full_progress(0, 1, 0)
+        self._report("Reconhecendo texto e diagramas do PDF inteiro em segundo plano…")
+        start_page, end_page = self.pdf_panel.recognition_range()
+        self.full_pdf_recognition.request(pdf_path, start_page=start_page, end_page=end_page)
+
+    def _cancel_full_pdf_recognition(self):
+        self.full_pdf_recognition.cancel()
+        self.pdf_panel.btn_full_recognition.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_cancel_full_recognition.setVisible(False)
+        self.pdf_panel.clear_full_progress()
+        self._report("Reconhecimento integral cancelado. O resultado parcial não foi aplicado.")
+
+    def _on_full_pdf_recognized(self, pages: list[dict[str, object]]):
+        try:
+            blocks: list[str] = []
+            total_diagrams = 0
+            pending = 0
+            pdf_path = self.pdf_panel.path
+            for page in pages:
+                page_number = int(page.get("page", 0))
+                blocks.append(f"{{ PDF página {page_number} }}")
+                text = str(page.get("text", "")).strip()
+                if text:
+                    blocks.append(text)
+                elif str(page.get("text_method", "")) == "no-text-layer":
+                    blocks.append("{ OCR de texto necessário nesta página: não há camada de texto no PDF. }")
+                ocr_error = str(page.get("ocr_error", "")).strip()
+                if ocr_error:
+                    blocks.append(f"{{ OCR de diagramas indisponível nesta página: {ocr_error} }}")
+                for record in page.get("diagrams", []):
+                    if not isinstance(record, dict):
+                        continue
+                    upsert_record(self.project.state.diagram_records, record)
+                    total_diagrams += 1
+                    needs_review = str(record.get("review", "pending")) == "pending"
+                    pending += int(needs_review)
+                    review = " revisão necessária" if needs_review else ""
+                    blocks.append(
+                        "{ Diagrama OCR "
+                        f"{record.get('diagram', '')}: confiança {float(record.get('min_confidence', 0)):.1%}"
+                        f"{review} | origem: página {page_number} }}"
+                    )
+                    blocks.append(_diagram_header_block(record))
+                blocks.append("")
+
+            self.editor_panel.load_document_text("\n".join(blocks).strip())
+            if pdf_path is not None:
+                self.project.state.pdf_path = str(pdf_path)
+            self._state_dirty = True
+            suffix = f", {pending} pendente(s) de revisão" if pending else ""
+            failed_pages = sum(bool(str(page.get("ocr_error", "")).strip()) for page in pages)
+            failure_suffix = f", {failed_pages} página(s) com falha de OCR" if failed_pages else ""
+            self._report(
+                f"PDF inteiro carregado: {len(pages)} página(s), {total_diagrams} diagrama(s){suffix}{failure_suffix}."
+            )
+        finally:
+            self.pdf_panel.btn_full_recognition.setEnabled(self.pdf_panel.has_document())
+            self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+            self.pdf_panel.btn_cancel_full_recognition.setVisible(False)
+            self.pdf_panel.clear_full_progress()
+
+    def _on_full_pdf_progress(self, page: int, total: int, diagrams: int):
+        self.pdf_panel.set_full_progress(page, total, diagrams)
+        self.statusBar().showMessage(
+            f"Reconhecendo PDF: página {page}/{total} ({page * 100 // max(1, total)}%) — "
+            f"{diagrams} diagrama(s) encontrados até agora…"
+        )
+
+    def _on_full_pdf_recognition_failed(self, message: str):
+        self.pdf_panel.btn_full_recognition.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_cancel_full_recognition.setVisible(False)
+        self.pdf_panel.clear_full_progress()
+        QMessageBox.warning(self, "Reconhecimento integral indisponível", message)
+
+    def _on_diagram_clicked(self, page: int, x: float, y: float):
+        """Abre no tabuleiro o diagrama sob o duplo clique."""
+        path = self.pdf_panel.path
+        if path is None:
+            return
+        page_records = [
+            record
+            for record in self.project.state.diagram_records
+            if _same_pdf(record.get("pdf_path", ""), path) and int(record.get("page", 0)) == page + 1
+        ]
+        matching = [record for record in page_records if _point_in_bbox(x, y, record.get("bbox_pdf"))]
+        if matching:
+            self._open_diagram_record(matching[0])
+            return
+        # Em páginas com um único diagrama, o reconhecimento já persistido é
+        # inequívoco. Isso também cobre pequenos deslocamentos do viewport Qt.
+        if len(page_records) == 1:
+            self._open_diagram_record(page_records[0])
+            return
+        self._pending_diagram_click = (page, x, y)
+        self._read_diagrams_from_pdf()
+
+    def _open_diagram_record(self, record: dict[str, object]):
+        fen = str(record.get("fen", ""))
+        if not fen:
+            return
+        if str(record.get("review", "pending")) == "pending" or not bool(record.get("is_legal", True)):
+            dialog = DiagramReviewDialog(
+                fen,
+                uncertain_squares=tuple(record.get("uncertain_squares", [])),
+                title=f"Revisar diagrama {record.get('diagram', '')}",
+                parent=self,
+            )
+            if dialog.exec() != DiagramReviewDialog.DialogCode.Accepted:
+                return
+            placement, fen, legal, problems = dialog.result_data()
+            record.update(
+                placement=placement,
+                fen=fen,
+                side_to_move=fen.split()[1],
+                is_legal=legal,
+                problems=list(problems),
+                uncertain_squares=[],
+                review="accepted" if legal else "pending",
+            )
+            self._state_dirty = True
+        # Grava a posição no cabeçalho PGN da partida sob o foco. Assim o
+        # parser não perde a posição na próxima análise ou edição do texto.
+        self._report(self.editor_panel.action_set_start_fen(fen))
+        self.chess_panel.show_fen_position(fen)
+        self._report(f"Diagrama {record.get('diagram', '')} aberto no tabuleiro.")
+
+    def _on_diagrams_read(self, payload):
+        page_index, results = payload
+        try:
+            if not results:
+                self._pending_diagram_click = None
+                self._report(f"Nenhum diagrama reconhecido na página {page_index + 1}.")
+                return
+
+            if self._pending_diagram_click is not None:
+                pending_page, x, y = self._pending_diagram_click
+                self._pending_diagram_click = None
+                if pending_page == page_index:
+                    clicked = next((item for item in results if _point_in_bbox(x, y, item.bbox_pdf)), None)
+                    if clicked is not None:
+                        record = clicked.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1)
+                        upsert_record(self.project.state.diagram_records, record)
+                        self._open_diagram_record(record)
+                        return
+                self._pending_diagram_click = None
+                self._report("Nenhum diagrama foi detectado exatamente no ponto clicado.")
+                return
+
+            blocks = []
+            for result in results:
+                if result.needs_review:
+                    dialog = DiagramReviewDialog(
+                        result.fen,
+                        uncertain_squares=result.uncertain_squares,
+                        title=f"Revisar diagrama {result.index}",
+                        parent=self,
+                    )
+                    if dialog.exec() == DiagramReviewDialog.DialogCode.Accepted:
+                        placement, fen, is_legal, problems = dialog.result_data()
+                        result = replace(
+                            result,
+                            placement=placement,
+                            fen=fen,
+                            side_to_move=fen.split()[1],
+                            is_legal=is_legal,
+                            problems=problems,
+                            uncertain_squares=(),
+                            orientation_ambiguous=False,
+                        )
+                upsert_record(
+                    self.project.state.diagram_records,
+                    result.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1),
+                )
+                review = " revisão necessária" if result.needs_review else ""
+                blocks.append(
+                    "{ Diagrama OCR "
+                    f"{result.index}: confiança {result.min_confidence:.1%}{review} "
+                    f"| problemas: {', '.join(result.problems) or 'nenhum'} "
+                    f"| origem: página {page_index + 1} }}\n"
+                    + _diagram_header_block(result.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1))
+                    + "\n"
+                )
+            self.editor_panel.insert_text_at_cursor("\n".join(blocks))
+            self._state_dirty = True
+            pendentes = sum(result.needs_review for result in results)
+            suffix = f", {pendentes} pendente(s) de revisão" if pendentes else ""
+            self._report(f"{len(results)} diagrama(s) convertido(s) em FEN{suffix}.")
+        finally:
+            self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+            self.pdf_panel.btn_cancel_ocr.setVisible(False)
+
+    def _cancel_diagram_ocr(self):
+        self.diagram_ocr.cancel()
+        self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_cancel_ocr.setVisible(False)
+        self._report("Leitura de diagramas cancelada.")
+
+    def _on_diagram_ocr_failed(self, message: str):
+        self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
+        self.pdf_panel.btn_cancel_ocr.setVisible(False)
+        QMessageBox.warning(self, "OCR de diagramas indisponível", message)
+
+    def _review_diagram_queue(self):
+        dialog = DiagramQueueDialog(self.project.state.diagram_records, self)
+        dialog.page_requested_signal.connect(self.pdf_panel.go_to_page)
+        dialog.fen_requested_signal.connect(self._apply_diagram_fen)
+        dialog.exec()
+        self._state_dirty = True
+        self._report("Fila de revisão atualizada.")
+
+    def _apply_diagram_fen(self, fen: str):
+        """Aplica uma FEN da fila à partida sob o cursor, sem alterar a origem."""
+        self._report(self.editor_panel.action_set_start_fen(fen))
 
     def _set_start_fen_from_board(self):
         self._report(self.editor_panel.action_set_start_fen(self.chess_panel.board.fen()))
@@ -583,6 +1097,109 @@ class MainWindow(QMainWindow):
         if message:
             self.statusBar().showMessage(message, 5000)
 
+    def _show_quality_report(self):
+        analyses = self._book_analyses()
+        findings = validate_book((index, analysis.ast) for index, analysis in enumerate(analyses))
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Qualidade do livro")
+        dialog.setText(format_quality_report(findings))
+        dialog.setDetailedText("\n".join(f"{item.code}: {item.message}" for item in findings))
+        dialog.exec()
+
+    def _save_quality_report(self):
+        analyses = self._book_analyses()
+        findings = validate_book((index, analysis.ast) for index, analysis in enumerate(analyses))
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Salvar relatório de qualidade",
+            str(Path.cwd() / f"{self.project.display_name}_qualidade.txt"),
+            "Relatório de texto (*.txt);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        output_path = Path(file_path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".txt")
+        try:
+            output_path.write_text(format_quality_report(findings) + "\n", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Relatório de qualidade", f"Não foi possível gravar o arquivo.\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Relatório de qualidade gravado em {output_path}", 8000)
+
+    def _build_project_comparison(self):
+        file_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Comparar com projeto",
+            str(Path.cwd()),
+            f"Projetos do PGN Live Editor (*{PROJECT_SUFFIX});;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        try:
+            other = load_project(Path(file_path))
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Comparar projetos", f"Não foi possível abrir o projeto.\n\n{exc}")
+            return None
+        current = Project(
+            raw_text=self.editor_panel.document_text(),
+            meta=self.project.meta,
+            header_template=self.project.header_template,
+            dictionary=self.project.dictionary,
+            state=self.project.state,
+        )
+        return compare_projects(other, current)
+
+    def _compare_with_project(self):
+        diff = self._build_project_comparison()
+        if diff is not None:
+            QMessageBox.information(self, "Comparar projetos", format_project_diff(diff))
+
+    def _save_project_comparison(self):
+        diff = self._build_project_comparison()
+        if diff is None:
+            return
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Salvar comparação de projetos",
+            str(Path.cwd() / f"{self.project.display_name}_comparacao.txt"),
+            "Relatório de texto (*.txt);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        output_path = Path(file_path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".txt")
+        try:
+            output_path.write_text(format_project_diff(diff) + "\n", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Comparar projetos", f"Não foi possível gravar o arquivo.\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Comparação gravada em {output_path}", 8000)
+
+    def _diagnostic_text(self) -> str:
+        return build_diagnostic_report(project_path=self.project.path, pdf_path=self.pdf_panel.path)
+
+    def _copy_diagnostic(self):
+        QApplication.clipboard().setText(self._diagnostic_text())
+        self._report("Diagnóstico copiado sem incluir o texto do documento.")
+
+    def _save_diagnostic(self):
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Salvar diagnóstico",
+            str(Path.cwd() / "pgn-live-editor-diagnostic.txt"),
+            "Arquivo de texto (*.txt);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        try:
+            Path(file_path).write_text(self._diagnostic_text(), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Diagnóstico", f"Não foi possível salvar o diagnóstico.\n\n{exc}")
+            return
+        self._report(f"Diagnóstico salvo em {Path(file_path).name}.")
+
     def _wrap_comment(self):
         self._report(self.editor_panel.action_wrap_comment())
 
@@ -594,6 +1211,60 @@ class MainWindow(QMainWindow):
 
     def _paragraph_to_comment(self):
         self._report(self.editor_panel.action_paragraph_to_comment())
+
+    def _paste_comment(self, before: bool):
+        """A prosa da area de transferencia vira comentario do lance escolhido.
+
+        O lance e o da arvore do PGN, quando ha um selecionado ali, e o do
+        cursor quando nao ha -- os dois andam juntos, porque a arvore segue o
+        cursor e clicar nela move o cursor.
+        """
+        self._report(self.editor_panel.action_paste_comment(before, self.editor_panel.pgn_tree.selected_node_id()))
+
+    def _edit_current_comment(self):
+        """Edita o comentário do lance selecionado, preservando NAGs e setas."""
+        entry = self.chess_panel.current_entry()
+        if entry is None:
+            self._report("Selecione um lance no tabuleiro ou na árvore primeiro.")
+            return
+        from ..core.annotations import strip_annotations
+
+        current = " ".join(entry.node.comments_after)
+        dialog = CommentEditorDialog(strip_annotations(current), self.chess_panel.current_annotations(), self)
+        if dialog.exec() != CommentEditorDialog.DialogCode.Accepted:
+            return
+        result = insert_comment(self.editor_panel.document_text(), entry.node, dialog.comment_text(), before=False)
+        self._report(self.editor_panel.apply_operation(result) or result.message)
+
+    def _export_current_diagram(self):
+        board = self.chess_panel.board.copy(stack=False)
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Exportar diagrama",
+            str(Path.cwd() / "diagrama.svg"),
+            "SVG (*.svg);;PNG (*.png)",
+        )
+        if not file_path:
+            return
+        target = Path(file_path)
+        if not target.suffix:
+            target = target.with_suffix(".png" if "PNG" in selected_filter else ".svg")
+        svg = render_diagram_svg(
+            board,
+            arrows=self.chess_panel.current_annotations().arrows,
+            squares=self.chess_panel.current_annotations().squares,
+            orientation=chess.BLACK if self.chess_panel.board_flipped else chess.WHITE,
+            lastmove=self.chess_panel.current_last_move,
+        )
+        try:
+            if target.suffix.lower() == ".png":
+                write_png(target, svg)
+            else:
+                write_svg(target, svg)
+        except (OSError, RuntimeError) as exc:
+            QMessageBox.critical(self, "Exportar diagrama", f"Não foi possível exportar o diagrama.\n\n{exc}")
+            return
+        self._report(f"Diagrama exportado para {target.name}.")
 
     def _renumber(self):
         self._report(self.editor_panel.action_renumber())
@@ -679,12 +1350,67 @@ class MainWindow(QMainWindow):
         self._report(self.editor_panel.apply_operation(result) or result.message)
 
     def _suggest_legal_move(self):
-        """Ctrl+Espaco: o que e legal aqui, quando o livro esta ilegivel."""
+        """Ctrl+Espaço: sugere e pode inserir um lance legal no cursor."""
         suggestions = self.editor_panel.legal_move_suggestions()
         if not suggestions:
             self._report("Não da para saber a posição neste ponto do texto.")
             return
-        self._report("Legais aqui: " + ", ".join(suggestions))
+        dialog = LegalMoveDialog(suggestions, self)
+        if dialog.exec() != LegalMoveDialog.DialogCode.Accepted:
+            return
+        san = dialog.selected_move()
+        board = self.editor_panel.board_at_cursor()
+        if not san or board is None:
+            return
+        self.editor_panel.insert_board_move(san, board.turn, board.fullmove_number)
+        self._report(f"Lance {san} inserido no ponto do cursor.")
+
+    def _indent_variations(self):
+        self._report(self.editor_panel.action_indent_variations())
+
+    def _flatten_variations(self):
+        self._report(self.editor_panel.action_flatten_variations())
+
+    def _toggle_pgn_tree(self):
+        visible = self.editor_panel.toggle_pgn_tree()
+        self._report("Árvore do PGN visível." if visible else "Árvore do PGN oculta.")
+
+    def _show_outline(self):
+        self.chess_panel.show_outline()
+
+    def _copy_outline(self):
+        text = self.chess_panel.outline_panel.copy_outline()
+        self._report(f"Árvore copiada ({len(text.splitlines())} linha(s))." if text else "Não ha árvore para copiar.")
+
+    def _toggle_nag_bar(self):
+        visible = self.editor_panel.toggle_nag_bar()
+        self._report("Rodapé de símbolos visível." if visible else "Rodapé de símbolos oculto.")
+
+    def _convert_book_text(self):
+        """Ctrl+Shift+L -- converte a selecao, ou o documento inteiro."""
+        cursor = self.editor_panel.text_edit.textCursor()
+        source = (
+            cursor.selectedText().replace(" ", "\n") if cursor.hasSelection() else self.editor_panel.document_text()
+        )
+        if not source.strip():
+            self._report("Não ha texto para converter.")
+            return
+
+        dialog = BookImportDialog(source, self)
+        if dialog.exec() != BookImportDialog.DialogCode.Accepted:
+            return
+
+        self._report(self.editor_panel.action_convert_book_text(dialog.options(), dialog.converted_text()))
+
+    def _convert_from_pdf(self, text: str):
+        """A pagina do PDF ja convertida, com a previa antes de entrar."""
+        dialog = BookImportDialog(text, self)
+        if dialog.exec() != BookImportDialog.DialogCode.Accepted:
+            return
+
+        converted = dialog.converted_text()
+        if converted:
+            self._insert_from_pdf(converted)
 
     def _clean_paste(self):
         text = self.editor_panel.document_text()
@@ -726,28 +1452,35 @@ class MainWindow(QMainWindow):
         if dialog.exec() != PreferencesDialog.DialogCode.Accepted:
             return
 
+        previous_locale = self.preferences.effective_notation_locale
         self.preferences = dialog.values()
         save_preferences(self.preferences)
-        self._apply_preferences()
+        # Mudar o tema nao pode trocar o idioma do livro aberto: a preferencia de
+        # idioma so vale para o documento quando foi ela que mudou.
+        self._apply_preferences(apply_notation_locale=self.preferences.effective_notation_locale != previous_locale)
         self._report("Preferencias gravadas.")
 
-    def _apply_preferences(self):
+    def _apply_preferences(self, apply_notation_locale: bool = True):
         """Poe as preferencias em uso agora, sem precisar reabrir o programa."""
         application = QApplication.instance()
         if application is not None:
             apply_theme(application, self.preferences.theme)
 
         self.editor_panel.set_theme(self.preferences.theme)
+        self.chess_panel.outline_panel.set_theme(self.preferences.theme)
         self.editor_panel.set_editor_font(self.preferences.editor_font_family, self.preferences.editor_font_size)
         self.editor_panel.text_edit.auto_close_enabled = self.preferences.auto_close_delimiters
-        self.editor_panel.set_locale(self.preferences.locale)
-        self.dictionary_service.set_locale(self.preferences.locale)
+        if apply_notation_locale:
+            self.editor_panel.set_locale(self.preferences.effective_notation_locale)
+            self.project.meta.notation_locale = self.editor_panel.locale
+        self.dictionary_service.set_locale(self.preferences.effective_dictionary_locale)
 
         self.engine_settings = replace(
             self.engine_settings,
             path=self.preferences.engine_path,
             movetime_ms=self.preferences.engine_movetime_ms,
             threshold_cp=self.preferences.engine_threshold_cp,
+            include_variations=self.preferences.engine_include_variations,
         )
         save_engine_settings(self.engine_settings)
 
@@ -817,11 +1550,16 @@ class MainWindow(QMainWindow):
         candidate = issue.best_candidate
         if not candidate:
             return
-        self.editor_panel.replace_span(issue.raw_start, issue.raw_end, candidate.san)
-        self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{candidate.san}'.", 4000)
-        self._count_acceptance(issue, candidate)
+        self._set_recognition_action(issue, "accepted", candidate.san)
+        text = candidate.replacement or candidate.san
+        self.editor_panel.replace_span(issue.raw_start, issue.raw_end, text)
+        self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{text}'.", 4000)
+        if candidate.replacement is None:
+            # Inserir um lance que faltava nao e correcao de OCR: nada a aprender.
+            self._count_acceptance(issue, candidate)
 
     def _comment_issue(self, issue):
+        self._set_recognition_action(issue, "commented")
         self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
         self.statusBar().showMessage(f"'{issue.raw_text}' virou comentário.", 4000)
 
@@ -836,6 +1574,7 @@ class MainWindow(QMainWindow):
         token = issue.raw_text
         if not token or token in self.project.state.ignored_issue_tokens:
             return
+        self._set_recognition_action(issue, "ignored")
         self.project.state.ignored_issue_tokens.append(token)
         self.editor_panel.set_ignored_tokens(self.project.state.ignored_issue_tokens)
         self.statusBar().showMessage(f"'{token}' passa a ser tratado como texto neste projeto.", 5000)
@@ -843,6 +1582,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Motor de xadrez (fase 5)
     # ------------------------------------------------------------------
+
+    def _on_notation_locale_changed(self, locale: str) -> None:
+        """A caixa do editor trocou o idioma: vale para o documento e vai para o projeto."""
+        if self.project.meta.notation_locale != locale:
+            self.project.meta.notation_locale = locale
+            self._state_dirty = True
+            self._update_window_title()
+        # Os alertas do motor falavam da leitura antiga dos lances.
+        self._engine_findings = None
+        self._refresh_issues()
+        self.statusBar().showMessage(f"Idioma do texto: {LOCALE_NAME.get(locale, locale)}. Texto reanalisado.", 5000)
 
     def _live_engine_issues(self) -> list:
         """Alertas do motor que ainda valem para a partida sob o cursor.
@@ -886,7 +1636,11 @@ class MainWindow(QMainWindow):
             segment.body if segment else self.editor_panel.document_text(),
             segment.raw_offset if segment else 0,
         )
-        self.statusBar().showMessage("Motor conferindo a linha principal...")
+        self.statusBar().showMessage(
+            "Motor conferindo a linha principal e as variantes..."
+            if self.engine_settings.include_variations
+            else "Motor conferindo a linha principal..."
+        )
         self.engine_scanner.scan(ast, self.editor_panel.current_start_fen, self.engine_settings)
 
     def _on_engine_scan_finished(self, report):
@@ -1006,6 +1760,23 @@ class MainWindow(QMainWindow):
     # Exportacao
     # ------------------------------------------------------------------
 
+    def _confirm_diagram_export(self) -> bool:
+        pending = [
+            record for record in self.project.state.diagram_records if str(record.get("review", "pending")) == "pending"
+        ]
+        if not pending:
+            return True
+        preview = ", ".join(f"pág. {record.get('page', '?')}/d.{record.get('diagram', '?')}" for record in pending[:8])
+        choice = QMessageBox.warning(
+            self,
+            "Diagramas por conferir",
+            f"Há {len(pending)} posição(ões) de diagrama ainda pendente(s) de revisão.\n\n"
+            f"{preview}\n\nExportar mesmo assim?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return choice == QMessageBox.StandardButton.Save
+
     def export_pgn(self):
         ast = self.editor_panel.reparse_now()
         if not ast.moves and not ast.result:
@@ -1013,6 +1784,18 @@ class MainWindow(QMainWindow):
             return
 
         pgn_text, report = build_pgn(ast, self.editor_panel.current_start_fen)
+
+        header_problems = validate_pgn_headers(dict(ast.headers), self.editor_panel.current_start_fen)
+        if header_problems:
+            QMessageBox.warning(
+                self,
+                "Headers PGN incoerentes",
+                "\n".join(f"- {problem}" for problem in header_problems) + "\n\nAjuste os headers antes de exportar.",
+            )
+            return
+
+        if not self._confirm_diagram_export():
+            return
 
         pending = [move for move in iter_moves(ast.moves) if move.needs_review]
         if pending:
@@ -1056,6 +1839,17 @@ class MainWindow(QMainWindow):
 
         try:
             write_pgn(output_path, pgn_text)
+            pending_diagrams = sum(
+                str(record.get("review", "pending")) == "pending" for record in self.project.state.diagram_records
+            )
+            output_path.with_suffix(output_path.suffix + ".report.txt").write_text(
+                export_audit_text(
+                    report,
+                    pending_diagrams=pending_diagrams,
+                    policy="exportado após confirmação" if pending_diagrams else "sem pendências",
+                ),
+                encoding="utf-8",
+            )
         except OSError as exc:
             QMessageBox.critical(self, "Exportar PGN", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
@@ -1075,6 +1869,8 @@ class MainWindow(QMainWindow):
         ]
 
     def _confirm_book_report(self, report) -> bool:
+        if not self._confirm_diagram_export():
+            return False
         if report.ok:
             return True
 
@@ -1131,6 +1927,34 @@ class MainWindow(QMainWindow):
             build_normalized_text,
             "Arquivos de texto (*.txt);;Todos os arquivos (*)",
         )
+
+    def export_html(self):
+        analyses = self._book_analyses()
+        if not analyses:
+            QMessageBox.information(self, "Exportar HTML", "Não há partida analisada para exportar.")
+            return
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Exportar HTML navegável",
+            str(Path.cwd() / f"{self.project.display_name}.html"),
+            "Página HTML (*.html);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        output_path = Path(file_path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".html")
+        try:
+            output_path.write_text(build_html(build_games_for_export(analyses)), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Exportar HTML", f"Não foi possível gravar o arquivo.\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"HTML navegável gravado em {output_path}", 8000)
+
+    def _search_document(self):
+        dialog = SearchDialog(self.editor_panel.document_text(), self.editor_panel.analyze_whole_book(), self)
+        dialog.hit_selected_signal.connect(self.editor_panel.focus_span)
+        dialog.exec()
 
     def export_book(self):
         analyses = self._book_analyses()
@@ -1196,10 +2020,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_text_changed(self):
+        # `toPlainText()` copia o livro inteiro; usar o estado O(1) do Qt para
+        # que atualizar o título não custe 7 MB a cada tecla.
+        dirty = self._state_dirty or self.editor_panel.text_edit.document().isModified()
+        name = self.project.display_name
+        self.setWindowTitle(f"{'*' if dirty else ''}{name} - PGN Live Editor")
         self._chars_since_autosave += 1
         if self._chars_since_autosave >= AUTOSAVE_CHAR_THRESHOLD:
             self._autosave()
-        self._update_window_title()
 
     def _autosave(self):
         text = self.editor_panel.document_text()
@@ -1216,7 +2044,7 @@ class MainWindow(QMainWindow):
 
         self._last_autosaved_text = text
         self.lbl_autosave.setText("recuperação gravada")
-        QTimer.singleShot(4000, lambda: self.lbl_autosave.setText(""))
+        single_shot(self, 4000, lambda: self.lbl_autosave.setText(""))
 
     def _offer_session_recovery(self):
         snapshot = read_recovery_snapshot()
@@ -1267,8 +2095,11 @@ class MainWindow(QMainWindow):
 
         self.preferences.layout = self._capture_layout()
         save_preferences(self.preferences)
+        self.diagram_ocr.shutdown()
+        self.full_pdf_recognition.shutdown()
         self.editor_panel.shutdown()
         self.engine_scanner.shutdown()
+        self.pdf_panel.shutdown()
         clear_recovery_snapshot()
         event.accept()
 

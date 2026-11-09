@@ -1,6 +1,6 @@
 import chess
 import chess.svg
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
 from PyQt6.QtGui import QGuiApplication, QResizeEvent
@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -34,7 +35,9 @@ from ..core.move_tree import (
 from ..core.parser import GameAST
 from ..services.clipboard_service import COPY_FORMATS, copy_text
 from .board_view import InteractiveBoardView
+from .outline_panel import OutlinePanel
 from .promotion_dialog import PromotionDialog, wants_default_promotion
+from .qt_helpers import single_shot
 from .variant_builder_panel import VariantBuilderPanel
 
 
@@ -128,7 +131,15 @@ class ChessPanel(QWidget):
         self.pgn_view.anchorClicked.connect(self._on_pgn_anchor_clicked)
         self.pgn_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.pgn_view.customContextMenuRequested.connect(self._show_copy_menu)
-        preview_layout.addWidget(self.pgn_view, 1)
+
+        # O preview le a partida como ela sai; a arvore le como ela se
+        # ramifica. Sao a mesma informacao e nenhuma das duas substitui a
+        # outra -- por isso duas abas, e nao dois paineis disputando altura.
+        self.outline_panel = OutlinePanel()
+        self.structure_tabs = QTabWidget()
+        self.structure_tabs.addTab(self.pgn_view, "Texto")
+        self.structure_tabs.addTab(self.outline_panel, "Árvore")
+        preview_layout.addWidget(self.structure_tabs, 1)
 
         self.variant_builder = VariantBuilderPanel()
         self.variant_builder.anchor_current_requested_signal.connect(self._anchor_variant_builder_to_current)
@@ -248,6 +259,20 @@ class ChessPanel(QWidget):
         self._update_controls()
         self.current_move_span_signal.emit(-1, -1)
 
+    def show_fen_position(self, fen: str):
+        """Mostra uma posição externa (por exemplo, um diagrama do PDF)."""
+        self.current_entry_index = -1
+        self.current_selection_key = None
+        self.selected_square = None
+        self.input_mode = None
+        self.input_origin_label = None
+        self.annotations = VisualAnnotations([], [])
+        self.board.set_fen(fen)
+        self.render_board(None)
+        self.lbl_status.setText("Posição do diagrama PDF")
+        self._refresh_preview()
+        self._update_controls()
+
     def _update_controls(self):
         self.btn_prev.setEnabled(self.current_entry_index >= 0)
         self.btn_next.setEnabled(self.current_entry_index < len(self.entries) - 1)
@@ -256,12 +281,18 @@ class ChessPanel(QWidget):
         self.lbl_meta.setText(f"{len(self.entries)} moves | {issue_count} issues")
         self.lbl_preview.setText("PGN Preview" if issue_count == 0 else f"PGN Preview | {issue_count} issue(s)")
 
+    def show_outline(self):
+        """Traz a arvore para a frente -- o `F7` do menu."""
+        self.structure_tabs.setCurrentWidget(self.outline_panel)
+
     def _refresh_preview(self):
         current_entry = self._current_entry()
         current_node_id = current_entry.node_id if current_entry else None
         self.pgn_view.setHtml(render_game_html(self.game_ast, self.entries, current_node_id))
         if current_node_id:
-            QTimer.singleShot(0, lambda node_id=current_node_id: self.pgn_view.scrollToAnchor(node_id))
+            # Com dono: se o painel morrer antes do disparo, o timer morre
+            # junto e ninguem chama `scrollToAnchor` num objeto destruido.
+            single_shot(self, 0, lambda node_id=current_node_id: self.pgn_view.scrollToAnchor(node_id))
 
     def _turn_marker(self) -> str:
         return (
@@ -654,6 +685,7 @@ class ChessPanel(QWidget):
         self.game_ast = ast
         self.entries = build_move_entries(ast)
         self.entry_by_node_id, _by_move_identity = build_entry_maps(self.entries)
+        self.outline_panel.set_game(ast)
 
         if self.input_mode is not None:
             restored_entry = resolve_selection_key(self.entries, self.current_selection_key)

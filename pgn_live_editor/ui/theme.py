@@ -51,8 +51,31 @@ PALETTES: dict[str, dict[str, str]] = {
 }
 
 
+#: Cor por profundidade de variante. O indice 0 e a linha principal.
+#:
+#: Sao matizes **diferentes**, e nao o mesmo azul clareando: com quatro niveis
+#: de aninhamento -- o normal num livro de repertorio -- tons do mesmo matiz
+#: deixam de se distinguir por volta do terceiro, e e justamente ali que a
+#: pergunta "de que variante e este lance?" comeca a valer alguma coisa.
+#: Passando do fim da lista, a cor se repete: mais matizes nao ajudariam
+#: ninguem, e o recuo do texto continua contando a profundidade exata.
+DEPTH_COLORS: dict[str, tuple[str, ...]] = {
+    THEME_DARK: ("#78aefc", "#9fc4ff", "#c9a7f0", "#7fd1c0", "#e0aa72", "#d98fa8"),
+    THEME_LIGHT: ("#1a56b8", "#4a7fd4", "#7a3fb0", "#0f7a6c", "#a05a10", "#a3306a"),
+}
+
+
 def palette_of(theme: str) -> dict[str, str]:
     return PALETTES.get(theme, PALETTES[THEME_DARK])
+
+
+def depth_colors(theme: str) -> tuple[str, ...]:
+    return DEPTH_COLORS.get(theme, DEPTH_COLORS[THEME_DARK])
+
+
+def color_for_depth(theme: str, depth: int) -> str:
+    colors = depth_colors(theme)
+    return colors[min(max(depth, 0), len(colors) - 1)]
 
 
 def color(theme: str, key: str) -> QColor:

@@ -1,10 +1,21 @@
 import re
 from collections.abc import Callable, Sequence
+from functools import lru_cache
 
 import chess
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QSyntaxHighlighter, QTextCharFormat, QTextCursor
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -12,14 +23,20 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from ..core.book_import import BookImportOptions, convert_book_text
 from ..core.fen_tools import normalize_diagram_marks, set_start_fen
 from ..core.game_splitter import GameSegment
-from ..core.parser import GameAST, iter_moves
+from ..core.layout import flatten_variations, indent_variations
+from ..core.move_tree import build_entry_maps, build_move_entries
+from ..core.nag_table import NAG_TABLE
+from ..core.notation_detect import detect_notation_locale
+from ..core.parser import GameAST, MoveNode, iter_moves
 from ..core.paste_cleanup import clean_pdf_text
 from ..core.pgn_headers import insert_or_replace_headers, upsert_headers
 from ..core.text_insertion import build_board_move_insertion
@@ -27,6 +44,7 @@ from ..core.text_ops import (
     OperationResult,
     TextEdit,
     check_balance,
+    insert_comment,
     paragraph_to_comment,
     renumber_document,
     renumber_movetext,
@@ -40,23 +58,16 @@ from ..services.parse_worker import (
     ParseConfig,
     SegmentAnalysis,
 )
-from ..services.preferences_service import THEME_DARK
-from .theme import palette_of
+from ..services.preferences_service import LOCALE_EXAMPLES, LOCALE_NAME, LOCALES, THEME_DARK
+from .nag_bar import NagBar
+from .pgn_tree_panel import PgnTreePanel
+from .theme import color_for_depth, palette_of
 
-SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = (
-    ("!", "$1", "Bom lance"),
-    ("?", "$2", "Lance fraco"),
-    ("!!", "$3", "Lance excelente"),
-    ("??", "$4", "Erro grave"),
-    ("!?", "$5", "Lance interessante"),
-    ("?!", "$6", "Lance duvidoso"),
-    ("\u25a1", "$7", "Lance forçado / único"),
-    ("\u221e", "$13", "Posição pouco clara"),
-    ("\u2a72", "$14", "Brancas com pequena vantagem"),
-    ("\u2a71", "$15", "Pretas com pequena vantagem"),
-    ("\u00b1", "$16", "Brancas com vantagem moderada"),
-    ("\u2213", "$17", "Pretas com vantagem moderada"),
-    ("\u2a00", "$22/$23", "Zugzwang"),
+# O dialogo, o rodape e a exportacao leem da **mesma** tabela. Eram tres
+# listas independentes, e as tres estavam incompletas de um jeito diferente:
+# faltava `+-`/`-+` numa, compensacao noutra, ataque na terceira.
+SYMBOL_PALETTE: Sequence[tuple[str, str, str]] = tuple(
+    (nag.insert_text, f"{nag.code}/{nag.black_code}" if nag.black_code else nag.code, nag.name) for nag in NAG_TABLE
 )
 
 
@@ -177,9 +188,19 @@ class PGNTextEdit(QPlainTextEdit):
 
 
 class EditorPanel(QWidget):
+    # Em livros extensos, colorir todos os delimitadores na abertura cria
+    # centenas de milhares de ranges. A partida ativa é suficiente para editar;
+    # as outras entram no cache quando o cursor chega nelas.
+    LAZY_DELIMITER_TEXT_CHARS = 500_000
+
     text_parsed_signal = Signal(object)
     document_analyzed_signal = Signal(object)
     cursor_position_changed_signal = Signal(int)
+    #: Recado de um gesto que partiu **de dentro** do painel -- da arvore, por
+    #: exemplo. Os gestos que a janela dispara devolvem a mensagem no retorno.
+    status_message_signal = Signal(str)
+    #: O usuario trocou o idioma do texto na caixa do cabecalho.
+    notation_locale_changed_signal = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -197,6 +218,11 @@ class EditorPanel(QWidget):
         self.theme = THEME_DARK
         self._suspend_cursor_sync = False
         self._symbol_palette_dialog: SymbolPaletteDialog | None = None
+        self._delimiter_pairs: dict[int, int] = {}
+        self._delimiter_cache: dict[tuple[str, str], tuple[list[tuple[int, int, int]], dict[int, int]]] = {}
+        self._parse_schedule_timer = QTimer(self)
+        self._parse_schedule_timer.setSingleShot(True)
+        self._parse_schedule_timer.timeout.connect(self._dispatch_scheduled_parse)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -217,8 +243,38 @@ class EditorPanel(QWidget):
         btn_headers.setToolTip("Insere ou atualiza os headers PGN padrão no topo do editor")
         btn_headers.clicked.connect(self.insert_default_headers)
 
+        # Idioma do texto a vista, e nao so nas Preferencias: e a primeira coisa
+        # a acertar ao colar um livro novo -- um livro espanhol lido como
+        # portugues perde todo lance de bispo (`A5C`) sem dizer por que.
+        lbl_locale = QLabel("Idioma do texto:")
+        self.cmb_notation_locale = QComboBox()
+        for code in LOCALES:
+            self.cmb_notation_locale.addItem(LOCALE_NAME[code], code)
+            self.cmb_notation_locale.setItemData(
+                self.cmb_notation_locale.count() - 1, LOCALE_EXAMPLES[code], Qt.ItemDataRole.ToolTipRole
+            )
+        self.cmb_notation_locale.setToolTip(
+            "Idioma da notação do livro: letras das peças e notação descritiva.\n"
+            "Vale para este documento e é gravado no projeto; a análise é refeita na hora."
+        )
+        lbl_locale.setBuddy(self.cmb_notation_locale)
+        self._sync_locale_box()
+        self.cmb_notation_locale.currentIndexChanged.connect(self._on_locale_box_changed)
+
+        # Sugestao, nunca troca sozinha: o texto colado parece de outro idioma.
+        self.btn_locale_hint = QPushButton()
+        self.btn_locale_hint.setVisible(False)
+        self.btn_locale_hint.setStyleSheet("color: #d08a00; font-weight: bold;")
+        self.btn_locale_hint.clicked.connect(self._accept_locale_hint)
+        self._suggested_locale: str | None = None
+        self._dismissed_suggestion: str | None = None
+        self._hint_checked_length = -1
+
         toolbar.addWidget(lbl)
         toolbar.addStretch()
+        toolbar.addWidget(lbl_locale)
+        toolbar.addWidget(self.cmb_notation_locale)
+        toolbar.addWidget(self.btn_locale_hint)
         toolbar.addWidget(btn_headers)
         toolbar.addWidget(btn_palette)
         toolbar.addWidget(btn_clean)
@@ -230,10 +286,44 @@ class EditorPanel(QWidget):
         editor_font.setPointSize(11)
         self.text_edit.setFont(editor_font)
         self.highlighter = MoveHighlighter(self.text_edit.document())
-        layout.addWidget(self.text_edit)
+        # A arvore de lances mora **aqui**, e nao do outro lado da janela: a
+        # pergunta que ela responde ("em que variante estou?") aparece
+        # enquanto se digita, e olhar para o outro extremo da tela a cada
+        # duvida custa mais do que a resposta vale.
+        self.pgn_tree = PgnTreePanel()
+        self.pgn_tree.move_selected_signal.connect(self.focus_span)
+        self.pgn_tree.comment_paste_requested_signal.connect(self._on_tree_comment_requested)
+
+        self.body_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.body_splitter.addWidget(self.text_edit)
+        self.body_splitter.addWidget(self.pgn_tree)
+        self.body_splitter.setStretchFactor(0, 3)
+        self.body_splitter.setStretchFactor(1, 2)
+        self.body_splitter.setSizes([460, 260])
+        layout.addWidget(self.body_splitter, 1)
+
+        # Rodape de simbolos: sempre visivel, porque anotar e o gesto mais
+        # repetido da transcricao e abrir um dialogo para cada `!` custa mais
+        # do que o simbolo vale.
+        self.nag_bar = NagBar()
+        self.nag_bar.symbol_requested_signal.connect(self.insert_symbol_at_cursor)
+        layout.addWidget(self.nag_bar)
 
         self.text_edit.textChanged.connect(self._on_text_changed)
         self.text_edit.cursorPositionChanged.connect(self._on_cursor_position_changed)
+
+    def toggle_pgn_tree(self) -> bool:
+        visible = not self.pgn_tree.isVisibleTo(self)
+        self.pgn_tree.setVisible(visible)
+        return visible
+
+    def toggle_nag_bar(self) -> bool:
+        # `isVisibleTo`, e nao `isVisible`: com a janela ainda nao mostrada --
+        # ao restaurar o layout, e nos testes -- `isVisible` e sempre falso e
+        # o interruptor so ligava.
+        visible = not self.nag_bar.isVisibleTo(self)
+        self.nag_bar.setVisible(visible)
+        return visible
 
     def shutdown(self):
         """Encerra a thread de analise. A janela chama isto ao fechar."""
@@ -251,11 +341,14 @@ class EditorPanel(QWidget):
 
     def load_document_text(self, text: str, cursor_position: int = 0):
         """Carrega um documento novo (abrir/importar). Zera o historico de desfazer."""
+        self._parse_schedule_timer.stop()
         self.text_edit.setPlainText(text)
         cursor = self.text_edit.textCursor()
         cursor.setPosition(max(0, min(cursor_position, len(text))))
         self.text_edit.setTextCursor(cursor)
         self.text_edit.document().setModified(False)
+        self._dismissed_suggestion = None
+        self._update_locale_hint(text)
         # Uma vez, ao abrir: e o que faz o livro inteiro nascer realcado e com a
         # lista de partidas preenchida. Depois disso so a partida editada e
         # reanalisada.
@@ -386,8 +479,20 @@ class EditorPanel(QWidget):
 
     def _on_text_changed(self):
         # A analise sai da thread de UI enquanto se digita; o resultado so e
-        # aplicado se ainda corresponder ao texto que esta na tela.
-        self.async_parser.schedule(self.text_edit.toPlainText(), self.cursor_position())
+        # aplicado se ainda corresponder ao texto que esta na tela. Nao copie o
+        # documento aqui: `toPlainText()` seria O(tamanho do livro) por tecla.
+        interval = self.async_parser.FAST_DEBOUNCE_MS
+        if self.text_edit.document().characterCount() > self.async_parser.SMALL_DOCUMENT_BYTES:
+            interval = self.async_parser.SLOW_DEBOUNCE_MS
+        self._parse_schedule_timer.start(interval)
+
+    def _dispatch_scheduled_parse(self):
+        text = self.text_edit.toPlainText()
+        # Uma colagem muda o tamanho de uma vez; digitar, nao. So a colagem
+        # merece olhar o idioma de novo.
+        if abs(len(text) - self._hint_checked_length) > 200:
+            self._update_locale_hint(text)
+        self.async_parser.schedule(text, self.cursor_position())
 
     def _on_cursor_position_changed(self):
         position = self.text_edit.textCursor().position()
@@ -396,6 +501,11 @@ class EditorPanel(QWidget):
         # segui-la. Vem do cache, entao não há custo de analise aqui.
         if self.analysis.segments and self.analysis.active_index != self._segment_index_at(position):
             self._do_reparse()
+
+        # A arvore segue o cursor mesmo quando a sincronia com o tabuleiro
+        # esta suspensa: quem suspendeu foi um `focus_span`, e nesse caso o
+        # cursor acabou de ir para o lance que se quer ver marcado ali.
+        self.pgn_tree.select_at(position)
 
         if self._suspend_cursor_sync:
             return
@@ -425,6 +535,8 @@ class EditorPanel(QWidget):
             self.current_move_span = None
 
         self._apply_highlights(analysis)
+        self.pgn_tree.set_game(self.current_ast)
+        self.pgn_tree.select_at(self.cursor_position())
         self.document_analyzed_signal.emit(analysis)
         self.text_parsed_signal.emit(self.current_ast)
 
@@ -487,11 +599,62 @@ class EditorPanel(QWidget):
     def configure_recognition(self, locale: str, dictionary: dict[str, str], ignored_tokens):
         """Idioma, dicionario e silenciados de uma vez -- uma unica reanalise."""
         self.locale = locale
+        self._sync_locale_box()
         self._reconfigure(locale=locale, dictionary=dictionary, ignored_tokens=ignored_tokens)
 
     def set_locale(self, locale: str):
+        if locale == self.locale and locale == self.async_parser.config.locale:
+            self._sync_locale_box()
+            return
         self.locale = locale
+        self._sync_locale_box()
+        if self._suggested_locale == locale:
+            self._show_locale_hint(None)
         self._reconfigure(locale=locale)
+
+    def _sync_locale_box(self) -> None:
+        """A caixa mostra o idioma em uso, sem disparar a troca de volta."""
+        index = self.cmb_notation_locale.findData(self.locale)
+        if index < 0 or index == self.cmb_notation_locale.currentIndex():
+            return
+        self.cmb_notation_locale.blockSignals(True)
+        self.cmb_notation_locale.setCurrentIndex(index)
+        self.cmb_notation_locale.blockSignals(False)
+
+    def _on_locale_box_changed(self, _index: int) -> None:
+        locale = self.cmb_notation_locale.currentData()
+        if not locale or locale == self.locale:
+            return
+        if self._suggested_locale and locale != self._suggested_locale:
+            # O usuario escolheu outro idioma com a sugestao na tela: nao insistir.
+            self._dismissed_suggestion = self._suggested_locale
+        self.set_locale(locale)
+        self._show_locale_hint(None)
+        self.notation_locale_changed_signal.emit(locale)
+
+    def _update_locale_hint(self, text: str) -> None:
+        self._hint_checked_length = len(text)
+        detected = detect_notation_locale(text)
+        if detected == self._dismissed_suggestion:
+            detected = None
+        self._show_locale_hint(detected if detected != self.locale else None)
+
+    def _show_locale_hint(self, locale: str | None) -> None:
+        self._suggested_locale = locale
+        if locale is None:
+            self.btn_locale_hint.setVisible(False)
+            return
+        name = LOCALE_NAME.get(locale, locale)
+        self.btn_locale_hint.setText(f"Parece {name} — usar")
+        self.btn_locale_hint.setToolTip(
+            f"Os lances deste texto têm cara de notação {name.lower()} ({LOCALE_EXAMPLES[locale]}). "
+            "Clique para ler o texto nesse idioma."
+        )
+        self.btn_locale_hint.setVisible(True)
+
+    def _accept_locale_hint(self) -> None:
+        if self._suggested_locale:
+            self.cmb_notation_locale.setCurrentIndex(self.cmb_notation_locale.findData(self._suggested_locale))
 
     def set_dictionary(self, dictionary):
         self._reconfigure(dictionary=dictionary)
@@ -553,6 +716,35 @@ class EditorPanel(QWidget):
             paragraph_to_comment(self.document_text(), self.cursor_position(), self.current_ast)
         )
 
+    # ------------------------------------------------------------------
+    # Comentario no lance escolhido
+    # ------------------------------------------------------------------
+
+    def move_by_node_id(self, node_id: str) -> MoveNode | None:
+        """O lance a que um `node_id` da arvore se refere.
+
+        Os `node_id` da arvore do PGN, do preview e da anotacao visual saem
+        todos da mesma convencao (`move_tree.build_move_entries`), e e por isso
+        que este caminho existe uma vez so.
+        """
+        by_node_id, _by_identity = build_entry_maps(build_move_entries(self.current_ast))
+        entry = by_node_id.get(node_id)
+        return entry.node if entry else None
+
+    def paste_comment_on_move(self, body: str, *, before: bool, node_id: str | None = None) -> str:
+        """Cola prosa como comentario de um lance -- o da arvore, ou o do cursor."""
+        move = self.move_by_node_id(node_id) if node_id else self.move_at_cursor()
+        if move is None:
+            return "Escolha o lance na árvore, ou ponha o cursor nele, para colar o comentário."
+        return self.apply_operation(insert_comment(self.document_text(), move, body, before=before))
+
+    def action_paste_comment(self, before: bool, node_id: str | None = None) -> str:
+        """Ctrl+Alt+A / Ctrl+Alt+D -- a area de transferencia vira comentario."""
+        return self.paste_comment_on_move(QGuiApplication.clipboard().text(), before=before, node_id=node_id)
+
+    def _on_tree_comment_requested(self, node_id: str, before: bool):
+        self.status_message_signal.emit(self.action_paste_comment(before, node_id))
+
     def action_renumber(self) -> str:
         """Ctrl+R -- renumera o **livro inteiro**, nao so a partida sob o cursor."""
         text = self.document_text()
@@ -563,6 +755,14 @@ class EditorPanel(QWidget):
         if not edits:
             return "A numeracao já esta correta."
         return self.apply_operation(OperationResult(edits, f"{len(edits)} número(s) de lance corrigido(s)."))
+
+    def action_indent_variations(self) -> str:
+        """Ctrl+T -- uma variante por linha, recuada pela profundidade."""
+        return self.apply_operation(indent_variations(self.document_text(), self.segments()))
+
+    def action_flatten_variations(self) -> str:
+        """Ctrl+Shift+T -- o inverso, para voltar ao movetext corrido."""
+        return self.apply_operation(flatten_variations(self.document_text(), self.segments()))
 
     def action_normalize_diagrams(self) -> str:
         return self.apply_operation(normalize_diagram_marks(self.document_text()))
@@ -590,6 +790,29 @@ class EditorPanel(QWidget):
         start, end, block = change
         return self.apply_operation(OperationResult([TextEdit(start, end, block)], "Cabeçalhos atualizados."))
 
+    def action_convert_book_text(self, options: BookImportOptions | None = None, converted: str | None = None) -> str:
+        """Converte o documento (ou a selecao) de texto de livro em movetext.
+
+        Se `converted` vier pronto -- e vem, quando o dialogo ja mostrou a
+        previa --, ele e usado como esta: reconverter aqui poderia dar um
+        resultado diferente do que o usuario aprovou.
+        """
+        start, end = self._selection()
+        has_selection = end > start
+        source = self.document_text()[start:end] if has_selection else self.document_text()
+
+        if converted is None:
+            converted = convert_book_text(source, options).text
+        if not converted or converted == source:
+            return "Nada a converter."
+
+        if has_selection:
+            self.replace_span(start, end, converted)
+        else:
+            self.replace_all_text(converted)
+        self.reparse_now()
+        return "Texto de livro convertido."
+
     def action_clean_paste(self, options) -> str:
         report = clean_pdf_text(self.document_text(), options)
         if report.text == self.document_text():
@@ -602,6 +825,7 @@ class EditorPanel(QWidget):
         return check_balance(self.document_text())
 
     def reparse_now(self) -> GameAST:
+        self._parse_schedule_timer.stop()
         self.async_parser.cancel_pending()
         self._do_reparse()
         return self.current_ast
@@ -624,14 +848,6 @@ class EditorPanel(QWidget):
         uma edicao acima empurra o texto.
         """
         colors = palette_of(self.theme)
-
-        fmt_valid = QTextCharFormat()
-        fmt_valid.setForeground(QColor(colors["move"]))
-        fmt_valid.setFontWeight(QFont.Weight.Bold)
-
-        fmt_valid_variation = QTextCharFormat(fmt_valid)
-        fmt_valid_variation.setForeground(QColor(colors["move_variation"]))
-        fmt_valid_variation.setFontWeight(QFont.Weight.Normal)
 
         fmt_fixed = QTextCharFormat()
         fmt_fixed.setForeground(QColor(colors["fixed"]))
@@ -661,18 +877,7 @@ class EditorPanel(QWidget):
         fmt_error_variation = QTextCharFormat(fmt_error)
         fmt_error_variation.setFontWeight(QFont.Weight.Normal)
 
-        if self.review_mode:
-            # Dupla visao (SPEC 5, fase 5): a pergunta deixa de ser "o que e
-            # lance?" e passa a ser "onde o programa **mexeu**?". Tudo que ele
-            # apenas confirmou apaga; o que ele tocou fica como estava. Numa
-            # partida de 80 lances com tres correcoes, sao as tres que saltam.
-            fmt_valid = QTextCharFormat()
-            fmt_valid.setForeground(QColor(colors["confirmed_dimmed"]))
-            fmt_valid_variation = QTextCharFormat(fmt_valid)
-
-        formats = {
-            ("valid", False): fmt_valid,
-            ("valid", True): fmt_valid_variation,
+        touched = {
             ("fixed", False): fmt_fixed,
             ("fixed", True): fmt_fixed_variation,
             ("review", False): fmt_review,
@@ -681,9 +886,43 @@ class EditorPanel(QWidget):
             ("error", True): fmt_error_variation,
         }
 
-        self.highlighter.set_ranges(
-            [(start, end, formats[(kind, in_variation)]) for start, end, kind, in_variation in analysis.highlight_spans]
+        # Um formato por profundidade, criado sob demanda: um livro tem quatro
+        # ou cinco niveis, nao trinta, e construir tudo de antemao seria gastar
+        # com o que nao aparece.
+        valid_by_depth: dict[int, QTextCharFormat] = {}
+
+        def valid_format(depth: int) -> QTextCharFormat:
+            if depth not in valid_by_depth:
+                text_format = QTextCharFormat()
+                if self.review_mode:
+                    # Dupla visao (SPEC 5, fase 5): a pergunta deixa de ser "o
+                    # que e lance?" e passa a ser "onde o programa **mexeu**?".
+                    # Tudo que ele apenas confirmou apaga -- inclusive a cor de
+                    # profundidade, que aqui so atrapalharia.
+                    text_format.setForeground(QColor(colors["confirmed_dimmed"]))
+                else:
+                    text_format.setForeground(QColor(color_for_depth(self.theme, depth)))
+                    # So a linha principal em negrito: e o fio que se segue
+                    # quando os olhos passam pela pagina.
+                    text_format.setFontWeight(QFont.Weight.Bold if depth == 0 else QFont.Weight.Normal)
+                valid_by_depth[depth] = text_format
+            return valid_by_depth[depth]
+
+        # Corrigido, duvidoso e nao entendido mantem a **sua** cor, e nao a da
+        # profundidade: "o programa mexeu aqui" vale mais do que "isto e uma
+        # sub-variante", e o recuo do texto continua dizendo a profundidade.
+        ranges = [
+            (start, end, valid_format(depth) if kind == "valid" else touched[(kind, depth > 0)])
+            for start, end, kind, depth in analysis.highlight_spans
+        ]
+        delimiter_segments = analysis.segments
+        if len(analysis.raw_text) > self.LAZY_DELIMITER_TEXT_CHARS and analysis.segments:
+            delimiter_segments = [analysis.segments[analysis.active_index]]
+        delimiter_ranges, self._delimiter_pairs = _delimiter_highlight_data(
+            analysis.raw_text, delimiter_segments, self.theme, self._delimiter_cache
         )
+        ranges.extend(delimiter_ranges)
+        self.highlighter.set_ranges(ranges)
         self._apply_current_selection()
 
     # ------------------------------------------------------------------
@@ -736,6 +975,7 @@ class EditorPanel(QWidget):
 
     def set_theme(self, theme: str):
         self.theme = theme
+        self.pgn_tree.set_theme(theme)
         self._apply_highlights(self.analysis)
 
     def set_editor_font(self, family: str, size: int):
@@ -757,23 +997,119 @@ class EditorPanel(QWidget):
         """
         counts = {"confirmado": 0, "corrigido": 0, "por_conferir": 0, "nao_entendido": 0}
         names = {"valid": "confirmado", "fixed": "corrigido", "review": "por_conferir", "error": "nao_entendido"}
-        for _start, _end, kind, _in_variation in self.analysis.highlight_spans:
+        for _start, _end, kind, _depth in self.analysis.highlight_spans:
             key = names.get(kind)
             if key:
                 counts[key] += 1
         return counts
 
     def _apply_current_selection(self):
-        """Realce do lance sob o cursor. Nao mexe no realce sintatico."""
-        if not self.current_move_span:
-            self.text_edit.setExtraSelections([])
-            return
+        """Realce o lance e o delimitador correspondente sob o cursor."""
+        selections: list[QTextEdit.ExtraSelection] = []
 
-        fmt_current = QTextCharFormat()
-        fmt_current.setBackground(QColor(palette_of(self.theme)["current_move"]))
+        if self.current_move_span:
+            fmt_current = QTextCharFormat()
+            fmt_current.setBackground(QColor(palette_of(self.theme)["current_move"]))
+            start_index, end_index = self.current_move_span
+            selections.append(self._make_selection(start_index, end_index, fmt_current))
 
-        start_index, end_index = self.current_move_span
-        self.text_edit.setExtraSelections([self._make_selection(start_index, end_index, fmt_current)])
+        delimiter = self._delimiter_at_cursor()
+        if delimiter is not None:
+            colors = palette_of(self.theme)
+            fmt_delimiter = QTextCharFormat()
+            fmt_delimiter.setBackground(QColor(colors["current_move"]))
+            fmt_delimiter.setForeground(QColor(colors["text"]))
+            fmt_delimiter.setFontWeight(QFont.Weight.Bold)
+            selections.append(self._make_selection(delimiter, delimiter + 1, fmt_delimiter))
+
+            pair = self._delimiter_pairs.get(delimiter)
+            if pair is not None:
+                selections.append(self._make_selection(pair, pair + 1, fmt_delimiter))
+
+        self.text_edit.setExtraSelections(selections)
+
+    def _delimiter_at_cursor(self) -> int | None:
+        position = self.cursor_position()
+        text = self.document_text()
+        for candidate in (position, position - 1):
+            if 0 <= candidate < len(text) and text[candidate] in "(){}":
+                return candidate
+        return None
+
+
+def _delimiter_highlight_data(raw_text: str, segments: Sequence, theme: str, cache: dict):
+    """Retorna realce e pares de `{}`, `()` apenas no movetext das partidas."""
+    ranges: list[tuple[int, int, QTextCharFormat]] = []
+    pairs: dict[int, int] = {}
+
+    for segment in segments:
+        cache_key = (segment.body, theme)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            cached_ranges, cached_pairs = cached
+            offset = segment.raw_offset
+            ranges.extend((start + offset, end + offset, text_format) for start, end, text_format in cached_ranges)
+            pairs.update({start + offset: end + offset for start, end in cached_pairs.items()})
+            continue
+
+        stack: list[tuple[str, int]] = []
+        in_comment = False
+        start = segment.raw_offset
+        end = segment.body_end_offset
+        segment_ranges: list[tuple[int, int, QTextCharFormat]] = []
+        segment_pairs: dict[int, int] = {}
+
+        for position in range(start, min(end, len(raw_text))):
+            char = raw_text[position]
+            if in_comment:
+                if char == "}":
+                    in_comment = False
+                    segment_ranges.append(
+                        (position - start, position - start + 1, _delimiter_format(theme, len(stack)))
+                    )
+                    if stack and stack[-1][0] == "{":
+                        _opening, opening_position = stack.pop()
+                        segment_pairs[opening_position - start] = position - start
+                        segment_pairs[position - start] = opening_position - start
+                continue
+
+            if char == "{":
+                in_comment = True
+                stack.append((char, position))
+                segment_ranges.append(
+                    (position - start, position - start + 1, _delimiter_format(theme, len(stack) - 1))
+                )
+            elif char == "(":
+                stack.append((char, position))
+                segment_ranges.append(
+                    (position - start, position - start + 1, _delimiter_format(theme, len(stack) - 1))
+                )
+            elif char == ")":
+                depth = max(0, len(stack) - 1)
+                segment_ranges.append((position - start, position - start + 1, _delimiter_format(theme, depth)))
+                if stack and stack[-1][0] == "(":
+                    _opening, opening_position = stack.pop()
+                    segment_pairs[opening_position - start] = position - start
+                    segment_pairs[position - start] = opening_position - start
+
+        cache[cache_key] = (segment_ranges, segment_pairs)
+        ranges.extend(
+            (relative_start + start, relative_end + start, text_format)
+            for relative_start, relative_end, text_format in segment_ranges
+        )
+        pairs.update(
+            {relative_start + start: relative_end + start for relative_start, relative_end in segment_pairs.items()}
+        )
+
+    return ranges, pairs
+
+
+@lru_cache(maxsize=32)
+def _delimiter_format(theme: str, depth: int) -> QTextCharFormat:
+    text_format = QTextCharFormat()
+    # A cor do delimitador acompanha a mesma escala visual das variantes.
+    text_format.setForeground(QColor(color_for_depth(theme, depth)))
+    return text_format
 
 
 class MoveHighlighter(QSyntaxHighlighter):
@@ -801,8 +1137,23 @@ class MoveHighlighter(QSyntaxHighlighter):
                 indexed.setdefault(block.blockNumber(), []).append((start_index, end_index, text_format))
                 block = block.next()
 
+        # `rehighlight()` percorre todos os blocos do documento. Em um livro
+        # grande, porém, quase sempre só uma pequena parte dos ranges mudou
+        # depois de uma tecla. Reaplicar apenas os blocos cujo índice mudou
+        # mantém a formatação incremental e evita congelar o editor ao fim do
+        # debounce do parser.
+        changed_blocks = set(self._ranges_by_block) | set(indexed)
+        changed_blocks = {
+            block_number
+            for block_number in changed_blocks
+            if self._ranges_by_block.get(block_number) != indexed.get(block_number)
+        }
         self._ranges_by_block = indexed
-        self.rehighlight()
+
+        for block_number in changed_blocks:
+            block = document.findBlockByNumber(block_number)
+            if block.isValid():
+                self.rehighlightBlock(block)
 
     def highlightBlock(self, text: str):
         block_ranges = self._ranges_by_block.get(self.currentBlock().blockNumber())
