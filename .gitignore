@@ -13,3 +13,9 @@ wheels/
 /dist/
 /build/
 *.spec.bak
+
+# Cobertura e material local grande (fora do versionamento)
+.coverage
+/pdf/
+/engine/
+*.plez.bak*
