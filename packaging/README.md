@@ -25,6 +25,29 @@ importam por caminho que ele não segue. Sem isso o executável constrói, abre,
 quebra na primeira vez que se abre um PDF — que é o pior tipo de falha, porque
 só aparece na mão do usuário.
 
+## Stockfish junto (opcional)
+
+Por padrão o motor **não** vai no pacote: o executável tem ~100 MB e o programa
+funciona sem ele. Para levar o Stockfish que está em `engine/`:
+
+```powershell
+$env:PGN_BUNDLE_ENGINE = "1"
+uv run pyinstaller packaging/pgn-live-editor.spec --noconfirm
+```
+
+Entram o `stockfish*.exe` e, ao lado dele, `Copying.txt`, `AUTHORS` e o `README.md`
+do Stockfish. Não é enfeite: o Stockfish é GPLv3, e distribuir o binário obriga a
+levar a licença junto e a indicar onde está o código-fonte (o README dele aponta o
+repositório oficial). O código-fonte em `engine/stockfish/src` não entra no pacote.
+
+O programa acha o motor sozinho dentro do pacote; ninguém precisa configurar nada.
+
+## OCR de texto
+
+Se o ambiente que empacota tiver o extra `text-ocr` (`uv sync --extra text-ocr`),
+os módulos `winrt` entram no pacote e o executável lê PDFs escaneados. Sem o
+extra, o executável funciona igual, só sem o botão de OCR.
+
 ## Conferência
 
 Vale abrir o executável construído antes de distribuir e passar por:

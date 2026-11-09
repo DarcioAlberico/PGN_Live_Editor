@@ -4,7 +4,7 @@ Editor de texto assistido para transformar texto de livro de xadrez em PGN confi
 Cole o texto do PDF, vá marcando comentários, variantes e linha principal, é o programa
 reconhece a estrutura em tempo real com tabuleiro sincronizado.
 
-Documentação do projeto: [análise técnica](docs/ANALISE.md) - [específicação](docs/SPEC.md) - [roadmap](docs/ROADMAP.md).
+Documentação do projeto: [análise técnica](docs/ANALISE.md) - [específicação](docs/SPEC.md) - [roadmap](docs/ROADMAP.md) - [notação descritiva e Stockfish](docs/ANALISE_DESCRITIVA.md).
 
 ## Requisitos
 
@@ -30,6 +30,22 @@ Executar a aplicação:
 
 ```powershell
 uv run pgn-live-editor
+```
+
+Para ativar a leitura nativa de diagramas baseada no `ChessVisionOFF_Puro`,
+instale o extra opcional (o código e o modelo padrão já fazem parte deste
+projeto; um modelo alternativo pode ser indicado por `PGN_DIAGRAM_OCR_MODEL`):
+
+```powershell
+uv sync --extra diagram-ocr
+uv run pgn-live-editor
+```
+
+Para ler o **texto** de PDFs escaneados (livro que é só imagem), o programa usa o OCR que
+já vem no Windows 10/11. Basta o extra `text-ocr` -- ele pode ir junto com o outro:
+
+```powershell
+uv sync --extra text-ocr --extra diagram-ocr
 ```
 
 Compatibilidade com o launcher antigo:
@@ -99,12 +115,21 @@ e *Exportar PGN* são ações diferentes.
 | Envolver em variante | `Ctrl+9` | a seleção vira `(...)` **já com o número de lance certo**, é o lance seguinte da linha principal recupera o dele |
 | Desenvolver | `Ctrl+Shift+K` | tira o `{}` ou `()` em volta do cursor |
 | Paragrafo vira comentário | `Ctrl+Shift+C` | pega a prosa solta sob o cursor é a envolve em chaves |
+| Colar comentário antes do lance | `Ctrl+Alt+A` | a área de transferência vira `{...}` antes do lance escolhido |
+| Colar comentário depois do lance | `Ctrl+Alt+D` | a área de transferência vira `{...}` depois do lance escolhido |
 | Renumerar documento | `Ctrl+R` | recalcula todos os números a partir do tabuleiro |
 | Promover variante | `Ctrl+Shift+Up` | a variante vira linha principal e vice-versa |
 | Conferir delimitadores | `Ctrl+Shift+B` | lista `{` e `(` sem fechamento |
 
 Digitar `{` ou `(` com texto selecionado também envolve a seleção; sem seleção, o
 delimitador já entra fechado. Cada gesto é **um único Ctrl+Z**.
+
+O lance que recebe o comentário é o que está selecionado na **árvore do PGN**,
+sob o editor — o botão direito nela oferece os dois lados com o nome do lance no
+menu, e há dois botões na barra dela. É o caminho do fluxo de livro: escolhe-se o
+lance na árvore, copia-se o parágrafo do PDF ao lado e ele entra do lado certo,
+numa linha só, sem digitar chave nenhuma. Se o lance já tem comentário depois
+dele, a prosa nova é juntada ao que estava lá.
 
 ### Copiar trechos
 
@@ -137,6 +162,15 @@ ou um `Dc7` -- letras que não existem na notação inglesa -- ele passa a ler `
 mesma posição, e escolher errado estraga a partida inteira dali para frente. Num PGN
 inglês importado nada disso acontece: sem a prova, `Re1` continua sendo a torre.
 
+Também é possível misturar lances algébricos com notação descritiva antiga nos
+comentários e variantes. Em português, exemplos como `P4R`, `PXP`, `C3BD`,
+`B5CR` e `D2D` são resolvidos pela posição do tabuleiro; abreviações como
+`PXP` priorizam a captura da peça recém-movida quando essa leitura é legal.
+Em inglês são aceitas formas como `P-K4` e `N-KB3`. O texto descritivo precisa
+manter a letra da peça em maiúscula, para `d4` algébrico continuar sendo um
+lance de peão. Quando a posição permite mais de uma leitura, as alternativas
+permanecem como pendência de revisão.
+
 ### O dicionário aprende com você
 
 `Ctrl+Shift+I` abre o dicionário de OCR. Ele tem três camadas, na ordem em que são
@@ -161,6 +195,24 @@ Selecione o trecho e mande para o cursor com `Ctrl+Enter`; o botao *Próxima
 página e anexar* percorre um capitulo sem sair do teclado. A página em que você
 parou fica guardada no projeto.
 
+Página escaneada não tem texto para extrair. Nela o painel lê a imagem sozinho, com o
+OCR do Windows (extra `text-ocr`), e o texto lido aparece no mesmo lugar -- o resto do
+fluxo não muda. *Ler texto (OCR)* relê uma página.
+
+Para um capítulo escaneado inteiro, *Ler intervalo (OCR)* lê as páginas de `de` até
+`até` e manda tudo ao cursor, com `{ PDF página N }` antes de cada página (clique de novo
+para cancelar). Em livro misto, a página que tem texto usa o texto e só a escaneada passa
+pelo OCR. O *Reconhecer PDF inteiro* faz o mesmo nas páginas sem texto.
+
+### Idioma do texto
+
+A caixa **Idioma do texto**, no alto do editor, diz em que notação o livro está:
+português (`Cf3`, `P4R`, `C3BR`), inglês (`Nf3`, `P-K4`, `N-KB3`), espanhol (`Cf3`,
+`P4R`, `C3AR`, `A5C`), alemão, francês ou italiano -- algébrica e descritiva. A escolha
+vale para o documento e fica gravada no projeto. Quando o texto colado parece estar em
+outro idioma, aparece ao lado o botão *Parece Espanhol — usar*; o programa nunca troca
+sozinho.
+
 ### Só o que foi mexido
 
 `F12` liga a **dupla visao**: o realce apaga tudo que o programa apenas confirmou
@@ -170,7 +222,8 @@ Numa partida de 80 lances com três correções, são as três que saltam -- que
 
 ### O motor desconfia por você
 
-`Ctrl+E` manda o motor conferir a linha principal da partida sob o cursor. Ele não está
+`Ctrl+E` manda o motor conferir a linha principal **e as variantes** da partida sob o
+cursor (as variantes podem ser desligadas nas Preferências). Ele não está
 ali para analisar a partida -- está para **desconfiar do OCR**. Um lance mal lido também
 é um lance legal, e por isso passa por todas as outras verificações; o que o entrega é a
 avaliação despencar sem o livro ter marcado com `?`. Se fosse erro do mestre, o livro
@@ -180,9 +233,15 @@ Quando existe um lance legal a um caractere do que foi lido, e so ele não perde
 o alerta já vem com o conserto pronto para gravar. Havendo mais de um, o alerta lista e
 **não aplica**.
 
+Numa combinação o livro mostra o erro do perdedor sem `?` e segue com a punição. Quando
+a resposta do próprio livro aproveita a queda, o alerta vira informação: é erro do
+jogador, não de leitura. E quando um lance em descritiva ficou ambíguo (`N-B3` com os dois
+cavalos podendo ir), o motor diz qual das leituras é a única que não perde material.
+
 O motor é opcional: sem Stockfish instalado o programa segue inteiro. Ele e procurado no
-`PATH`, na variavel `PGN_LIVE_EDITOR_ENGINE` ou no caminho que você apontar em
-*Revisão - Motor de xadrez...*.
+caminho que você apontar em *Revisão - Motor de xadrez...*, na variavel
+`PGN_LIVE_EDITOR_ENGINE`, na pasta `engine/` que acompanha o programa (basta pôr o
+`stockfish*.exe` ali dentro) ou no `PATH`.
 
 ### O tabuleiro
 
@@ -205,12 +264,31 @@ delimitadores. O tamanho da janela e a divisão dos paineis voltam como estavam.
 Cabeçalho, dicionário do projeto e PDF pertencem ao **livro**, não ao programa:
 ficam no `.plez`.
 
+### Diagnóstico
+
+*Ajuda - Salvar diagnóstico* grava versão, sistema, métricas de tempo e o que está
+disponível das peças opcionais (motor de xadrez, OCR de texto), nunca o texto do
+documento. Sem abrir a janela:
+
+```powershell
+uv run pgn-live-editor --diagnostico diagnostico.txt
+"PGN Live Editor.exe" --diagnostico diagnostico.txt
+```
+
 ### Segurança do trabalho
 
 - **Autosave** a cada 30 s ou a cada 200 caracteres digitados.
 - **Recuperação de sessão**: se o programa fechar sem salvar, ao reabrir ele oferece o texto de volta.
 - **Conferência na exportação**: todo PGN gerado e relido pelo `python-chess` e comparado
   com a análise antes de ser gravado. Divergencia gera aviso, nunca um arquivo silenciosamente errado.
+
+### Busca e exportação para leitura
+
+`Ctrl+Shift+F` busca texto bruto, uma sequência SAN ou uma posição FEN. Ao abrir um
+resultado, o editor seleciona exatamente o trecho correspondente. O menu *Arquivo*
+também exporta uma página HTML navegável, mantendo comentários, variantes e NAGs.
+O relatório de qualidade pode ser exibido na tela ou salvo em `.txt` para arquivar
+as pendências de uma revisão.
 
 ### Atalhos
 
