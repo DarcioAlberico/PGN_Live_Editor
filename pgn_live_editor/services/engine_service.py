@@ -59,6 +59,9 @@ from .project_service import app_data_dir
 MATE_SCORE = 10_000
 
 ENGINE_ENV_VAR = "PGN_LIVE_EDITOR_ENGINE"
+
+#: Quanto esperar o motor responder ao `uci` na abertura (ver `EngineSession.open`).
+ENGINE_START_TIMEOUT_S = 30.0
 ENGINE_SETTINGS_FILE = "engine.json"
 # Pasta do motor que acompanha o programa (`engine/stockfish/...exe`).
 BUNDLED_ENGINE_DIR = "engine"
@@ -241,7 +244,10 @@ class EngineSession:
         import chess.engine
 
         try:
-            self._engine = chess.engine.SimpleEngine.popen_uci(self.path)
+            # O padrao do python-chess (10 s) estoura no primeiro uso do dia: o
+            # Stockfish carrega a rede NNUE do disco frio e o antivirus examina o
+            # executavel. Com a maquina ocupada, isso passava dos 10 s (Q-03).
+            self._engine = chess.engine.SimpleEngine.popen_uci(self.path, timeout=ENGINE_START_TIMEOUT_S)
         except (OSError, ValueError) as exc:
             raise EngineUnavailable(f"Não foi possível iniciar o motor em {self.path}.\n\n{exc}") from exc
         return self
