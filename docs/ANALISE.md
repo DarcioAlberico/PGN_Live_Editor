@@ -1,6 +1,8 @@
 # Análise Técnica — PGN Live Editor
 
-> Estado analisado: código em `app/`, 29 testes passando, 2 trabalhos reais em `Trabalhos Salvos/`.
+> Estado histórico: o código atual está em `pgn_live_editor/`, com corpus e
+> testes em `tests/`. As referências a `app/` e aos 29 testes abaixo pertencem
+> ao diagnóstico original; use os caminhos atuais ao implementar correções.
 > Todos os defeitos abaixo foram **reproduzidos empiricamente** contra o pipeline real (venv do projeto),
 > não são suposições de leitura de código.
 
@@ -256,9 +258,136 @@ tirar o sufixo. Livro imprime a anotação colada o tempo todo.
 
 ---
 
+## 2c. Defeitos achados por um livro de repertório inglês
+
+Os três abaixo apareceram quando *The Najdorf Bg5 Revisited* (Lukasz Jarmula,
+Thinkers Publishing 2021) entrou no corpus — 746 páginas, 275 partidas, e uma
+chave de símbolos impressa na página 5 que serve de gabarito. O padrão é o mesmo
+de 2b, com uma diferença que vale registrar: **os três são defeitos silenciosos
+de avaliação**, não de lance. Nada quebra, nada some, nada acende no painel de
+alertas. O PGN sai plausível e errado, e só a página impressa ao lado revela.
+
+### 🔴 D20 — `+-` era exportado como `$16` (metade da avaliação)
+
+`SYMBOL_PATTERNS` reescrevia `+-` como `±` e `-+` como `∓`. Mas `±` é `$16`,
+"claramente melhor", e `+-` é `$18`, **"ganha"** — são linhas diferentes na chave
+de símbolos de qualquer livro, e a forma ASCII de `±` é `+/-`, não `+-`.
+
+Só no volume 1 do Najdorf são **191 ocorrências de `+–` e 27 de `–+`**: duzentas
+e dezoito posições ganhas que o programa exportava como "um pouco melhor". Nada
+falha, nada avisa. É o defeito mais caro desta lista pelo mesmo motivo que o
+torna difícil de achar.
+
+### 🔴 D21 — O NFKC destruía a avaliação antes de qualquer análise
+
+A fonte de símbolos da Thinkers (e da Quality Chess, e da Everyman) reaproveita
+codepoints latinos: `²` é "brancas um pouco melhor", `³` é o mesmo para as
+pretas, `µ` é "pretas claramente melhor". O normalizador faz NFKC no primeiro
+passo, e o NFKC converte `²` em `2`, `³` em `3` e `¹` em `1`.
+
+Resultado: colar a página crua transformava `Rad8³` em `Rad83` — que não é lance
+nem avaliação, e vira candidato não reconhecido. **212 avaliações** perdidas por
+página colada, e junto com elas o lance que as carregava.
+
+### 🟠 D22a — A suíte lia as preferências reais da máquina
+
+`app_data_dir()` apontava sempre para o perfil do usuário, e os testes iam
+junto: preferências, dicionário global, caminho do motor, arquivos recentes.
+Um `locale` gravado num dia derrubava três testes no outro — e derrubava **só
+naquela máquina**, porque o CI roda num runner limpo e continuava verde. Pior:
+os testes que gravam preferência estavam mexendo no perfil de verdade.
+
+**Regra nova:** `PGN_LIVE_EDITOR_HOME` desvia o diretório de dados. A suíte
+aponta para uma pasta temporária; instalação portátil e diagnóstico com perfil
+limpo ganham a mesma porta de graça.
+
+### 🔴 D22b — Janelas mortas-vivas derrubavam o processo
+
+`deleteLater` **agenda** a destruição para a próxima volta do laço de eventos.
+Um teste de interface que nunca gira o laço termina deixando a janela viva; a
+suíte acumulava uma dúzia delas até algum teste adiante chamar `QTest.qWait` —
+e aí todas morriam de uma vez, no meio de outro teste, com os timers e as
+threads de todas disparando juntos. O processo morria com corrupção de heap
+(`0xc0000374`), **sem exceção e sem traceback**, num teste que não tinha nada a
+ver com a causa. Rodar os arquivos separadamente escondia o defeito.
+
+Duas causas de fundo, as duas corrigidas no produto e não só no teste:
+
+- `QTimer.singleShot` estático não tem dono: ele guardava um método ligado a
+  uma janela já destruída do lado C++ e disparava assim mesmo. Timers com dono
+  (`qt_helpers.single_shot`) morrem com quem os criou.
+- O trabalhador do `parse_worker` era destruído **depois** de a thread dele
+  parar, ou seja, pela thread errada. Agora ele morre junto com o laço de
+  eventos que o hospedava (`thread.finished → runner.deleteLater`), que é o
+  idioma que o Qt documenta.
+
+### 🟠 D22c — A novidade teórica custava um alerta e sumia
+
+`12.Nf4N` era lido como um token só, "consertado" para `Nf4` por Levenshtein e
+reportado como correção automática: o usuário via um aviso amarelo, e o `N` —
+que é `$146`, novidade teórica — desaparecia. Pôr `N` no padrão de NAG resolveria
+o sumiço e criaria um defeito muito pior: todo `Nc6` do documento viraria
+avaliação.
+
+**Regra nova:** sufixo de livro só casa **colado no fim de um lance**
+(espiada-atrás por caractere que termina um SAN). `12.Nf4N` acha a novidade;
+`2.Nf3 Nc6` não tem nada colado e fica intacto.
+
+### 🟠 D22 — Três listas de NAG, todas incompletas
+
+O tokenizador procurava nove glifos, o renderizador convertia treze e a paleta
+oferecia treze — três listas, três conteúdos. `Rxc6©` não chegava a ser lance
+(o tokenizador não conhecia `©`), `Bh6!‚` idem, e os símbolos que mudam de número
+conforme o lado só tinham tratamento para zugzwang. A correção não é acrescentar
+símbolo em três lugares: é ter **um** lugar (SPEC §2.8).
+
+---
+
 ## 3. Diagnóstico em uma frase
 
+O produto já tem um núcleo forte de reconhecimento tolerante e edição assistida;
+o próximo gargalo é a confiança operacional: provar de onde veio cada leitura,
+manter as decisões humanas após reanálise e revisar apenas o que ainda é
+ambíguo.
+
+## 4. Auditoria complementar — 2026-09-10
+
+### Revisão 1: coerência com a implementação
+
+- O pacote real é `pgn_live_editor`, não `app`; links antigos da análise são
+  históricos e devem ser atualizados quando uma linha for reutilizada.
+- Persistência `.plez`, autosave, múltiplas partidas, dicionário, painel PDF,
+  motor, árvores, NAGs e exportações auxiliares já aparecem no código e nos
+  testes; não devem voltar ao roadmap como tarefas novas.
+- A alegação histórica de suíte verde depende de um ambiente preparado. Nesta
+  auditoria, `python -m compileall` passou, mas `pytest -q` não iniciou porque
+  `PyQt6` não está instalado no ambiente atual. O procedimento de validação deve
+  começar por `uv sync`.
+
+### Revisão 2: riscos de produção que permanecem
+
+- O AST e os spans explicam a leitura atual, mas ainda falta uma entidade
+  persistente por token para distinguir confirmação automática, correção,
+  rejeição e silêncio deliberado após novas análises.
+- O painel PDF usa o texto extraído da página; PDF escaneado, ordem de colunas e
+  posição exata da seleção ainda precisam de um pipeline de origem explícito.
+- `request_id` já protege parte do trabalho assíncrono, mas a próxima versão
+  deve associar também um hash/versão do documento antes de aplicar qualquer
+  resultado tardio.
+- Exportar a linha principal correta não prova que a árvore completa, os
+  comentários e a política de pendências estão corretos; o round-trip precisa
+  comparar a estrutura inteira e produzir relatório.
+- A produtividade medida deve incluir tempo de revisão, quantidade de alertas
+  aceitos/rejeitados, falsos positivos e retorno à fonte, não apenas tempo de
+  parse.
+
+Essas duas revisões deram origem às fases 8–12 do [ROADMAP.md](ROADMAP.md) e à
+seção 7 da [SPEC.md](SPEC.md). Nenhuma delas é considerada implementada apenas
+por estar especificada.
+
 O núcleo (normalizador com spans, parser tolerante, ancoragem de variantes) é sólido e comprovadamente fiel.
-O que falta é **(a)** parar de corromper prosa e perder lances em silêncio, **(b)** poder salvar e reabrir o trabalho, **(c)** tratar um livro como um livro (várias partidas, fragmentos com FEN) e **(d)** as ferramentas de edição estrutural que transformam "colar e consertar" num fluxo rápido.
+O diagnóstico acima é histórico; para o estado atual e para o que falta para
+produção, valem a auditoria complementar, a seção 7 da SPEC e as fases 8–12 do
+roadmap.
 
 Continua em [SPEC.md](SPEC.md) e [ROADMAP.md](ROADMAP.md).
