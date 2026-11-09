@@ -298,10 +298,6 @@ def build_model(arch: ArchConfig = DEFAULT_ARCH, *, pretrained: bool = True) -> 
     return PieceClassifier(arch)
 
 
-def count_parameters(model: nn.Module) -> int:
-    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
-
-
 def preprocess_cell_to_tensor(cell_rgb: np.ndarray, arch: ArchConfig = DEFAULT_ARCH) -> torch.Tensor:
     """Recorte de casa (RGB, uint8) → tensor (C, S, S) em [0, 1].
 

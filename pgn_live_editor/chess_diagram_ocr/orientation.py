@@ -358,5 +358,4 @@ class OrientationPolicy:
         return [(rule.name, verdict.reason if (verdict := rule.decide(ev)) else None) for rule in self.rules]
 
 
-DEFAULT_POLICY = OrientationPolicy()
 """A cascata em produção. Instanciada uma vez porque as regras não têm estado."""

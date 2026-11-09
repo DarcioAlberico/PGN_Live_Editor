@@ -44,12 +44,11 @@ from .config import (
     DEFAULT_ORIENTATION_MODE,
 )
 from .detection import DiagramCandidate, detect_diagrams_in_pdf_page
-from .fen_utils import PositionCheck, check_position, square_name
+from .fen_utils import PositionCheck, check_position
 from .inference import (
     BoardPrediction,
     describe_device,
     load_model,
-    predict_board,
     predict_with_orientation,
 )
 from .pdf_io import get_pdf_page_count, render_pdf_page
@@ -263,179 +262,6 @@ class RecognizedDiagram:
             compose_fen(placement if placement is not None else self.placement, self.side_is_white)
         )
         return self.legality
-
-
-@dataclass(frozen=True)
-class RecheckReport:
-    """O que o modelo diz sobre uma amostra já rotulada, comparado ao rótulo (S-23)."""
-
-    placement: str
-    """O rótulo gravado no `labels.csv`."""
-
-    prediction: BoardPrediction
-
-    @property
-    def differing_squares(self) -> list[int]:
-        rotulo = _squares(self.placement)
-        lido = _squares(self.prediction.fen_board)
-        return [i for i in range(64) if rotulo[i] != lido[i]]
-
-    @property
-    def agrees(self) -> bool:
-        return not self.differing_squares
-
-    def describe(self, filename: str, *, max_squares: int = 12) -> str:
-        """O relatório em pt-BR que a interface mostra.
-
-        Corta em `max_squares` porque uma amostra em que o modelo discorda de 40 casas não
-        precisa de lista: ela precisa de olho humano, e a contagem já diz isso.
-        """
-        linhas = [
-            f"Amostra: {filename}",
-            f"Rotulo:  {self.placement}",
-            f"Modelo:  {self.prediction.fen_board}",
-            f"Confianca minima do modelo: {self.prediction.min_confidence:.3f}",
-            "",
-        ]
-        divergentes = self.differing_squares
-        if not divergentes:
-            linhas.append("O modelo concorda com o rotulo em todas as 64 casas.")
-            return "\n".join(linhas)
-
-        linhas.append(f"Divergem em {len(divergentes)} casa(s):")
-        rotulo = _squares(self.placement)
-        lido = _squares(self.prediction.fen_board)
-        for index in divergentes[:max_squares]:
-            confianca = float(self.prediction.square_confidences[index])
-            linhas.append(
-                f"  {square_name(index)}: rotulo {rotulo[index] or 'vazia'} | "
-                f"modelo {lido[index] or 'vazia'} ({confianca:.1%})"
-            )
-        if len(divergentes) > max_squares:
-            linhas.append(f"  ... e outras {len(divergentes) - max_squares}")
-        return "\n".join(linhas)
-
-
-def _squares(placement: str) -> list[str]:
-    """As 64 casas de um campo de peças, `""` para vazia, em ordem de leitura."""
-    casas: list[str] = []
-    for linha in str(placement).split("/"):
-        for char in linha:
-            if char.isdigit():
-                casas.extend([""] * int(char))
-            else:
-                casas.append(char)
-    return (casas + [""] * 64)[:64]
-
-
-@dataclass(frozen=True)
-class RecognitionOrigin:
-    """De onde veio um reconhecimento.
-
-    Existia como string montada por f-string em três lugares e interpretada em dois, com
-    formatos que precisavam concordar sem que nada garantisse isso. O texto continua o
-    mesmo -- `pdf:livro.pdf:page:16`, `local-image:foto.png` -- porque ele aparece na
-    barra de status e no cache de página; o que muda é haver um só lugar que o escreve e
-    o lê.
-    """
-
-    kind: str
-    """`"pdf"`, `"crop"` ou `"image"`."""
-
-    document: str = ""
-    page_index: int | None = None
-    crop: tuple[int, int, int, int] | None = None
-
-    @classmethod
-    def for_page(cls, document: str, page_index: int) -> RecognitionOrigin:
-        return cls(kind="pdf", document=document, page_index=int(page_index))
-
-    @classmethod
-    def for_crop(cls, document: str, page_index: int, crop: tuple[int, int, int, int]) -> RecognitionOrigin:
-        return cls(kind="crop", document=document, page_index=int(page_index), crop=crop)
-
-    @classmethod
-    def for_image(cls, filename: str) -> RecognitionOrigin:
-        return cls(kind="image", document=filename)
-
-    def as_text(self) -> str:
-        if self.kind == "image":
-            return f"local-image:{self.document}"
-        base = f"pdf:{self.document}:page:{self.page_index}"
-        if self.kind == "crop" and self.crop is not None:
-            x0, y0, x1, y1 = self.crop
-            return f"{base}:crop=({x0},{y0})-({x1},{y1})"
-        return base
-
-    def __str__(self) -> str:
-        return self.as_text()
-
-    @property
-    def is_whole_page(self) -> bool:
-        """Se o resultado cobre a página inteira, e por isso pode ir para o cache de página.
-
-        Recorte de área fica de fora: guardá-lo como "o resultado da página 16" faria a
-        navegação devolver dois diagramas onde a página tem nove -- pior que não guardar
-        nada, porque parece completo. Mesma decisão de `page_index_from_origin`.
-        """
-        return self.kind == "pdf" and self.page_index is not None
-
-    @classmethod
-    def parse(cls, text: str) -> RecognitionOrigin:
-        """Interpreta a forma textual. Origem irreconhecível vira `image`, não erro.
-
-        A origem é metadado de procedência, e uma que não bata com nenhum formato conhecido
-        ainda vale mais gravada do que trocada por uma exceção no meio de um salvamento.
-        """
-        text = str(text)
-        if text.startswith("local-image:"):
-            return cls(kind="image", document=text.partition("local-image:")[2])
-        if not text.startswith("pdf:"):
-            return cls(kind="image", document=text)
-
-        resto = text.partition("pdf:")[2]
-        # `rpartition`: o marcador que vale é o **último**. Um nome de arquivo que contenha
-        # `:page:` cortaria no lugar errado com `partition`, e o índice da página é o que
-        # decide se o resultado vai para o cache de navegação.
-        document, encontrou, cauda = resto.rpartition(":page:")
-        if not encontrou:
-            return cls(kind="image", document=text)
-        page_part, marcador, _crop = cauda.partition(":crop=")
-        try:
-            page_index = int(page_part)
-        except ValueError:
-            return cls(kind="image", document=text)
-        return cls(
-            kind="crop" if marcador else "pdf",
-            document=document,
-            page_index=page_index,
-        )
-
-    def sample_fields(self) -> dict[str, Any]:
-        """Os campos de procedência da S-19, no formato que `append_training_sample` pede.
-
-        A página vai **1-based**: é o número que o usuário vê na interface e no leitor de
-        PDF, e gravar o índice interno faria toda amostra apontar para a página anterior.
-
-        **E o livro vai pelo NOME, não pelo caminho.** É o que `saved_diagrams_by_page` diz por
-        escrito -- *"`source_pdf` é o nome do arquivo, não o caminho: é o que a S-19 grava"* -- e o
-        que `SavedSample.source_pdf` repete. Quem chega aqui traz o caminho inteiro: `document` é
-        também a **chave de cache** da janela, e ali ele precisa ser o caminho, porque dois livros
-        de mesmo nome em pastas diferentes são dois livros.
-
-        **O defeito que isto fecha estava no disco.** 72 linhas do `labels.csv` gravadas pela
-        janela traziam `C:\\Python-Chess2\\...\\PDF\\livro.pdf` em vez de `livro.pdf`, e o efeito é
-        silencioso duas vezes: aqueles diagramas não voltam marcados de verde ao reabrir a página
-        (o índice casa por `pdf.name`), e toda contagem "por livro" vê o mesmo livro duas vezes --
-        que é a duplicata que a medição por livro já paga em outro lugar.
-
-        Aqui e não na janela porque este é o **único** ponto onde a origem vira coluna de CSV. Pôr
-        o `.name` no chamador consertaria um chamador; os próximos escreveriam o caminho de novo.
-        """
-        livro = Path(self.document).name if self.document else ""
-        if self.kind == "image" or self.page_index is None:
-            return {"source_pdf": livro, "source_page": ""}
-        return {"source_pdf": livro, "source_page": self.page_index + 1}
 
 
 @dataclass(frozen=True)
@@ -658,42 +484,6 @@ class OcrService:
             refine=options.refine_detected_boards,
         )
 
-    def recognize_region(
-        self,
-        page_rgb: np.ndarray,
-        region: tuple[int, int, int, int],
-        *,
-        options: RecognitionOptions,
-    ) -> list[RecognizedDiagram]:
-        """Reconhece um retângulo escolhido à mão sobre a página.
-
-        Cai para a imagem inteira quando não acha contorno: quem arrastou o mouse em volta
-        do diagrama já respondeu onde ele está, e recusar por causa do detector jogaria
-        fora essa informação.
-        """
-        x0, y0, x1, y1 = region
-        h, w = page_rgb.shape[:2]
-        x0 = max(0, min(w - 1, int(x0)))
-        y0 = max(0, min(h - 1, int(y0)))
-        x1 = max(x0 + 1, min(w, int(x1)))
-        y1 = max(y0 + 1, min(h, int(y1)))
-        cropped = np.ascontiguousarray(page_rgb[y0:y1, x0:x1])
-        if cropped.size == 0:
-            raise ValueError("Seleção vazia: o retângulo escolhido não cobre nenhum pixel.")
-
-        return self.recognize_image(
-            cropped,
-            options=RecognitionOptions(
-                model_path=options.model_path,
-                orientation=options.orientation,
-                max_boards=options.max_boards,
-                dpi=options.dpi,
-                normalizer=options.normalizer,
-                refine_detected_boards=options.refine_detected_boards,
-                fallback_to_full_image=True,
-            ),
-        )
-
     def _predict_boards(
         self,
         *,
@@ -748,61 +538,6 @@ class OcrService:
         return diagrams
 
     # ---------------------------------------------------------------------------- dataset
-
-    def recheck_label(self, board_rgb: np.ndarray, placement: str) -> RecheckReport:
-        """Roda o modelo numa amostra já rotulada e compara com o rótulo (S-23).
-
-        É o caminho para achar rótulo **humano** errado: se o modelo discorda em uma casa e
-        o rótulo é o esquisito, quem está errado é a anotação -- e o `.pt` treinado sobre
-        ela está aprendendo o erro.
-        """
-        with self.model_session() as (model, device):
-            prediction = predict_board(cv2.resize(board_rgb, (BOARD_SIZE, BOARD_SIZE)), model, device)
-        return RecheckReport(placement=placement, prediction=prediction)
-
-    def save_sample(
-        self,
-        diagram: RecognizedDiagram,
-        fen: str,
-        *,
-        csv_path: Path,
-        samples_dir: Path,
-        origin: RecognitionOrigin | None = None,
-        side_to_move: str | None = None,
-        corrected_by: str = "",
-        allow_illegal: bool = False,
-    ) -> Path:
-        """Grava a amostra rotulada com os campos de procedência da S-19.
-
-        A procedência é o que permite, depois, agrupar o split por livro (S-07), auditar
-        por fonte de detecção e voltar ao PDF para recortar de novo.
-
-        `allow_illegal` é a resposta "sim" à pergunta de `ui.legality.illegal_save_question`,
-        repassada intacta: quem decide é a pessoa, e este método não tem o que acrescentar à
-        decisão dela.
-        """
-        # `dataset.py` define `class BoardFenDataset(Dataset)` no escopo de módulo e por isso
-        # NÃO pode adiar o próprio `import torch` sem reescrita. O que se adia é a ARESTA: o
-        # serviço só precisa de `append_training_sample` quando alguém salva uma correção de
-        # treino, e não quando a janela abre. Sem esta linha, abrir um PDF exige torch.
-        from .dataset import append_training_sample
-
-        campos: dict[str, Any] = {"source_pdf": "", "source_page": ""}
-        if origin is not None:
-            campos = origin.sample_fields()
-
-        return append_training_sample(
-            board_rgb=diagram.board_rgb,
-            fen=fen,
-            csv_path=csv_path,
-            samples_dir=samples_dir,
-            allow_illegal=allow_illegal,
-            side_to_move=side_to_move if side_to_move is not None else diagram.side_to_move,
-            source_diagram=diagram.index + 1,
-            detection_source=diagram.detection_source,
-            corrected_by=corrected_by,
-            **campos,
-        )
 
 
 def refine_board_from_quad(

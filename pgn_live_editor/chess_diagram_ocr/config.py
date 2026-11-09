@@ -110,29 +110,6 @@ ReadingOrder = Literal["row", "column"]
 # "column" e o correto para a maioria dos livros de xadrez, que sao de duas colunas.
 DEFAULT_READING_ORDER: ReadingOrder = "column"
 
-# Quantos tabuleiros 800x800x3 (1,83 MiB cada) ficam residentes no cache do dataset
-# (S-26). O cache sem teto de antes carregava os 3.208 e chegava a 6,11 GiB de pico de
-# RSS medidos.
-#
-# A S-26 sugere 256 (~470 MiB). Medido, 256 e desperdicio: com BoardGroupedSampler o
-# conjunto de trabalho e uma janela de BOARDS_PER_CHUNK tabuleiros, e cada tabuleiro e
-# lido uma vez por epoca com cache >= a janela. De 128 para 256 a taxa de acerto nao
-# muda -- so a memoria. 2x a janela deixa folga para o prefetch do DataLoader, que le
-# adiante e pode atravessar a fronteira de duas janelas.
-DEFAULT_BOARD_CACHE_SIZE = 128
-
-# O loader de validacao roda com shuffle=False, e ai o acesso ja e estritamente
-# sequencial: um cache de 1 tabuleiro basta para 98% de acerto (ha teste para isso).
-# Dar a validacao o mesmo cache do treino dobrava a memoria residente sem trocar por nada.
-VAL_BOARD_CACHE_SIZE = 4
-
-# Tabuleiros cujas casas sao embaralhadas juntas pelo BoardGroupedSampler (S-26).
-# O valor equilibra duas coisas em tensao: quanto menor, menor o conjunto de trabalho do
-# cache; quanto maior, mais misturado o lote -- e um lote de 128 casas vindo de 2
-# tabuleiros so tem a estatistica de 2 posicoes, o que deixa o BatchNorm ruidoso.
-# 64 tabuleiros sao 117 MiB residentes e 4.096 casas por janela.
-BOARDS_PER_CHUNK = 64
-
 
 def _project_root() -> Path:
     """Onde ficam `data/`, `models/`, `PDF/` e `PGN/`.
@@ -156,7 +133,6 @@ def _project_root() -> Path:
 
 PROJECT_ROOT = _project_root()
 
-BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
 """Onde ficam os recursos **somente-leitura** que vão dentro do bundle (`assets/`).
 
 Igual a `PROJECT_ROOT` num checkout. Congelado, é a pasta interna do PyInstaller -- e a
@@ -165,9 +141,7 @@ misturar os dois é o que faz reinstalar apagar trabalho.
 """
 
 DEFAULT_DATASET_CSV = PROJECT_ROOT / "data" / "labels.csv"
-DEFAULT_SAMPLES_DIR = PROJECT_ROOT / "data" / "samples"
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "piece_classifier.pt"
-DEFAULT_PDF_DIR = PROJECT_ROOT / "PDF"
 
 DEFAULT_SPLITS_PATH = PROJECT_ROOT / "data" / "splits.csv"
 """A partição, aqui e em nenhum outro lugar (S-383).
@@ -179,37 +153,7 @@ no outro. Hoje as duas fórmulas dão o mesmo arquivo, e é justamente aí que m
 mudar o `labels.csv` de pasta faria metade dos comandos seguir e a outra metade ficar, e a
 diferença apareceria como "o `cvoff-eval` mede outro conjunto que o `cvoff-audit`"."""
 
-DEFAULT_DPI = 220
 """DPI de renderização de página. Era o literal `220` em doze declarações de `--dpi` (S-383).
 
 O número tem razão medida -- é o DPI em que a detecção da S-08 foi calibrada -- e um literal
 repetido doze vezes é um número sem dono: mudá-lo obrigaria a achar as doze."""
-
-
-def find_default_pdf_path() -> Path | None:
-    if not DEFAULT_PDF_DIR.exists():
-        return None
-
-    pdfs = sorted(path for path in DEFAULT_PDF_DIR.glob("*.pdf") if path.is_file())
-    return pdfs[0] if pdfs else None
-
-
-def caminho_para_relatorio(caminho: Path | str) -> str:
-    """O caminho como um relatório deve grava-lo: relativo à raiz quando cabe dentro dela.
-
-    **É o campo que se lê primeiro, e por isso ele não pode depender de onde a máquina guarda o
-    projeto.** Um relatório com `C:/Python-Chess2/ChessVisionOFF_Puro/training_data` e outro com
-    `training_data` descrevem a mesma pasta e parecem duas; quem compara dois relatórios medidos
-    em máquinas diferentes lê o `path` antes de qualquer digest, e conclui errado. E num
-    repositório público ainda publica o layout do disco de quem mediu, que é ruído pessoal que
-    ninguém revisa depois de gravado.
-
-    **Fora da raiz sai absoluto de propósito**: aí o caminho completo é a informação -- diz que
-    aquilo não mora no repositório. Barras normalizadas para `/` porque a barra invertida vira escape no JSON e
-    o mesmo caminho sai diferente conforme o sistema.
-    """
-    caminho = Path(caminho)
-    try:
-        return caminho.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
-    except ValueError:
-        return caminho.as_posix()

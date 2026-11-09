@@ -619,16 +619,6 @@ def lines_near(
     return found
 
 
-def blocks_near(
-    page: fitz.Page,
-    bbox: tuple[float, float, float, float],
-    *,
-    radius_pt: float = DEFAULT_RADIUS_PT,
-) -> list[str]:
-    """Textos próximos ao diagrama, ordenados por distância. Assinatura da S-16."""
-    return [nearby.text for nearby in lines_near(page_text_lines(page), bbox, radius_pt=radius_pt)]
-
-
 _GroupMatch = list[tuple[TextLine, float, Placement]]
 
 
@@ -1068,21 +1058,6 @@ def _parse_lines(lines: Sequence[_ParsedLine], *, page_number: int | None) -> Di
         players=players,
         event=event,
         year=year,
-    )
-
-
-def parse_context(caption: str, *, page_number: int | None = None) -> DiagramContext:
-    """Interpreta uma legenda já recortada. Cada campo sai `None` se a legenda não o diz.
-
-    `page_number` é o número **impresso** naquela página, quando conhecido: um inteiro
-    isolado igual a ele é numeração de página, não de exercício.
-    """
-    lines = [line.strip() for line in caption.splitlines() if line.strip()]
-    if not lines:
-        return DiagramContext()
-    return _parse_lines(
-        [_ParsedLine(text=line, caption_like=True, primary=True) for line in lines],
-        page_number=page_number,
     )
 
 

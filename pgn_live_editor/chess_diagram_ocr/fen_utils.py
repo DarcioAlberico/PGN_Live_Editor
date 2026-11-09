@@ -185,10 +185,6 @@ def is_syntactically_valid_fen(fen: str) -> bool:
 is_valid_fen = is_syntactically_valid_fen
 
 
-def board_from_fen(fen: str) -> chess.Board:
-    return chess.Board(_normalize_fen(fen))
-
-
 def labels_from_fen(fen: str) -> list[int]:
     board_part = fen.split()[0] if " " in fen else fen
     rows = board_part.split("/")
@@ -233,25 +229,6 @@ def square_name(index: int) -> str:
     if not 0 <= index < 64:
         raise ValueError(f"Índice de casa fora do intervalo 0..63: {index}")
     return f"{'abcdefgh'[index % 8]}{8 - index // 8}"
-
-
-def square_from_reading_index(index: int) -> chess.Square:
-    """Índice em ordem de leitura (0 = a8) para casa do `python-chess` (0 = a1).
-
-    As duas numerações convivem no projeto e a conversão estava implícita em cada lugar que
-    precisava dela (`app_tkinter._draw_board_canvas` fazia `(7 - row) * 8 + col` na mão). O
-    heatmap da S-21 e o painel de legalidade precisam ir e voltar entre elas o tempo todo.
-    """
-    if not 0 <= index < 64:
-        raise ValueError(f"Índice de casa fora do intervalo 0..63: {index}")
-    return chess.square(index % 8, 7 - index // 8)
-
-
-def reading_index_from_square(square: chess.Square) -> int:
-    """Inversa de `square_from_reading_index`."""
-    if not 0 <= square < 64:
-        raise ValueError(f"Casa fora do intervalo 0..63: {square}")
-    return (7 - chess.square_rank(square)) * 8 + chess.square_file(square)
 
 
 def pawn_direction_score(class_indices: Sequence[int]) -> float | None:
