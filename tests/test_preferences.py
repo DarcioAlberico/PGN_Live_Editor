@@ -10,6 +10,8 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
+import _isolation  # noqa: F401
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402

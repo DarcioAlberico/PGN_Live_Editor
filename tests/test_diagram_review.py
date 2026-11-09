@@ -1,3 +1,5 @@
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.diagram_review import pending_records, set_review_state, upsert_record
 
 

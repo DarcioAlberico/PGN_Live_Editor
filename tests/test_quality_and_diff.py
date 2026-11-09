@@ -1,3 +1,5 @@
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.parser import TolerantParser
 from pgn_live_editor.core.project_diff import compare_projects
 from pgn_live_editor.core.quality_report import validate_game

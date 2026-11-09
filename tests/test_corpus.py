@@ -21,6 +21,7 @@ import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import _isolation  # noqa: F401
 import chess.pgn
 
 from pgn_live_editor.core.book_import import convert_book_text

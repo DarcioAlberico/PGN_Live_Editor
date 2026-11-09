@@ -1,3 +1,5 @@
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.review_queue import (
     ReviewFilter,
     accept_identical,

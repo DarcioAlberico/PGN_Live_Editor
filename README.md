@@ -326,8 +326,14 @@ as pendências de uma revisão.
 Executar os testes:
 
 ```powershell
-uv run python -m unittest discover -s tests
+uv run pytest
 ```
+
+Use o `pytest`: é o único runner suportado. O `conftest.py` purga as janelas
+de cada teste de interface, e sem isso a suíte pode morrer com corrupção de
+heap. Todo arquivo de teste importa `tests/_isolation.py`, que desvia o
+diretório de dados para uma pasta temporária, então nenhum runner toca as suas
+preferências, o dicionário global ou os recentes.
 
 ### Corpus de regressao
 

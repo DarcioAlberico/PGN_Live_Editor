@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import _isolation  # noqa: F401
+
 from pgn_live_editor.services.diagram_ocr import (
     NATIVE_SOURCE_ROOT,
     DiagramOcrAdapter,

@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import unittest
 
+import _isolation  # noqa: F401
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt  # noqa: E402

@@ -2,12 +2,13 @@
 
 Tres pontos, e os tres foram descobertos por falha real:
 
-**Diretorio de dados.** Sem o desvio abaixo, os testes leem `app.db` da maquina
+**Diretorio de dados.** Sem o desvio, os testes leem `app.db` da maquina
 de quem roda: preferencias, dicionario global, caminho do motor, arquivos
 recentes. Um `locale` gravado num dia derruba um teste no outro, e derruba **so
 ali** -- o CI, que roda num runner limpo, continua verde e o defeito parece
 coisa do desenvolvedor. Pior ainda, os testes que gravam preferencia estariam
-mexendo no perfil de verdade do usuario.
+mexendo no perfil de verdade do usuario. O desvio mora em `_isolation.py`,
+importado tambem por cada arquivo de teste, para valer fora do pytest.
 
 **Plataforma do Qt.** `offscreen` antes de qualquer `import` de PyQt6, para que
 a suite rode sem tela. Os arquivos de interface tambem o fazem por conta
@@ -28,30 +29,18 @@ que a criou, que e onde ela devia ter morrido.
 
 from __future__ import annotations
 
-import os
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
-from PyQt6.QtCore import QEvent
-from PyQt6.QtWidgets import QApplication
-
-from pgn_live_editor.services.project_service import DATA_DIR_ENV_VAR
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # `tests/` nao e pacote: os arquivos de teste se importam pelo nome
 # (`from pdf_fixture import ...`), e o pytest so poe a pasta no `sys.path`
 # quando o `rootdir` coincide. Explicito e mais barato que descobrir de novo.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-_data_dir = tempfile.TemporaryDirectory(prefix="pgn-live-editor-tests-")
-os.environ[DATA_DIR_ENV_VAR] = _data_dir.name
-
-
-def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    _data_dir.cleanup()
+import _isolation  # noqa: E402, F401 -- antes do Qt e do programa
+import pytest  # noqa: E402
+from PyQt6.QtCore import QEvent  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

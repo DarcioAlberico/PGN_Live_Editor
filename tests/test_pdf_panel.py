@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import _isolation  # noqa: F401
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pdf_fixture import write_pdf  # noqa: E402

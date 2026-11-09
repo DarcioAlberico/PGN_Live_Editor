@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _isolation  # noqa: F401
 import chess
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

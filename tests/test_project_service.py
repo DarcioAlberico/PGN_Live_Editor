@@ -8,6 +8,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.substitutions import SCOPE_PREFIX, Dictionary, Substitution
 from pgn_live_editor.services import project_service
 from pgn_live_editor.services.project_service import (

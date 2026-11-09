@@ -1,5 +1,6 @@
 import unittest
 
+import _isolation  # noqa: F401
 import chess
 
 from pgn_live_editor.core.move_tree import (

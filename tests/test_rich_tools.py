@@ -1,3 +1,4 @@
+import _isolation  # noqa: F401
 from PyQt6.QtWidgets import QApplication
 
 from pgn_live_editor.core.annotations import Arrow, VisualAnnotations

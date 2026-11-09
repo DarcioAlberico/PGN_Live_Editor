@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _isolation  # noqa: F401
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pdf_fixture import write_pdf  # noqa: E402

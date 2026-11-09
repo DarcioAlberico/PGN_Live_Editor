@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import _isolation  # noqa: F401
 import chess
 
 from pgn_live_editor.core.annotations import Arrow, SquareMark

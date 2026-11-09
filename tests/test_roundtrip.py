@@ -12,6 +12,7 @@ import io
 import unittest
 from pathlib import Path
 
+import _isolation  # noqa: F401
 import chess
 import chess.pgn
 

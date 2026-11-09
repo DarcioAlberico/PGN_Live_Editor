@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _isolation  # noqa: F401
+
 from pgn_live_editor.__main__ import main
 from pgn_live_editor.services.diagnostics import build_diagnostic_report
 

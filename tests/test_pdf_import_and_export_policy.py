@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import _isolation  # noqa: F401
 import pytest
 
 from pgn_live_editor.core.pdf_import import PdfImportSession

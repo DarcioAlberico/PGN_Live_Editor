@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.recognition_record import (
     apply_action,
     build_recognition_records,

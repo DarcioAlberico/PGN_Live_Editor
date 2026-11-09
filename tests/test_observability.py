@@ -1,3 +1,5 @@
+import _isolation  # noqa: F401
+
 from pgn_live_editor.services.observability import summarize_metrics
 
 

@@ -1,3 +1,5 @@
+import _isolation  # noqa: F401
+
 from pgn_live_editor.core.search import search_fen, search_san_sequence, search_text
 from pgn_live_editor.services.export_service import build_html
 from pgn_live_editor.services.parse_worker import ParsePipeline, build_games_for_export

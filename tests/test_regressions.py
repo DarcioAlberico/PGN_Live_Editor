@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 
+import _isolation  # noqa: F401
 import chess
 
 from pgn_live_editor.core.candidates import CandidateResolver, looks_like_move

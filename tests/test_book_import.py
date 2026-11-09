@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import unittest
 
+import _isolation  # noqa: F401
 import chess.pgn
 
 from pgn_live_editor.core.book_import import (
