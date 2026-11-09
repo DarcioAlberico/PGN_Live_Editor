@@ -4,23 +4,18 @@ from html import escape
 
 import chess
 
+from .nag_table import NAG_BY_GLYPH, Nag
 from .parser import GameAST, MoveNode
 from .pgn_headers import STANDARD_PGN_HEADERS, normalize_pgn_date, normalize_pgn_result
 
+#: Glifo -> `$n`, para os simbolos que nao dependem do lado. Vem da tabela
+#: unica de `nag_table`; os que dependem do lado (zugzwang, compensacao,
+#: iniciativa, ataque, contrajogo, apuro de tempo) sao resolvidos em
+#: `render_nags`, que tem o tabuleiro na mao.
 CANONICAL_NAG_MAP: dict[str, str] = {
-    "!": "$1",
-    "?": "$2",
-    "!!": "$3",
-    "??": "$4",
-    "!?": "$5",
-    "?!": "$6",
-    "\u25a1": "$7",
-    "=": "$10",
-    "\u221e": "$13",
-    "\u2a72": "$14",
-    "\u2a71": "$15",
-    "\u00b1": "$16",
-    "\u2213": "$17",
+    nag.glyph: nag.code
+    for nag in NAG_BY_GLYPH.values()
+    if (nag.safe_glyph or nag.suffix_only) and not nag.is_side_dependent
 }
 
 
@@ -135,20 +130,20 @@ def render_game_movetext(ast: GameAST, result_override: str | None = None, canon
     def render_nags(move: MoveNode, nags: Sequence[str]) -> list[str]:
         rendered_nags: list[str] = []
         for nag in nags:
-            if canonical_nags:
-                if nag in {"\u2a00", "\u2299"} and move.parent_fen and move.is_valid:
-                    board = chess.Board(move.parent_fen)
-                    try:
-                        board.push_san(move.display_san)
-                    except ValueError:
-                        rendered_nags.append(nag)
-                        continue
-                    rendered_nags.append("$22" if board.turn == chess.WHITE else "$23")
-                    continue
-
-                rendered_nags.append(CANONICAL_NAG_MAP.get(nag, nag))
-            else:
+            if not canonical_nags:
                 rendered_nags.append(nag)
+                continue
+
+            entry = NAG_BY_GLYPH.get(nag)
+            if entry is not None and entry.is_side_dependent:
+                # `\u2a00`, `\u00a9`, `\u2192`, `\u2191`, `\u21c6`, `\u2a01` mudam de numero conforme quem
+                # jogou. Depois do `push_san`, `board.turn` e o adversario --
+                # entao vez das pretas significa que **as brancas** jogaram.
+                code = _side_dependent_code(move, entry)
+                rendered_nags.append(code if code else nag)
+                continue
+
+            rendered_nags.append(CANONICAL_NAG_MAP.get(nag, nag))
         return rendered_nags
 
     def _variations_for_anchor(move: MoveNode, anchor_after: bool) -> list[list[MoveNode]]:
@@ -217,6 +212,28 @@ def render_game_movetext(ast: GameAST, result_override: str | None = None, canon
     if movetext:
         return f"{movetext} {result}".strip()
     return result
+
+
+def _side_dependent_code(move: MoveNode, entry: Nag) -> str:
+    """`$n` de um simbolo que muda de numero conforme o lado.
+
+    Sem tabuleiro nao ha como saber de quem se fala: nesse caso vale a forma
+    das brancas, que e o codigo base. Deixar o glifo cru no PGN seria pior --
+    quebraria a validacao de ida e volta que a SPEC 2.7 exige antes de gravar.
+    """
+    if not (move.parent_fen and move.is_valid):
+        return entry.code
+
+    board = chess.Board(move.parent_fen)
+    try:
+        board.push_san(move.display_san)
+    except ValueError:
+        return entry.code
+
+    # Depois do lance a vez ja e do adversario.
+    mover_is_white = board.turn == chess.BLACK
+    subject_is_white = mover_is_white if entry.side_is_mover else not mover_is_white
+    return entry.code_for(subject_is_white)
 
 
 def _synthetic_move_number(move: MoveNode) -> str | None:

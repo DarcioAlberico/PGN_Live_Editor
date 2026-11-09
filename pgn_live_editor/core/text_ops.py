@@ -18,8 +18,16 @@ import chess
 from .annotations import VisualAnnotations, apply_annotations, format_annotations
 from .normalizer import comment_span_end
 from .parser import GameAST, MoveNode, iter_moves
+from .tokenizer import PGNTokenizer
 
 RESULT_TAIL_RE = re.compile(r"\s*(?:1-0|0-1|1/2-1/2|\*)\s*$")
+
+#: O que, depois do SAN, ainda **pertence** ao lance: os simbolos de avaliacao.
+#: Vem da mesma tabela que o tokenizador usa, e por isso `+-`, `⩲` e o `N` de
+#: novidade contam como parte do lance tanto aqui quanto la.
+#:
+#: `[ \t]*` e nao `\s*`: um `!` na linha seguinte e do proximo lance.
+_TRAILING_NAG_RE = re.compile(rf"[ \t]*(?:{PGNTokenizer.NAG_PATTERN})")
 
 
 @dataclass
@@ -71,8 +79,54 @@ def _trim_selection(text: str, start: int, end: int) -> tuple[int, int]:
 
 
 def _sanitize_comment_body(body: str) -> str:
-    """Chaves nao aninham em PGN: viram parenteses para o texto sobreviver."""
+    """Limpa prosa para caber em uma única linha de comentário PGN.
+
+    PDF/HTML costuma trazer quebras físicas e entidades de espaço no meio da
+    frase. Dentro de ``{...}`` elas não carregam informação estrutural, então
+    viram espaços normais; chaves internas continuam sendo convertidas para
+    evitar comentários aninhados inválidos.
+    """
+    body = body.replace("&#x20;", " ").replace("&#X20;", " ").replace("&#160;", " ").replace("&nbsp;", " ")
+    body = re.sub(r"\s+", " ", body)
     return body.replace("{", "(").replace("}", ")").strip()
+
+
+def _prose_as_comment_body(body: str) -> str:
+    """Prosa vinda de fora pronta para morar entre chaves.
+
+    Duas coisas acontecem aqui. A primeira: um comentario nao pode atravessar
+    linha em branco -- passando dela, deixa de ser comentario para o
+    tokenizador --, e uma pagina de PDF na area de transferencia vem cheia
+    delas; o texto vira uma linha so. A segunda: quem copiou `{...}` de outro
+    ponto do documento quer o **conteudo**, nao um comentario dentro de outro.
+    """
+    body = body.strip()
+    if body.startswith("{") and body.endswith("}"):
+        body = body[1:-1]
+    return _sanitize_comment_body(re.sub(r"\s+", " ", body))
+
+
+def _skip_trailing_nags(text: str, position: int) -> int:
+    """Fim do lance, simbolos de avaliacao inclusive.
+
+    E onde o comentario do lance comeca: `12.Be3!` recebe `12.Be3! {…}`, e nao
+    `12.Be3 {…}!` -- o `!` e do lance, nao do que vem depois dele.
+    """
+    while True:
+        match = _TRAILING_NAG_RE.match(text, position)
+        if match is None or match.end() == position:
+            return position
+        position = match.end()
+
+
+def _comment_starting_at(text: str, position: int) -> tuple[int, int] | None:
+    """Span do comentario que comeca em `position`, saltando espaco horizontal."""
+    cursor = position
+    while cursor < len(text) and text[cursor] in " \t":
+        cursor += 1
+    if cursor < len(text) and text[cursor] == "{":
+        return (cursor, comment_span_end(text, cursor))
+    return None
 
 
 def move_number_for(move: MoveNode, *, force: bool = True) -> str | None:
@@ -278,6 +332,71 @@ def paragraph_to_comment(text: str, position: int, ast: GameAST) -> OperationRes
         return OperationResult([], "Não ha prosa solta sob o cursor.")
 
     return wrap_as_comment(text, start, end)
+
+
+def move_label(move: MoveNode) -> str:
+    """`12. Be3` -- como se fala do lance numa mensagem para o usuario."""
+    return " ".join(part for part in (move.number or move_number_for(move), move.display_san) if part)
+
+
+def insert_comment(text: str, move: MoveNode, body: str, *, before: bool) -> OperationResult:
+    """Cola prosa como comentario **do lance escolhido**, antes ou depois dele.
+
+    Os dois lados nao sao o mesmo gesto visto de dois angulos. Em
+    `7.Qd2 ( 7.Be2 … ) 7...Be7` ha mais de um ponto de insercao entre `Qd2` e
+    `Be7`: "depois de 7.Qd2" cai antes de a variante abrir e "antes de 7...Be7"
+    cai depois de ela fechar. E a diferenca que faz o comentario introdutorio de
+    um lance nao ir para dentro da variante que o precede.
+
+    Colar **antes** e antes do numero (`{c} 12.Be3`), e nao entre o numero e o
+    lance. Vale dizer o que o PGN faz com isso: um comentario no meio da linha
+    pertence, na leitura, ao lance **anterior** -- e a mesma posicao no fluxo do
+    movetext, escolhida pelo lance de que a prosa fala.
+
+    Um caso vale ser sabido de antemao, porque nao e escolha deste modulo:
+    quando o lance e seguido de uma variante que o **substitui**, a prosa entre
+    os dois e lida como introducao da variante -- e o que o PGN da editora faz
+    (`7. Qd2 ( {Placing the queen on d2 …} 7. Be2 … )`, no gabarito do Najdorf),
+    e por isso o parser faz igual. Para que ela fique com o lance, a variante
+    precisa ter a introducao dela; ai as duas convivem.
+    """
+    body = _prose_as_comment_body(body)
+    if not body:
+        return OperationResult([], "Não ha texto para colar como comentário.")
+
+    position = move.start_index if before else _skip_trailing_nags(text, move.san_end_index)
+    if not 0 <= position <= len(text):
+        return OperationResult([], "Lance fora do texto.")
+
+    label = move_label(move)
+
+    # Juntar ao comentario vizinho so vale **depois** do lance: ali o vizinho e
+    # o comentario do proprio lance, e o livro quer um comentario por lance, nao
+    # dois colados. Antes do lance, o vizinho a esquerda e do lance anterior --
+    # reescreve-lo seria mexer no que não foi escolhido.
+    existing = None if before else _comment_starting_at(text, position)
+    if existing is not None:
+        open_index, close_index = existing
+        # Sem `}` no fim quando o comentario esta aberto -- e ele continua
+        # aberto depois de juntar, que e o estado que o alerta ja aponta.
+        existing_body = text[open_index + 1 : close_index].removesuffix("}")
+        replacement = "{" + f"{existing_body.strip()} {body}".strip() + "}"
+        return OperationResult(
+            [TextEdit(open_index, close_index, replacement)],
+            f"Comentário juntado ao que {label} já tinha.",
+            select_start=open_index,
+            select_end=open_index + len(replacement),
+        )
+
+    prefix = "" if position == 0 or text[position - 1].isspace() else " "
+    suffix = "" if position >= len(text) or text[position].isspace() else " "
+    replacement = f"{prefix}{{{body}}}{suffix}"
+    return OperationResult(
+        [TextEdit(position, position, replacement)],
+        f"Comentário colado {'antes' if before else 'depois'} de {label}.",
+        select_start=position + len(prefix),
+        select_end=position + len(prefix) + len(body) + 2,
+    )
 
 
 def renumber_document(text: str, ast: GameAST) -> OperationResult:

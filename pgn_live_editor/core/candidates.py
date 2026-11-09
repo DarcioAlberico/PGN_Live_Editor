@@ -18,6 +18,7 @@ from collections.abc import Mapping
 import chess
 import Levenshtein
 
+from .descriptive import descriptive_candidates, origin_file_by_square
 from .issues import Candidate
 from .substitutions import (
     SCOPE_TOKEN,
@@ -53,7 +54,16 @@ ENGLISH_PIECE_LETTERS = frozenset("KQRBN")
 # `Cd5?` colados. Um `Bg5!` em ingles ja se salvava (o SAN casa e o `!` vira NAG
 # a parte), mas `Tg5!` em portugues morria aqui, antes de chegar ao resolvedor
 # que sabe tirar o sufixo -- e o lance sumia sem alerta nenhum.
-MOVE_CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-+#=!?∞±∓⩱⩲□]{1,7}$")
+# `/` e `×` entram pela notacao descritiva (`N/Q2-B3`, `C/4D-5C`, `A×C`), e o
+# limite subiu para caber `QR/Q1-QB1` e `P8TD=D+`.
+MOVE_CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-+#=!?∞±∓⩱⩲□/×]{1,10}$")
+# Captura descritiva sem casa nenhuma: `PxP`, `AxC`, `NPxB`, `QBPxKNP`. Peca em
+# maiuscula sempre -- e isso que separa `CxA` de uma palavra como `caxa`.
+DESCRIPTIVE_CAPTURE_RE = re.compile(r"(?:KT|[PCBTDRNKQA]){1,3}[xX×:](?:KT|[PCBTDRNKQA]){1,3}(?:[+#]|CH)?")
+# Fileira ilegivel no OCR ingles: `P-KS` (K5), `K-Kl` (K1), `N-KBS` (KB3).
+# Mais que isso (`B-IH`, `P-K'`) nao tem conserto automatico, mas tambem nao pode
+# sumir como prosa: vira candidato, e o painel mostra o alerta.
+DESCRIPTIVE_OCR_RE = re.compile(r"(?:KT|[PNBRQK]){1,3}-(?:[KQ]?(?:KT|[RNB])?[SlIZ|]|[A-Z]{1,3}['’`]?)(?:[+#]|ch)?")
 ANNOTATION_SUFFIX_RE = re.compile(r"(?:[!?]{1,2}|[∞±∓⩱⩲□])+$")
 
 # Limiares de aplicacao (SPEC 2.3).
@@ -69,6 +79,9 @@ def looks_like_move(token: str) -> bool:
     """
     if not MOVE_CANDIDATE_RE.match(token):
         return False
+    shorthand = ANNOTATION_SUFFIX_RE.sub("", token)
+    if DESCRIPTIVE_CAPTURE_RE.fullmatch(shorthand) or DESCRIPTIVE_OCR_RE.fullmatch(shorthand):
+        return True
     if not any(char.isalpha() for char in token):
         # `1945`, `26`, `1/2`: numero puro nunca e lance.
         return False
@@ -87,6 +100,10 @@ def as_dictionary(source: Dictionary | Mapping[str, str] | None) -> Dictionary:
     if isinstance(source, Dictionary):
         return source
     return Dictionary.from_token_map(source)
+
+
+# Mantido com o nome antigo: os testes e quem importava daqui continuam valendo.
+_origin_file_by_square = origin_file_by_square
 
 
 class CandidateResolver:
@@ -299,8 +316,17 @@ class CandidateResolver:
             return (0.80, f"leitura inglesa de '{token}'; o documento usa notação {self.locale}")
         return (1.0, "lance legal")
 
-    def resolve(self, token: str, board: chess.Board) -> list[Candidate]:
-        """Hipoteses legais para `token`, da mais confiavel para a menos."""
+    def _descriptive_candidates(self, token: str, board: chess.Board) -> list[Candidate]:
+        """Notacao descritiva (`P4R`, `C3AR`, `N-KB3`): ver `descriptive.py`."""
+        return descriptive_candidates(token, board, self.locale)
+
+    def resolve(self, token: str, board: chess.Board, *, fuzzy: bool = True) -> list[Candidate]:
+        """Hipoteses legais para `token`, da mais confiavel para a menos.
+
+        `fuzzy=False` pula o Levenshtein: quem so aceita leitura segura (a
+        previa de ancora de variante, o desempate pela continuacao) nunca usaria
+        o resultado dele, e ele e a parte cara -- gera o SAN de todo lance legal.
+        """
         candidates: list[Candidate] = []
         seen_sans: set[str] = set()
         exact_confidence, exact_rationale = self._exact_reading_confidence(token)
@@ -327,7 +353,12 @@ class CandidateResolver:
                 )
             )
 
-        if not candidates:
+        for candidate in self._descriptive_candidates(token, board):
+            if candidate.san not in seen_sans:
+                candidates.append(candidate)
+                seen_sans.add(candidate.san)
+
+        if not candidates and fuzzy:
             candidates = [
                 candidate for candidate in self._levenshtein_candidates(token, board) if candidate.san not in seen_sans
             ]

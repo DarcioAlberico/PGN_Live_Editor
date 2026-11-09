@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
+
+from .nag_table import BOOK_SYMBOL_ALIASES, BOOK_SYMBOL_PATTERN
 
 # Onde um comentario termina -- regra unica, usada aqui e no tokenizador.
 #
@@ -86,18 +89,27 @@ class LiveTextNormalizer:
         "­": "",  # hífen condicional herdado do PDF
         "​": "",  # espaco de largura zero
         "﻿": "",  # BOM no meio do texto
+        # Sinal de captura dos livros espanhois e russos (`C×e5`, `A×C`). Fora
+        # da notacao ele so aparece em medidas (`3 × 3`), que nao mudam de sentido.
+        "×": "x",
     }
 
     # Substituicoes seguras: ancoradas em pontuacao e em contexto de notacao,
     # nunca em letras soltas, e por isso incapazes de corromper prosa.
+    #
+    # `+-` e `-+` **nao** estao aqui de proposito. Eles ja sao os glifos
+    # canonicos de `$18` e `$19` ("brancas ganham" / "pretas ganham"), e a
+    # versao anterior os reescrevia como `±` e `∓`, que sao `$16` e `$17`
+    # ("claramente melhor"). Todo `+–` de um livro -- 191 deles so no Najdorf
+    # Bg5 Revisited -- virava meia avaliacao a menos, sem aviso nenhum.
     SYMBOL_PATTERNS: tuple[tuple[str, str], ...] = (
         (r"\b0-0-0\b", "O-O-O"),
         (r"\b0-0\b", "O-O"),
         (r"(?<=[a-h1-8QRBNO])\+\+", "#"),
         (r"=/\+", "⩱"),
         (r"\+/=", "⩲"),
-        (r"\+-", "±"),
-        (r"-\+", "∓"),
+        (r"-/\+", "∓"),
+        (r"\+/-", "±"),
     )
 
     # Numero de lance: consome **todos** os pontos consecutivos.
@@ -105,7 +117,47 @@ class LiveTextNormalizer:
     # -- o ponto orfao que foi parar nos PGN ja exportados.
     # O lookahead impede que decimais de prosa (`2.5 vezes`) sejam tocados, e
     # `\d{1,3}` impede que anos (`1945.`) sejam lidos como numero de lance.
-    MOVE_NUMBER_PATTERN = r"\b(\d{1,3})\s*((?:\.\s*)+)(?=[A-Za-z(]|[0O]-[0O]|--|$)"
+    #
+    # A virgula depois das reticencias (`2. ..., C3AR`) e do estilo espanhol e
+    # e consumida junto: sem isso o lance das pretas era lido como das brancas.
+    MOVE_NUMBER_PATTERN = r"\b(\d{1,3})\s*((?:\.\s*)+)(?:,\s*)?(?=[A-Za-z(]|[0O]-[0O]|--|$)"
+
+    # Livro ingles numera sem ponto: `1 P-K4 P-K4 2 N-KB3`. O numero so vira
+    # numero de lance se o que vem depois tiver cara de lance -- descritivo
+    # (`P-K4`, `N-KB3`, `P4R`, `PxP`) ou SAN (`e4`, `Nf3`, `O-O`). Prosa como
+    # `2 Brühl-Philidor` ou `London 1783` nao casa: tem minuscula, ou quatro digitos.
+    UNDOTTED_MOVE_NUMBER_PATTERN = (
+        r"(?<![\w.\-/])(\d{1,3})[ \t]+(?="
+        r"(?:KT|Kt|[PNBRQKCTDA]){1,3}(?:-|[x×])"  # P-K4, N-KB3, PxP
+        r"|[PCTDRA][1-8](?:[A-Z]|[ \t,;)!?+]|$)"  # P4R, C3AR, T1D
+        r"|[PCTDRA][A-Z]{1,2}[1-8x×]"  # CR5R, PDxP
+        r"|[KQRBNCDTA]?[a-h]?[1-8]?x?[a-h][1-8]"  # e4, Nf3, Cxe5
+        r"|[O0]-[O0]"
+        r")"
+    )
+    # Palavras que antecedem um numero que nao e de lance (`diagrama 23 ...`).
+    NOT_A_MOVE_NUMBER_BEFORE = re.compile(
+        r"(?<![^\W\d_])(?:diagram|diagrama|dia|fig|figura|figure|page|p|pag|pág|página|pagina|no|n|nº|núm|num|número|numero"
+        r"|chapter|capítulo|capitulo|game|partida|ex|exercício|exercise|ejemplo|exemplo|example)\.?\s*$",
+        re.IGNORECASE,
+    )
+
+    # Xeque solto (`Q-R5 +`, `Dh5 +`): o OCR separa o sinal do lance, e sozinho
+    # ele ia para o PGN como comentario `{+}`.
+    # So depois de algo que termina como lance (`Q-R5`, `BxP`, `O-O`): prosa
+    # termina em minuscula, e `brancas + pretas` fica como esta.
+    DETACHED_CHECK_PATTERN = r"(?<=[A-Z0-9])[ \t]+(\+\+|\+|#)(?=[ \t\n)]|$)"
+
+    # Captura com espacos (`P x P`, `B xP`), como o OCR entrega os livros ingleses.
+    SPACED_CAPTURE_PATTERN = (
+        r"(?<![A-Za-z0-9])((?:KT|Kt|[PNBRQKCTDA]){1,3})(?:[ \t]+[x×][ \t]*|[ \t]*[x×][ \t]+)"
+        r"(?=(?:KT|Kt|[PNBRQKCTDA]))"
+    )
+    # Origem entre parenteses na descritiva: `C(4D)5C`, `T(1A)1D`, `N(Q2)-B3`.
+    # Sem isso o `(` abria uma variante no meio do lance.
+    DESCRIPTIVE_ORIGIN_PATTERN = (
+        r"(?<![A-Za-z0-9])((?:KT|Kt|[PNBRQKCTDA])[A-Z]{0,2})\(([1-8]?[A-Z]{0,3}[1-8]?)\)(-?)(?=[1-8A-Zx×])"
+    )
 
     def __init__(self, locale: str = "en"):
         # `locale` ja nao decide letra de peca aqui (isso e do CandidateResolver),
@@ -221,6 +273,28 @@ class LiveTextNormalizer:
     # Pipeline
     # ------------------------------------------------------------------
 
+    def _replace_book_symbols(self, text: str, raw_spans: list[tuple[int, int]]) -> NormalizedText:
+        return self._replace_pattern(
+            text,
+            raw_spans,
+            BOOK_SYMBOL_PATTERN,
+            lambda match: BOOK_SYMBOL_ALIASES[match.group(0)],
+        )
+
+    @staticmethod
+    def _format_descriptive_origin(match: re.Match) -> str:
+        piece, origin = match.group(1), match.group(2)
+        following = match.string[match.end() : match.end() + 1]
+        # `N(2)xP` e captura: o traco so entra antes de uma casa de destino.
+        separator = "" if following in ("x", "×") else "-"
+        return f"{piece}/{origin}{separator}"
+
+    def _format_undotted_move_number(self, match: re.Match, whole: str) -> str:
+        number = match.group(1)
+        if int(number) == 0 or self.NOT_A_MOVE_NUMBER_BEFORE.search(whole[: match.start()]):
+            return match.group(0)
+        return f"{number}. "
+
     @staticmethod
     def _format_move_number(match: re.Match) -> str:
         number = match.group(1)
@@ -230,7 +304,14 @@ class LiveTextNormalizer:
     def normalize_with_mapping(self, raw_text: str, base_offset: int = 0) -> NormalizedText:
         raw_spans = [(base_offset + index, base_offset + index + 1) for index in range(len(raw_text))]
 
-        normalized = self._normalize_unicode(raw_text, raw_spans)
+        # Simbolo de livro **antes** do NFKC, e nao depois: a fonte de simbolos
+        # da Thinkers/Quality/Everyman reaproveita codepoints latinos, e o NFKC
+        # converte `²` em `2`, `³` em `3` e `¹` em `1`. Depois dele, `Rad8³`
+        # chega ao tokenizador como `Rad83` e a avaliacao ja nao existe.
+        normalized = self._apply_outside_comments(raw_text, raw_spans, self._replace_book_symbols)
+        text, raw_spans = normalized.text, normalized.raw_spans
+
+        normalized = self._normalize_unicode(text, raw_spans)
         text, raw_spans = normalized.text, normalized.raw_spans
 
         glyph_chars: list[str] = []
@@ -253,6 +334,33 @@ class LiveTextNormalizer:
                 ),
             )
             text, raw_spans = normalized.text, normalized.raw_spans
+
+        descriptive_steps: tuple[tuple[str, Callable[[re.Match], str]], ...] = (
+            (self.DETACHED_CHECK_PATTERN, lambda match: match.group(1)),
+            (self.SPACED_CAPTURE_PATTERN, lambda match: f"{match.group(1)}x"),
+            (self.DESCRIPTIVE_ORIGIN_PATTERN, self._format_descriptive_origin),
+        )
+        for step_pattern, step_replacement in descriptive_steps:
+            normalized = self._apply_outside_comments(
+                text,
+                raw_spans,
+                lambda current_text, current_spans, p=step_pattern, r=step_replacement: self._replace_pattern(
+                    current_text, current_spans, p, r
+                ),
+            )
+            text, raw_spans = normalized.text, normalized.raw_spans
+
+        normalized = self._apply_outside_comments(
+            text,
+            raw_spans,
+            lambda current_text, current_spans: self._replace_pattern(
+                current_text,
+                current_spans,
+                self.UNDOTTED_MOVE_NUMBER_PATTERN,
+                lambda match: self._format_undotted_move_number(match, current_text),
+            ),
+        )
+        text, raw_spans = normalized.text, normalized.raw_spans
 
         return self._apply_outside_comments(
             text,

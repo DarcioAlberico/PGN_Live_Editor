@@ -27,6 +27,9 @@ class Candidate:
     confidence: float
     source: str  # 'dicionario' | 'idioma' | 'ocr' | 'levenshtein'
     rationale: str
+    #: Texto que "Aceitar" grava no lugar do trecho, quando nao e o proprio SAN.
+    #: O lance que falta, por exemplo, entra **antes** do numero impresso.
+    replacement: str | None = None
 
     def __str__(self) -> str:
         return f"{self.san} ({self.confidence:.0%}, {self.source})"
@@ -68,10 +71,17 @@ ORPHAN_VARIATION = "ORPHAN_VARIATION"
 INVALID_DATE = "INVALID_DATE"
 INVALID_RESULT = "INVALID_RESULT"
 MISSING_SETUP = "MISSING_SETUP"
+# O numero impresso no livro nao bate com a vez de jogar: sumiu (ou sobrou) um
+# lance antes daqui -- quase sempre um lance que o OCR nao conseguiu ler.
+MOVE_NUMBER_MISMATCH = "MOVE_NUMBER_MISMATCH"
+# Lance citado na prosa ("con la amenaza T1T"): ficou no comentario, nao foi jogado.
+CITED_MOVE = "CITED_MOVE"
 
 # Fase 5: nao vem do parser, vem do motor de xadrez (services/engine_service.py).
 # Lance de linha principal que despenca a avaliacao sem o livro marcar com '?'.
 SUSPECT_BLUNDER = "SUSPECT_BLUNDER"
+# Entre leituras ambiguas de um token, o motor ve uma so que nao perde material.
+ENGINE_PREFERENCE = "ENGINE_PREFERENCE"
 
 SEVERITY_ORDER: dict[str, int] = {"error": 0, "warning": 1, "info": 2}
 

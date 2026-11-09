@@ -7,11 +7,12 @@ import unittest
 import chess
 
 from pgn_live_editor.core.normalizer import LiveTextNormalizer
-from pgn_live_editor.core.parser import TolerantParser
+from pgn_live_editor.core.parser import TolerantParser, iter_moves
 from pgn_live_editor.core.paste_cleanup import CleanupOptions, clean_pdf_text
 from pgn_live_editor.core.text_ops import (
     apply_edits,
     check_balance,
+    insert_comment,
     move_variation,
     paragraph_to_comment,
     promote_variation,
@@ -28,6 +29,11 @@ from pgn_live_editor.core.tokenizer import PGNTokenizer
 def parse(text: str, locale: str = "pt"):
     normalized = LiveTextNormalizer(locale=locale).normalize_with_mapping(text)
     return TolerantParser(locale=locale).parse(PGNTokenizer().tokenize(normalized))
+
+
+def move_named(ast, san: str):
+    """O lance de SAN `san`, onde ele estiver -- linha principal ou variante."""
+    return next(move for move in iter_moves(ast.moves) if move.display_san == san)
 
 
 def run(text: str, operation) -> str:
@@ -59,6 +65,15 @@ class WrapAsCommentTests(unittest.TestCase):
         self.assertEqual("1.e4 {texto (com chave) dentro} 2.Nf3", applied)
         self.assertEqual(1, applied.count("{"))
 
+    def test_line_breaks_and_pdf_space_entities_are_collapsed_in_comment(self):
+        text = "1.e4 If the stronger side has any pawn other than an a- or h-pawn,\n the position is always winning automatically. There is only\n&#x20;one exception!"
+        result = wrap_as_comment(text, text.index("If"), len(text))
+
+        self.assertEqual(
+            "1.e4 {If the stronger side has any pawn other than an a- or h-pawn, the position is always winning automatically. There is only one exception!}",
+            apply_edits(text, result.edits),
+        )
+
     def test_empty_selection_is_refused_with_an_explanation(self):
         result = wrap_as_comment("1.e4 e5", 3, 3)
 
@@ -70,6 +85,124 @@ class WrapAsCommentTests(unittest.TestCase):
         result = wrap_as_comment(text, text.index("{"), text.index("}") + 1)
 
         self.assertFalse(result.ok)
+
+
+class InsertCommentTests(unittest.TestCase):
+    """Colar prosa como comentario do lance escolhido, antes ou depois dele."""
+
+    def paste(self, text: str, san: str, body: str, *, before: bool) -> str:
+        result = insert_comment(text, move_named(parse(text), san), body, before=before)
+        return apply_edits(text, result.edits) if result.ok else text
+
+    def test_the_comment_lands_after_the_move(self):
+        self.assertEqual(
+            "1.e4 {prosa do livro} e5 2.Nf3",
+            self.paste("1.e4 e5 2.Nf3", "e4", "prosa do livro", before=False),
+        )
+
+    def test_the_comment_lands_before_the_move_number(self):
+        """`{c} 2.Nf3`, e nao `2. {c} Nf3`: o numero e do lance."""
+        self.assertEqual(
+            "1.e4 e5 {prosa do livro} 2.Nf3",
+            self.paste("1.e4 e5 2.Nf3", "Nf3", "prosa do livro", before=True),
+        )
+
+    def test_before_and_after_are_different_sides_of_a_variation(self):
+        """A razao de existirem os dois lados. Entre `1.e4` e `1...e5` ha mais
+        de um lugar possivel, e o comentario que fala de `e5` não pode acabar
+        dentro da variante de `e4`."""
+        text = "1.e4 ( 1.d4 d5 ) e5"
+
+        self.assertEqual(
+            "1.e4 {sobre e4} ( 1.d4 d5 ) e5",
+            self.paste(text, "e4", "sobre e4", before=False),
+        )
+        self.assertEqual(
+            "1.e4 ( 1.d4 d5 ) {sobre e5} e5",
+            self.paste(text, "e5", "sobre e5", before=True),
+        )
+
+    def test_the_evaluation_symbol_stays_glued_to_the_move(self):
+        """`1.e4! {c}`, e nao `1.e4 {c} !`: o `!` e do lance."""
+        self.assertEqual(
+            "1.e4! {duvidoso} e5",
+            self.paste("1.e4! e5", "e4", "duvidoso", before=False),
+        )
+
+    def test_a_book_symbol_also_stays_glued(self):
+        self.assertEqual(
+            "1.e4 e5 2.Nf3 ⩲ {brancas melhor} Nc6",
+            self.paste("1.e4 e5 2.Nf3 ⩲ Nc6", "Nf3", "brancas melhor", before=False),
+        )
+
+    def test_pasting_after_a_move_that_already_has_a_comment_joins_the_two(self):
+        """Um comentario por lance: o livro não escreve dois colados, e juntar
+        preserva as setas e casas coloridas que ja moram no comentario."""
+        self.assertEqual(
+            "1.e4 {[%cal Ge2e4] o que já tinha, e o que veio agora} e5",
+            self.paste("1.e4 {[%cal Ge2e4] o que já tinha,} e5", "e4", "e o que veio agora", before=False),
+        )
+
+    def test_pasting_before_a_move_does_not_touch_the_comment_of_the_previous_one(self):
+        """Ali o vizinho a esquerda e o comentario do lance **anterior**."""
+        self.assertEqual(
+            "1.e4 {sobre e4} {sobre e5} e5",
+            self.paste("1.e4 {sobre e4} e5", "e5", "sobre e5", before=True),
+        )
+
+    def test_after_a_move_that_a_variation_replaces_the_prose_introduces_the_variation(self):
+        """Não e escolha deste gesto, e sim a convenção do PGN da editora, que o
+        parser reproduz: `7. Qd2 ( {Placing the queen on d2 …} 7. Be2 … )`."""
+        applied = self.paste("1.e4 c5 2.Nf3 ( 2.Nc3 Nc6 ) d6", "Nf3", "prosa", before=False)
+
+        self.assertEqual("1.e4 c5 2.Nf3 {prosa} ( 2.Nc3 Nc6 ) d6", applied)
+        self.assertEqual(["prosa"], move_named(parse(applied), "Nc3").comments_before)
+
+    def test_a_pasted_page_becomes_one_line(self):
+        """Um comentario não atravessa linha em branco -- passando dela, deixa
+        de ser comentario para o tokenizador."""
+        applied = self.paste("1.e4 e5", "e4", "primeiro parágrafo\n\nsegundo parágrafo\n", before=False)
+
+        self.assertEqual("1.e4 {primeiro parágrafo segundo parágrafo} e5", applied)
+
+    def test_text_copied_with_the_braces_does_not_nest(self):
+        applied = self.paste("1.e4 e5", "e4", "{já veio entre chaves}", before=False)
+
+        self.assertEqual("1.e4 {já veio entre chaves} e5", applied)
+        self.assertEqual(1, applied.count("{"))
+
+    def test_inner_braces_become_parentheses(self):
+        applied = self.paste("1.e4 e5", "e4", "prosa {com chave} dentro", before=False)
+
+        self.assertEqual("1.e4 {prosa (com chave) dentro} e5", applied)
+
+    def test_nothing_to_paste_is_refused_with_an_explanation(self):
+        result = insert_comment("1.e4 e5", move_named(parse("1.e4 e5"), "e4"), "   \n ", before=False)
+
+        self.assertFalse(result.ok)
+        self.assertIn("Não ha texto", result.message)
+
+    def test_the_message_names_the_move_that_received_the_comment(self):
+        ast = parse("1.e4 e5 2.Nf3")
+        after = insert_comment("1.e4 e5 2.Nf3", move_named(ast, "e5"), "prosa", before=False)
+        before = insert_comment("1.e4 e5 2.Nf3", move_named(ast, "Nf3"), "prosa", before=True)
+
+        self.assertEqual("Comentário colado depois de 1... e5.", after.message)
+        self.assertEqual("Comentário colado antes de 2. Nf3.", before.message)
+
+    def test_the_new_comment_is_left_selected(self):
+        text = "1.e4 e5"
+        result = insert_comment(text, move_named(parse(text), "e4"), "prosa", before=False)
+        applied = apply_edits(text, result.edits)
+
+        self.assertEqual("{prosa}", applied[result.select_start : result.select_end])
+
+    def test_the_result_parses_as_the_comment_of_the_chosen_move(self):
+        applied = self.paste("1.e4 e5 2.Nf3 Nc6", "e5", "as pretas respondem no centro", before=False)
+        reparsed = parse(applied)
+
+        self.assertEqual(["as pretas respondem no centro"], move_named(reparsed, "e5").comments_after)
+        self.assertEqual(["e4", "e5", "Nf3", "Nc6"], [move.display_san for move in reparsed.moves])
 
 
 class WrapAsVariationTests(unittest.TestCase):

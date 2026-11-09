@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 
 from .candidates import looks_like_move
+from .nag_table import suffix_nag_pattern, symbolic_nag_pattern
 from .normalizer import COMMENT_PATTERN, NormalizedText
 
 # Tipos de token que estabelecem "contexto de notacao" ao redor de um candidato.
@@ -27,7 +28,18 @@ from .normalizer import COMMENT_PATTERN, NormalizedText
 # defeito possivel neste programa (D3). O preco e um alerta visivel a mais
 # quando prosa entre chaves tem cara de lance, o que e exatamente o negocio que
 # a SPEC manda fazer: duvidar em vez de adivinhar.
-NOTATION_NEIGHBOURS = {"MOVE_NUMBER", "SAN_MOVE", "MOVE_CANDIDATE", "NULL_MOVE", "COMMENT"}
+#
+# Os parenteses de variante tambem: `(2 P-KB4 PxP)` e `... N-KB3 (2 P-KB4` perdiam
+# o lance da ponta, engolido como prosa, quando o vizinho do outro lado era texto.
+NOTATION_NEIGHBOURS = {
+    "MOVE_NUMBER",
+    "SAN_MOVE",
+    "MOVE_CANDIDATE",
+    "NULL_MOVE",
+    "COMMENT",
+    "VARIANT_OPEN",
+    "VARIANT_CLOSE",
+}
 
 
 @dataclass
@@ -45,8 +57,14 @@ class Token:
 
 class PGNTokenizer:
     TRADITIONAL_NAG_PATTERN = r"(?:!!|\?\?|!\?|\?!|!|\?)"
-    SYMBOLIC_NAG_PATTERN = r"(?:∞|±|∓|⩲|⩱|=|□|⨀|⊙)"
-    NAG_PATTERN = rf"(?:\$\d+|{TRADITIONAL_NAG_PATTERN}|{SYMBOLIC_NAG_PATTERN})"
+    # Vem da tabela unica (`nag_table`), do glifo mais longo para o mais curto:
+    # a alternancia do `re` para no primeiro que casar, e sem essa ordem `+`
+    # casaria antes de `+-` e o "brancas ganham" do livro viraria outra coisa.
+    SYMBOLIC_NAG_PATTERN = symbolic_nag_pattern()
+    # Sufixo de livro (SPEC 2.2): so casa colado no lance anterior. E o que
+    # resolve o `N` de novidade sem confundi-lo com o cavalo.
+    SUFFIX_NAG_PATTERN = suffix_nag_pattern()
+    NAG_PATTERN = rf"(?:\$\d+|{TRADITIONAL_NAG_PATTERN}|{SYMBOLIC_NAG_PATTERN}|{SUFFIX_NAG_PATTERN})"
 
     TOKEN_PATTERNS = [
         # O limite do comentario mora no normalizador: o tokenizador usa
@@ -66,7 +84,7 @@ class PGNTokenizer:
         ("VARIANT_CLOSE", r"\)"),
         ("RESULT", r"(?:1-0|0-1|1/2-1/2|\*)(?=[ \t]*$)"),
         ("NAG", NAG_PATTERN),
-        ("MOVE_CANDIDATE", r"[^\s(){}]+"),
+        ("MOVE_CANDIDATE", r"[^\s(){};,]+"),
         ("TEXT", r"[^\s()]+"),
     ]
 
@@ -92,6 +110,13 @@ class PGNTokenizer:
                 token_type = name
                 cleaned = value.strip()
 
+                # A final period is sentence punctuation in prose-heavy book
+                # notation (`... B3T.`), not part of the descriptive token.
+                if token_type == "MOVE_CANDIDATE" and cleaned.endswith("."):
+                    cleaned = cleaned.rstrip(".")
+                    if not cleaned:
+                        continue
+
                 # O regex de candidato e amplo de proposito; o filtro semantico
                 # ("tem cara de lance?") decide se ele vira candidato ou prosa.
                 if token_type == "MOVE_CANDIDATE" and not looks_like_move(cleaned):
@@ -99,6 +124,8 @@ class PGNTokenizer:
 
                 normalized_start = match.start(name)
                 normalized_end = match.end(name)
+                if token_type == "MOVE_CANDIDATE":
+                    normalized_end -= len(value.strip()) - len(cleaned)
 
                 if normalized is None:
                     start_index = normalized_start
@@ -123,12 +150,21 @@ class PGNTokenizer:
 
     @staticmethod
     def _mark_notation_context(tokens: list[Token]) -> None:
+        separators = {",", ";"}
         for index, token in enumerate(tokens):
             if token.type != "MOVE_CANDIDATE":
                 continue
 
-            previous_type = tokens[index - 1].type if index > 0 else None
-            next_type = tokens[index + 1].type if index + 1 < len(tokens) else None
+            previous = index - 1
+            while previous >= 0 and tokens[previous].type == "TEXT" and tokens[previous].value in separators:
+                previous -= 1
+            following = index + 1
+            while (
+                following < len(tokens) and tokens[following].type == "TEXT" and tokens[following].value in separators
+            ):
+                following += 1
+            previous_type = tokens[previous].type if previous >= 0 else None
+            next_type = tokens[following].type if following < len(tokens) else None
             token.in_notation_context = previous_type in NOTATION_NEIGHBOURS or next_type in NOTATION_NEIGHBOURS
 
 

@@ -11,6 +11,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from .nag_table import map_book_symbols
+
 # Linha que e so um numero de pagina, com ou sem enfeite: "12", "- 12 -", "[12]".
 PAGE_NUMBER_RE = re.compile(r"^\s*[-–—\[\|]?\s*\d{1,4}\s*[-–—\]\|]?\s*$")
 # Marca de nota de rodape colada num lance: "Nf3¹", "e4*", "Bb5†".
@@ -20,6 +22,11 @@ INVISIBLE_RE = re.compile(r"[­​‌‍﻿]")
 
 @dataclass
 class CleanupOptions:
+    #: Precisa vir **antes** de `remove_footnote_marks`: `²` e `³` sao ao
+    #: mesmo tempo avaliacao de livro e marca de nota de rodape, e num livro
+    #: de xadrez sao avaliacao em praticamente toda ocorrencia -- 212 delas
+    #: so no Najdorf Bg5 Revisited, contra zero notas de rodape.
+    map_book_symbols: bool = True
     remove_invisible: bool = True
     dehyphenate: bool = True
     join_wrapped_lines: bool = True
@@ -36,9 +43,12 @@ class CleanupReport:
     joined_hyphens: int = 0
     joined_lines: int = 0
     removed_marks: int = 0
+    mapped_symbols: int = 0
 
     def summary(self) -> str:
         parts: list[str] = []
+        if self.mapped_symbols:
+            parts.append(f"{self.mapped_symbols} símbolo(s) de livro convertido(s)")
         if self.joined_hyphens:
             parts.append(f"{self.joined_hyphens} palavra(s) remontada(s)")
         if self.joined_lines:
@@ -59,6 +69,9 @@ def _repeated_lines(lines: list[str], minimum_occurrences: int = 3) -> set[str]:
 def clean_pdf_text(text: str, options: CleanupOptions | None = None) -> CleanupReport:
     options = options or CleanupOptions()
     report = CleanupReport(text=text)
+
+    if options.map_book_symbols:
+        text, report.mapped_symbols = map_book_symbols(text)
 
     if options.remove_invisible:
         text = INVISIBLE_RE.sub("", text)

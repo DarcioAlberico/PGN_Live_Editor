@@ -70,7 +70,10 @@ class CorePipelineTests(unittest.TestCase):
         self.assertIn("1. e4 e5 2. Nf3", normalized.text)
 
     def test_tokenizer_recognizes_attached_move_annotations(self):
-        text = "1.e4! e5?! 2.Nf3!! Nc6∞ 3.Bb5!? a6?? 4.Ba4+- Nf6-+ 5.O-O+/= Be7=/+"
+        # `+-` e `-+` sao `$18`/`$19` ("ganha"), nao `±`/`∓` ("claramente
+        # melhor"): sao simbolos diferentes na chave de todo livro, e a forma
+        # ASCII de `±` e `+/-`. Trocar um pelo outro rebaixa a avaliacao.
+        text = "1.e4! e5?! 2.Nf3!! Nc6∞ 3.Bb5!? a6?? 4.Ba4+- Nf6-+ 5.O-O+/= Be7=/+ 6.d4+/- Nd7-/+"
 
         normalized = LiveTextNormalizer(locale="en").normalize_with_mapping(text)
         tokens = PGNTokenizer().tokenize(normalized)
@@ -95,16 +98,39 @@ class CorePipelineTests(unittest.TestCase):
                 ("NAG", "??"),
                 ("MOVE_NUMBER", "4."),
                 ("SAN_MOVE", "Ba4"),
-                ("NAG", "±"),
+                ("NAG", "+-"),
                 ("SAN_MOVE", "Nf6"),
-                ("NAG", "∓"),
+                ("NAG", "-+"),
                 ("MOVE_NUMBER", "5."),
                 ("SAN_MOVE", "O-O"),
                 ("NAG", "⩲"),
                 ("SAN_MOVE", "Be7"),
                 ("NAG", "⩱"),
+                ("MOVE_NUMBER", "6."),
+                ("SAN_MOVE", "d4"),
+                ("NAG", "±"),
+                ("SAN_MOVE", "Nd7"),
+                ("NAG", "∓"),
             ],
         )
+
+    def test_tokenizer_recognizes_the_symbol_font_of_printed_books(self):
+        """`²³µ+–` da fonte de simbolos do livro, no texto cru vindo do PDF.
+
+        Esta e a forma em que o texto **chega**: o NFKC do normalizador
+        transformaria `²` em `2` e `³` em `3`, entao a conversao tem de
+        acontecer antes dele.
+        """
+        text = "1.e4² c5³ 2.Nf3µ d6± 3.d4+– cxd4–+ 4.Nxd4© Nf6‚ 5.Nc3ƒ a6„"
+
+        normalized = LiveTextNormalizer(locale="en").normalize_with_mapping(text)
+        tokens = PGNTokenizer().tokenize(normalized)
+
+        self.assertEqual(
+            [token.value for token in tokens if token.type == "NAG"],
+            ["⩲", "⩱", "∓", "±", "+-", "-+", "©", "→", "↑", "⇆"],
+        )
+        self.assertEqual([token.type for token in tokens if token.type == "MOVE_CANDIDATE"], [])
 
     def test_parser_attaches_direct_annotations_to_moves(self):
         text = "1.e4! e5?! 2.Nf3!! Nc6∞ 3.Bb5!? a6??"
@@ -311,8 +337,17 @@ class CorePipelineTests(unittest.TestCase):
         rendered = render_game_pgn(ast)
 
         self.assertIn(
-            "1. e4 $1 e5 $6 2. Nf3 $3 Nc6 $13 3. Bb5 $5 a6 $4 4. Ba4 $16 Nf6 $17 5. O-O $14 Be7 $15 *", rendered
+            "1. e4 $1 e5 $6 2. Nf3 $3 Nc6 $13 3. Bb5 $5 a6 $4 4. Ba4 $18 Nf6 $19 5. O-O $14 Be7 $15 *", rendered
         )
+
+    def test_render_game_pgn_picks_the_side_of_the_symbols_that_have_two_numbers(self):
+        """`©`, `→`, `⇆` mudam de numero conforme quem jogou; `⨀` conforme quem joga."""
+        text = "1.e4→ c5→ 2.Nf3© d6© 3.d4⇆ cxd4⇆ *"
+
+        tokens = PGNTokenizer().tokenize(LiveTextNormalizer(locale="en").normalize_with_mapping(text))
+        ast = TolerantParser().parse(tokens)
+
+        self.assertIn("1. e4 $40 c5 $41 2. Nf3 $44 d6 $45 3. d4 $132 cxd4 $133 *", render_game_pgn(ast))
 
     def test_render_game_pgn_converts_only_move_and_zugzwang_symbols(self):
         text = "1.e4⨀ e5⨀ 2.Nf3□ Nc6 *"

@@ -24,6 +24,8 @@ from .issues import (
     ACTION_TO_COMMENT,
     AMBIGUOUS_MOVE,
     AUTO_CORRECTED,
+    CITED_MOVE,
+    MOVE_NUMBER_MISMATCH,
     ORPHAN_VARIATION,
     UNBALANCED_PAREN,
     UNCLOSED_BRACE,
@@ -36,6 +38,30 @@ from .move_validator import MoveValidator
 from .tokenizer import Token, comment_is_unclosed
 
 MOVE_TOKEN_TYPES = {"SAN_MOVE", "MOVE_CANDIDATE"}
+
+# Palavras que anunciam um lance **citado**, nao jogado: "con la amenaza T1T",
+# "threatening N-B6", "com a ideia de Cf3". Sem numero de lance na frente, o
+# lance depois delas e parte da frase.
+CITATION_WORDS = frozenset(
+    {
+        "amenaza", "amenazas", "amenazando", "amenazar",
+        "ameaça", "ameaças", "ameaçando", "ameaçar", "ameaca", "ameacando",
+        "threat", "threats", "threatening", "threatens", "threaten",
+        "idea", "ideia", "idéia", "intending", "menace", "menaçant", "drohung",
+    }
+)  # fmt: skip
+
+# Vizinhos que fazem de `,` e `;` pontuacao entre lances, e nao prosa.
+SEPARATOR_NEIGHBOURS = {"SAN_MOVE", "MOVE_CANDIDATE", "MOVE_NUMBER", "NAG", "NULL_MOVE", "VARIANT_CLOSE"}
+
+# Quantos lances seguintes o desempate olha. Dois bastam para `PxP PxP` e para
+# `N-B3 ... N-Q2`; mais que isso encarece a analise sem ganho visivel.
+LOOKAHEAD_PLIES = 2
+# Abaixo de `CONFIDENCE_AUTO_APPLY` de proposito? Nao: a continuacao e evidencia
+# forte, mas continua sendo inferencia -- o alerta `info` mostra de onde veio.
+CONTINUATION_CONFIDENCE = 0.93
+# Janela maior para achar o lance que o OCR engoliu (ver `_missing_move_candidates`).
+MISSING_MOVE_LOOKAHEAD = 14
 
 
 class ASTNode:
@@ -117,6 +143,10 @@ class TolerantParser:
         self.issues: list[Issue] = []
         self._desynchronized = False
         self._ignored_tokens: set[str] = set()
+        # Diferenca entre o numero impresso no livro e o do tabuleiro (ver
+        # `_check_move_number`), e se o desencontro atual ja foi avisado.
+        self._number_offset: int | None = None
+        self._number_warned = False
 
     # ------------------------------------------------------------------
     # Configuracao
@@ -240,7 +270,7 @@ class TolerantParser:
         if token.type == "SAN_MOVE":
             return token.value
 
-        candidates = self.resolver.resolve(token.value, board)
+        candidates = self.resolver.resolve(token.value, board, fuzzy=False)
         if candidates and candidates[0].confidence >= CONFIDENCE_AUTO_APPLY:
             return candidates[0].san
         return None
@@ -272,11 +302,11 @@ class TolerantParser:
                 expected_is_black = board.turn == chess.BLACK
 
                 if number == board.fullmove_number and is_black == expected_is_black:
-                    score += 5
+                    score += 30
                 elif number == board.fullmove_number:
-                    score -= 4
+                    score -= 50
                 else:
-                    score -= min(6, abs(number - board.fullmove_number) + 2)
+                    score -= 50 + min(20, abs(number - board.fullmove_number) * 5)
                 continue
 
             if token.type in MOVE_TOKEN_TYPES:
@@ -396,9 +426,37 @@ class TolerantParser:
         """
         return self.resolver.notation_confirmed and self.resolver.collides_with_english(token.value)
 
-    def _build_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
+    def _build_move_node(
+        self,
+        token: Token,
+        number_token: Token | None,
+        contextual_san: str | None = None,
+        lookahead: tuple[list[Token], int] | None = None,
+    ) -> MoveNode:
         node = MoveNode(san=token, number=number_token)
         node.parent_fen = self.validator.board.fen()
+
+        if contextual_san is not None:
+            node.corrected_san = contextual_san
+            node.confidence = 0.93
+            self.validator.push_san(contextual_san)
+            candidate = Candidate(
+                contextual_san,
+                node.confidence,
+                "contexto",
+                "único lance da mesma peça que permite os dois lances seguintes",
+            )
+            node.candidates = [candidate]
+            self._add_issue(
+                "info",
+                AUTO_CORRECTED,
+                f"'{token.value}' foi lido como '{contextual_san}' para manter a continuação legal da partida.",
+                token,
+                [candidate],
+                [ACTION_ACCEPT, ACTION_IGNORE, ACTION_LEARN],
+            )
+            self._desynchronized = False
+            return node
 
         if self.validator.is_legal(token.value) and not self._reading_is_disputed(token):
             self.validator.push_san(token.value)
@@ -407,6 +465,8 @@ class TolerantParser:
             return node
 
         candidates = self.resolver.resolve(token.value, self.validator.board)
+        if len(candidates) > 1 and lookahead is not None and candidates[0].confidence < CONFIDENCE_AUTO_APPLY:
+            candidates = self._break_tie_by_continuation(candidates, self._following_move_tokens(*lookahead))
         node.candidates = candidates
         best = candidates[0] if candidates else None
 
@@ -460,6 +520,285 @@ class TolerantParser:
         self._desynchronized = True
         return node
 
+    # ------------------------------------------------------------------
+    # Desempate pela continuacao
+    # ------------------------------------------------------------------
+
+    def _check_move_number(self, number_token: Token, tokens: list[Token] | None = None, index: int = 0) -> None:
+        """O numero impresso bate com a vez de jogar?
+
+        E o unico sinal de um lance que sumiu **antes** de virar token: o OCR
+        leu `P-K'` ou `B-IH`, a palavra foi para a prosa, e dali em diante as
+        brancas jogam os lances das pretas. Um aviso por desencontro -- os
+        lances seguintes herdam o mesmo problema e nao precisam repeti-lo.
+
+        O numero e comparado **relativo** ao primeiro lance numerado: um FEN de
+        diagrama costuma trazer `1` como numero de lance enquanto o livro esta
+        no lance 24.
+        """
+        if self._desynchronized:
+            return
+        identity = self._parse_move_number_value(number_token.value)
+        if identity is None:
+            return
+        number, is_black = identity
+        board = self.validator.board
+        board_is_black = board.turn == chess.BLACK
+        if self._number_offset is None:
+            if is_black == board_is_black:
+                self._number_offset = number - board.fullmove_number
+            return
+        expected = board.fullmove_number + self._number_offset
+        if number == expected and is_black == board_is_black:
+            self._number_warned = False
+            return
+        if self._number_warned:
+            return
+        self._number_warned = True
+        side = "pretas" if board_is_black else "brancas"
+        printed = f"{number}..." if is_black else f"{number}."
+        message = (
+            f"O livro numera '{printed}', mas pela posição é a vez das {side} no lance {expected}: "
+            "provavelmente falta (ou sobra) um lance antes daqui."
+        )
+        candidates: list[Candidate] = []
+        printed_ply = 2 * number + int(is_black)
+        board_ply = 2 * expected + int(board_is_black)
+        if tokens is not None and printed_ply - board_ply == 1:
+            candidates = self._missing_move_candidates(tokens, index, number_token.value.strip())
+            if candidates:
+                message += f" O lance que falta parece ser '{candidates[0].san}'."
+        self._add_issue(
+            "warning",
+            MOVE_NUMBER_MISMATCH,
+            message,
+            number_token,
+            candidates,
+            [ACTION_ACCEPT, ACTION_IGNORE] if candidates else [ACTION_IGNORE],
+        )
+
+    def _missing_move_candidates(self, tokens: list[Token], index: int, printed_number: str) -> list[Candidate]:
+        """O unico lance que, jogado antes daqui, torna legais os lances seguintes do livro.
+
+        Nunca e aplicado sozinho: vai para o alerta como candidato, e "Aceitar"
+        insere o lance no texto antes do numero impresso.
+        """
+        # Dois lances bastam para desempatar uma leitura, mas nao para achar um
+        # lance que sumiu: quase tudo cabe no buraco. Oito lances ja exigem que o
+        # lance perdido seja o que o livro usa depois (`P-K4` antes de `P-K5`).
+        following = [tokens[index], *self._following_move_tokens(tokens, index, limit=MISSING_MOVE_LOOKAHEAD)]
+        board = self.validator.board.copy()
+        scores: dict[str, int] = {}
+        for move in list(board.legal_moves):
+            san = board.san(move)
+            board.push(move)
+            try:
+                scores[san] = self._continuation_depth(board, following)
+            finally:
+                board.pop()
+        if not scores:
+            return []
+        best = max(scores.values())
+        winners = [san for san, score in scores.items() if score == best]
+        if best < min(4, len(following)) or len(winners) != 1:
+            return []
+        san = winners[0]
+        return [
+            Candidate(
+                san,
+                0.75,
+                "lance-que-falta",
+                f"único lance que torna legais os {best} lance(s) seguinte(s) do livro",
+                replacement=f"{san} {printed_number}",
+            )
+        ]
+
+    @staticmethod
+    def _is_cited_move(tokens: list[Token], index: int) -> bool:
+        """O lance vem logo depois de "amenaza", "threatening", "ideia de"...?"""
+        previous = index - 1
+        words: list[str] = []
+        while previous >= 0 and len(words) < 3:
+            token = tokens[previous]
+            if token.type != "TEXT":
+                break
+            words.append(token.value.strip(".,;:()").lower())
+            previous -= 1
+        if not words:
+            return False
+        if words[0] in CITATION_WORDS:
+            return True
+        # "ameaça de Cf3", "idea de T1T", "threat of N-B6"
+        return words[0] in {"de", "of", "do", "da"} and len(words) > 1 and words[1] in CITATION_WORDS
+
+    def _is_move_separator(self, tokens: list[Token], index: int) -> bool:
+        """`,` ou `;` solto entre dois lances (estilo dos livros espanhois)."""
+        if tokens[index].value not in {",", ";"}:
+            return False
+        previous = tokens[index - 1].type if index > 0 else None
+        # Colada num lance, a virgula e do lance mesmo quando a prosa vem depois
+        # (`8. AxC, ganando una pieza`): sem isso o comentario nascia `{, ganando...}`.
+        return previous in SEPARATOR_NEIGHBOURS
+
+    @staticmethod
+    def _following_move_tokens(tokens: list[Token], index: int, limit: int = LOOKAHEAD_PLIES) -> list[Token]:
+        """Os proximos lances da **mesma linha**, pulando variantes e comentarios."""
+        found: list[Token] = []
+        depth = 0
+        for following in tokens[index + 1 :]:
+            if following.type == "VARIANT_OPEN":
+                depth += 1
+                continue
+            if following.type == "VARIANT_CLOSE":
+                if depth == 0:
+                    break
+                depth -= 1
+                continue
+            if depth or following.type in {"MOVE_NUMBER", "NAG", "COMMENT"}:
+                continue
+            if following.type == "TEXT" and following.value in {",", ";"}:
+                continue
+            if following.type == "SAN_MOVE" or (following.type == "MOVE_CANDIDATE" and following.in_notation_context):
+                found.append(following)
+                if len(found) == limit:
+                    break
+                continue
+            break
+        return found
+
+    def _legal_readings(self, value: str, board: chess.Board) -> list[str]:
+        try:
+            return [board.san(board.parse_san(value))]
+        except (ValueError, AssertionError):
+            pass
+        return [
+            candidate.san
+            for candidate in self.resolver.resolve(value, board, fuzzy=False)
+            if candidate.confidence >= CONFIDENCE_PROVISIONAL
+        ]
+
+    def _continuation_depth(self, board: chess.Board, following: list[Token]) -> int:
+        """Quantos dos lances seguintes continuam legais depois deste."""
+        if not following:
+            return 0
+        best = 0
+        for san in self._legal_readings(following[0].value, board)[:3]:
+            board.push_san(san)
+            try:
+                best = max(best, 1 + self._continuation_depth(board, following[1:]))
+            finally:
+                board.pop()
+            if best == len(following):
+                break
+        return best
+
+    def _break_tie_by_continuation(self, candidates: list[Candidate], following: list[Token]) -> list[Candidate]:
+        """Entre leituras igualmente provaveis, fica a unica que nao quebra a partida.
+
+        `N-B3` com os dois cavalos podendo ir, ou `PxP` com dois peoes capturando:
+        a notacao descritiva e ambigua por natureza e o livro conta com o leitor
+        para desempatar pelo que vem depois. O programa faz o mesmo -- e so
+        decide quando **uma unica** leitura deixa os lances seguintes legais.
+        """
+        if not following:
+            return candidates
+        contenders = [
+            candidate
+            for candidate in candidates
+            if candidate.confidence >= CONFIDENCE_PROVISIONAL and candidate.source != "levenshtein"
+        ]
+        if len(contenders) < 2:
+            return candidates
+
+        board = self.validator.board.copy()
+        scores: dict[str, int] = {}
+        for candidate in contenders:
+            board.push_san(candidate.san)
+            try:
+                scores[candidate.san] = self._continuation_depth(board, following)
+            finally:
+                board.pop()
+
+        best = max(scores.values())
+        winners = [san for san, score in scores.items() if score == best]
+        if best == 0 or len(winners) != 1:
+            return candidates
+
+        winner = next(candidate for candidate in contenders if candidate.san == winners[0])
+        chosen = Candidate(
+            winner.san,
+            CONTINUATION_CONFIDENCE,
+            f"{winner.source}+continuação",
+            f"{winner.rationale}; única leitura que mantém legal(is) o(s) {best} lance(s) seguinte(s)",
+        )
+        return [chosen] + [candidate for candidate in candidates if candidate.san != winner.san]
+
+    def _contextual_san_alternative(self, token: Token, tokens: list[Token], index: int) -> str | None:
+        """Repair one legal-but-inconsistent SAN typo using two-ply evidence.
+
+        Old book transcriptions occasionally contain a legal capture on the
+        wrong square, which makes the following recapture impossible. Only a
+        unique alternative by the same piece and with the same capture status
+        is accepted, and only when it makes the next two SAN moves legal.
+        """
+        if token.type != "SAN_MOVE" or not self.validator.is_legal(token.value):
+            return None
+        if self._reading_is_disputed(token):
+            return None
+
+        continuation: list[str] = []
+        for following in tokens[index + 1 :]:
+            if following.type in {"VARIANT_OPEN", "VARIANT_CLOSE", "RESULT", "COMMENT", "TEXT"}:
+                break
+            if following.type in {"MOVE_NUMBER", "NAG"}:
+                continue
+            if following.type == "SAN_MOVE" or (following.type == "MOVE_CANDIDATE" and following.in_notation_context):
+                continuation.append(following.value)
+                if len(continuation) == 2:
+                    break
+        if len(continuation) < 2:
+            return None
+
+        board = self.validator.board.copy()
+        original_move = board.parse_san(token.value)
+        moving_piece = board.piece_at(original_move.from_square)
+        if moving_piece is None:
+            return None
+
+        def legal_continuation(first_move: chess.Move) -> int:
+            board.push(first_move)
+            matched = 0
+            try:
+                for san in continuation:
+                    try:
+                        move = board.parse_san(san)
+                    except ValueError:
+                        break
+                    if move not in board.legal_moves:
+                        break
+                    board.push(move)
+                    matched += 1
+            finally:
+                for _ in range(matched + 1):
+                    board.pop()
+            return matched
+
+        original_score = legal_continuation(original_move)
+        if original_score == len(continuation):
+            return None
+
+        alternatives: list[str] = []
+        was_capture = board.is_capture(original_move)
+        for move in board.legal_moves:
+            if move == original_move or board.is_capture(move) != was_capture:
+                continue
+            piece = board.piece_at(move.from_square)
+            if piece is None or piece.piece_type != moving_piece.piece_type:
+                continue
+            if legal_continuation(move) == len(continuation):
+                alternatives.append(board.san(move))
+        return alternatives[0] if len(alternatives) == 1 else None
+
     def _build_null_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
         node = MoveNode(san=token, number=number_token)
         node.parent_fen = self.validator.board.fen()
@@ -511,6 +850,8 @@ class TolerantParser:
         self.ast = GameAST()
         self.issues = []
         self._desynchronized = False
+        self._number_offset = None
+        self._number_warned = False
         self.resolver.set_notation_confirmed(self._detect_notation_language(tokens))
 
         current_move_number_token: Token | None = None
@@ -610,6 +951,11 @@ class TolerantParser:
 
                 current_move_number_token = token
 
+            elif token.type == "TEXT" and self._is_move_separator(tokens, index):
+                # `3. P5R, C4D; 4. C3A`: a pontuacao do livro entre lances nao e
+                # comentario. Antes ela ia para o PGN como `{,}` e `{;}`.
+                pass
+
             elif token.type in {"COMMENT", "TEXT"}:
                 if token.type == "COMMENT" and comment_is_unclosed(token.value):
                     self._add_issue(
@@ -644,7 +990,28 @@ class TolerantParser:
                     index += 1
                     continue
 
-                node = self._build_move_node(token, current_move_number_token)
+                if current_move_number_token is None and self._is_cited_move(tokens, index):
+                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comments_since_last_move)
+                    self._add_issue(
+                        "info",
+                        CITED_MOVE,
+                        f"'{token.value}' foi mantido no comentário: a frase o cita (ameaça, ideia), "
+                        "não é um lance jogado. Se for, ponha o número do lance na frente.",
+                        token,
+                    )
+                    index += 1
+                    continue
+
+                if current_move_number_token is not None:
+                    self._check_move_number(current_move_number_token, tokens, index)
+
+                contextual_san = self._contextual_san_alternative(token, tokens, index)
+                node = self._build_move_node(
+                    token,
+                    current_move_number_token,
+                    contextual_san,
+                    lookahead=(tokens, index),
+                )
 
                 if pending_comments:
                     node.comments_before.extend(pending_comments)
