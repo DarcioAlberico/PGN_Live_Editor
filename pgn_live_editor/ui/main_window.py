@@ -2046,6 +2046,33 @@ class MainWindow(QMainWindow):
         self.lbl_autosave.setText("recuperação gravada")
         single_shot(self, 4000, lambda: self.lbl_autosave.setText(""))
 
+    def emergency_snapshot(self) -> None:
+        """Grava a recuperacao ja, sem olhar contador: chamado por `crash_safety`."""
+        text = self.editor_panel.document_text()
+        if text.strip():
+            write_recovery_snapshot(text, self.project.path)
+            self._last_autosaved_text = text
+
+    def show_unexpected_error(self, summary: str) -> None:
+        """Aviso nao modal: o programa continua aberto e o trabalho foi guardado."""
+        from ..services.crash_safety import log_path
+
+        location = log_path()
+        text = (
+            "Ocorreu um erro inesperado. O programa continua aberto e o texto foi "
+            "guardado para recuperação.\n\n"
+            f"{summary}" + (f"\n\nDetalhes no log:\n{location}" if location else "")
+        )
+        box = getattr(self, "_unexpected_error_box", None)
+        if box is None:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Erro inesperado")
+            box.setModal(False)
+            self._unexpected_error_box = box
+        box.setText(text)
+        box.show()
+
     def _offer_session_recovery(self):
         snapshot = read_recovery_snapshot()
         if snapshot is None:
