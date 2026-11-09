@@ -261,8 +261,10 @@ Famílias, da mais cara à mais barata:
 ### 6.5 Testes que não protegem o que dizem proteger
 
 - `test_stockfish_integration` depende da CPU (Q-03).
-- `test_roundtrip.test_corpus_is_available` depende de `Trabalhos Salvos/` estar ao lado de
-  `tests/` — rodar a suíte de outro diretório falha por ambiente, não por produto.
+- ~~`test_roundtrip.test_corpus_is_available` depende do diretório corrente~~ —
+  **falso positivo** (corrigido em 2026-11-09): o teste resolve `Trabalhos Salvos/` a partir do
+  próprio arquivo e passa rodado de `C:\`. A falha vista vinha do mutator, que copiava
+  `tests/` sem `Trabalhos Salvos/`; o defeito era da ferramenta, já corrigido nela.
 - Nenhum teste de propriedade para spans, idempotência do normalizador ou invariantes de
   árvore, embora a SPEC 7.8 os exija.
 
