@@ -304,7 +304,7 @@ fecha a família inteira; corrigir caso a caso deixa a próxima cópia viva.
 | 7 | Reproduzir pessoalmente N-01, N-02, N-04, N-09 e L-05 | não promover para o roadmap achado crítico sem ver com os próprios olhos |
 | 8 | Nenhum arquivo de código alterado; nenhum commit | a auditoria é a entrada do roadmap; commit é decisão do dono (Q-01) |
 
-Scripts de reprodução e as três ferramentas ficam em
-`C:\Users\AMD\AppData\Local\Temp\claude\7a63c60f2d88f372\67b9c469-88d9-4a01-bb41-983bb33bfbc2\scratchpad\`
-(`core_a/`, `core_b/`, `services/`, `ui/`, `ocr/`, `tools/`). O item R-004 do roadmap traz as
-ferramentas para dentro do repositório.
+Os scripts de reprodução rodaram numa pasta temporária fora do repositório; cada
+achado CONF vira teste quando o item do roadmap que o fecha é implementado (os da
+fase 14 já estão em `tests/test_quick_wins.py` e `tests/test_historic_guards.py`).
+As três ferramentas de medida estão em `tools/quality/` (R-004).
