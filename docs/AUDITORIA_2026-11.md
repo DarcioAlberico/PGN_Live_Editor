@@ -152,7 +152,7 @@ disco. Quase todos os achados graves são um caso desse único premissa errada
 | Q-03 | 🟡 médio | CONF | Testes do Stockfish são intermitentes (falha/passa em execuções seguidas): o `initialize` do python-chess tem timeout de 10 s (estoura com o PC carregado) e a avaliação usa **tempo** (50 ms), não profundidade — resultado depende da CPU. Na mesma linha o motor marca `8.Nxd5` da "celada" do Panov. |
 | Q-04 | 🟡 médio | CONF | O venv de desenvolvimento não tem `numpy`, `cv2`, `fitz`, `torch`: o subsistema de OCR de diagramas nunca roda nos testes (0 % de cobertura) e o CI não instala os extras. |
 | Q-05 | 🟡 médio | CONF | CI só em `ubuntu-latest`, mas o produto é Windows-first (WinRT OCR, PyInstaller, caminhos com acento). `mypy` só cobre `core/`; 76 erros no resto. |
-| Q-07 | 🟠 alto | CONF | **A trava do D4 não tem teste.** Desligar em [candidates.py:276-291](../pgn_live_editor/core/candidates.py#L276) a exigência de "mesma letra de peça" e subir a distância máxima de Levenshtein de 2 para 3 deixa a **suíte inteira** verde (601 de 601). A correção mais importante da Fase 2 (não reescrever `Kd5 → d5` em silêncio) pode ser desfeita por qualquer refatoração sem ninguém ver. Idem para a ordem "mais longo primeiro" das alternâncias de NAG (D20). |
+| Q-07 | 🟠 alto | CONF | **A trava do D4 não tem teste.** Desligar em [candidates.py:276-291](../pgn_live_editor/core/candidates.py#L276) a exigência de "mesma letra de peça" e subir a distância máxima de Levenshtein de 2 para 3 deixa a **suíte inteira** verde (601 de 601). A correção mais importante da Fase 2 (não reescrever `Kd5 → d5` em silêncio) pode ser desfeita por qualquer refatoração sem ninguém ver. *(Corrigido pela R-010 em 2026-11-09. A suspeita sobre a ordem "mais longo primeiro" das alternâncias de NAG, o D20, não se confirmou: os três mutantes são equivalentes na tabela atual, porque nenhum glifo simbólico é prefixo de outro.)* |
 | Q-08 | 🟡 médio | CONF (leitura) | O README manda rodar `uv run python -m unittest discover -s tests`; o `unittest` **não carrega** `tests/conftest.py`. Quem segue o README roda a suíte contra o `app_data_dir` real (preferências, dicionário global, recentes — o D22a de volta) e sem a purga de janelas que evita o crash de heap `0xc0000374`. |
 | Q-06 | 🟢 baixo | CONF | `ROADMAP.md` declara as fases 0–13 concluídas; os achados acima mostram que vários critérios de aceite (SPEC 7.7, Fase 9 "lado desconhecido vai para revisão", "nenhum lance some sem alerta") não se sustentam. |
 
@@ -230,7 +230,10 @@ Terceira rodada:
 - `candidates.py:230, 251, 259` — as regras de OCR de prefixo e de letra minúscula
   também não são observadas.
 - `nag_table.py:181, 222, 252` — trocar a ordenação "mais longo primeiro" das
-  alternâncias de regex sobrevive: nada testa que `+-` vença `+` (o D20 histórico).
+  alternâncias de regex sobrevive, mas a verificação posterior (R-010) mostrou que são
+  **mutantes equivalentes**: nenhum glifo simbólico da tabela é prefixo de outro, e `!`/`?`
+  têm padrão próprio. A ordem é defensiva; o teste que a protege para o futuro é
+  `test_every_glyph_of_the_table_survives_glued_to_a_move`.
 - O laço infinito de `layout.py` é ele próprio um achado de ferramenta: o mutator
   precisa de timeout por mutante contado como "morto" (R-004).
 
