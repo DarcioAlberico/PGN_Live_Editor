@@ -37,7 +37,8 @@ from .text_ops import OperationResult, TextEdit, check_balance
 
 INDENT = "    "
 
-_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n")
+# `\r` entra na classe para o texto vindo de arquivo com CRLF (L-17).
+_BLANK_LINE_RE = re.compile(r"\n[ \t\r]*\n")
 
 ATOM_COMMENT = "comment"
 ATOM_OPEN = "open"

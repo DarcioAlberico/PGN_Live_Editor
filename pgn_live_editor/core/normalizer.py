@@ -89,6 +89,10 @@ class LiveTextNormalizer:
         "­": "",  # hífen condicional herdado do PDF
         "​": "",  # espaco de largura zero
         "﻿": "",  # BOM no meio do texto
+        # Antes do NFKC: ele faria `½` virar `1⁄2` (barra de fracao U+2044), e
+        # `½-½` deixava de ser o resultado de empate (N-09).
+        "½": "1/2",
+        "⁄": "/",
         # Sinal de captura dos livros espanhois e russos (`C×e5`, `A×C`). Fora
         # da notacao ele so aparece em medidas (`3 × 3`), que nao mudam de sentido.
         "×": "x",
@@ -141,6 +145,8 @@ class LiveTextNormalizer:
         r"|chapter|capítulo|capitulo|game|partida|ex|exercício|exercise|ejemplo|exemplo|example)\.?\s*$",
         re.IGNORECASE,
     )
+    # A maior palavra da lista tem 9 letras; a folga cobre ponto e espacos.
+    NOT_A_MOVE_NUMBER_WINDOW = 48
 
     # Xeque solto (`Q-R5 +`, `Dh5 +`): o OCR separa o sinal do lance, e sozinho
     # ele ia para o PGN como comentario `{+}`.
@@ -291,7 +297,12 @@ class LiveTextNormalizer:
 
     def _format_undotted_move_number(self, match: re.Match, whole: str) -> str:
         number = match.group(1)
-        if int(number) == 0 or self.NOT_A_MOVE_NUMBER_BEFORE.search(whole[: match.start()]):
+        # So a vizinhanca imediata decide ("diagrama 12"). Buscar em
+        # `whole[:start]` custava o texto inteiro por numero e deixava um livro
+        # em descritiva quadratico (N-01). `search(texto, pos, endpos)` mantem o
+        # `$` no fim da janela e o lookbehind enxergando antes dela.
+        window_start = max(0, match.start() - self.NOT_A_MOVE_NUMBER_WINDOW)
+        if int(number) == 0 or self.NOT_A_MOVE_NUMBER_BEFORE.search(whole, window_start, match.start()):
             return match.group(0)
         return f"{number}. "
 

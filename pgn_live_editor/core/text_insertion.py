@@ -1,3 +1,5 @@
+import re
+
 import chess
 
 
@@ -20,10 +22,9 @@ def build_board_move_insertion(
 
 def _move_prefix(left_context: str, turn: chess.Color, fullmove_number: int) -> str:
     trimmed = left_context.rstrip()
-    white_marker = f"{fullmove_number}."
-    black_marker = f"{fullmove_number}..."
-
-    if trimmed.endswith(white_marker) or trimmed.endswith(black_marker):
+    # O numero tem de ser o token inteiro: `Game 12.` termina em "2." mas nao
+    # e o numero do lance 2 (N-15).
+    if re.search(rf"(?<![\w.]){fullmove_number}\.(?:\.\.)?$", trimmed):
         return ""
 
     if turn == chess.WHITE:

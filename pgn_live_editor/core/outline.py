@@ -33,9 +33,13 @@ PREVIEW_MOVES = 8
 
 
 def _letter(index: int) -> str:
-    if index < len(_LETTERS):
-        return _LETTERS[index]
-    return _LETTERS[index // len(_LETTERS) - 1] + _LETTERS[index % len(_LETTERS)]
+    """0 -> A, 25 -> Z, 26 -> AA ... como as colunas de uma planilha, sem teto (L-09)."""
+    letters = ""
+    index += 1
+    while index:
+        index, remainder = divmod(index - 1, len(_LETTERS))
+        letters = _LETTERS[remainder] + letters
+    return letters
 
 
 def child_label(parent: str, index: int) -> str:
