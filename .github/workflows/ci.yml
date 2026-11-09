@@ -14,6 +14,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # O PyQt6 precisa destas bibliotecas de sistema mesmo em `offscreen`; o
+      # runner do Ubuntu nao as traz (ImportError: libEGL.so.1).
+      - name: Bibliotecas de sistema do Qt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
+
       # `--frozen`: o ambiente do CI e o do uv.lock, nao o que o pip resolver
       # no dia (R-011 do docs/ROADMAP_V3.md).
       - name: Instalar dependencias
@@ -46,6 +53,13 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+
+      # O PyQt6 precisa destas bibliotecas de sistema mesmo em `offscreen`; o
+      # runner do Ubuntu nao as traz (ImportError: libEGL.so.1).
+      - name: Bibliotecas de sistema do Qt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
 
       - run: uv sync --frozen --extra dev
 
