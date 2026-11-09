@@ -25,14 +25,26 @@ from pathlib import Path
 from ..core.substitutions import LAYER_PROJECT, Dictionary
 
 PROJECT_SUFFIX = ".plez"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 3
 MAX_RECENT_FILES = 10
+MAX_PROJECT_BACKUPS = 3
+
+
+#: Sobrescreve o diretorio de dados. Serve a tres coisas, nesta ordem de
+#: importancia: **teste** (sem isto a suite le as preferencias reais da maquina
+#: -- um `locale` gravado num dia falha um teste no outro, e falha so ali),
+#: instalacao portatil em pendrive, e diagnostico com um perfil limpo.
+DATA_DIR_ENV_VAR = "PGN_LIVE_EDITOR_HOME"
 
 
 def app_data_dir() -> Path:
     """Diretorio de dados do aplicativo, criado sob demanda."""
-    base = Path(os.environ.get("APPDATA") or Path.home())
-    directory = base / "PGN Live Editor"
+    override = os.environ.get(DATA_DIR_ENV_VAR, "").strip()
+    if override:
+        directory = Path(override)
+    else:
+        base = Path(os.environ.get("APPDATA") or Path.home())
+        directory = base / "PGN Live Editor"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -50,6 +62,11 @@ class ProjectMeta:
     author: str = ""
     source: str = ""
     locale: str = "pt"
+    # Kept separate from the legacy `locale` field so interface, chess
+    # notation and OCR dictionary can evolve independently.
+    interface_locale: str = "pt"
+    notation_locale: str = "pt"
+    dictionary_locale: str = "pt"
     saved_at: float = 0.0
 
 
@@ -66,6 +83,12 @@ class ProjectState:
     # Pagina do PDF que acompanha este trabalho, para reabrir onde parou.
     pdf_path: str = ""
     pdf_page: int = 0
+    pdf_sha256: str = ""
+    # Leituras de diagramas feitas pelo OCR, para revisão e auditoria após
+    # reabrir o projeto. O dicionário é intencionalmente tolerante a futuras
+    # versões do schema.
+    diagram_records: list[dict[str, object]] = field(default_factory=list)
+    recognition_records: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +117,31 @@ def _read_json(archive: zipfile.ZipFile, name: str, fallback: dict) -> dict:
     return payload if isinstance(payload, dict) else dict(fallback)
 
 
+def validate_project_archive(path: Path) -> list[str]:
+    """Return safe, user-facing schema errors without reading document text."""
+    problems: list[str] = []
+    if not zipfile.is_zipfile(path):
+        return ["O arquivo não é um ZIP de projeto válido."]
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            names = set(archive.namelist())
+            if "raw.txt" not in names:
+                problems.append("Falta raw.txt, a fonte de verdade do projeto.")
+            for name in ("meta.json", "state.json"):
+                if name not in names:
+                    continue
+                payload = json.loads(archive.read(name).decode("utf-8"))
+                if not isinstance(payload, dict):
+                    problems.append(f"{name} precisa conter um objeto JSON.")
+            if "meta.json" in names:
+                version = int(_read_json(archive, "meta.json", {}).get("version", 1))
+                if version > FORMAT_VERSION:
+                    problems.append(f"Projeto usa o formato {version}, mas esta versão entende até {FORMAT_VERSION}.")
+    except (OSError, ValueError, TypeError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+        problems.append(f"Não foi possível validar o projeto: {exc}")
+    return problems
+
+
 def save_project(project: Project, path: Path) -> Path:
     """Grava o projeto de forma atomica (escreve ao lado e so entao troca)."""
     path = path.with_suffix(PROJECT_SUFFIX) if not path.suffix else path
@@ -116,6 +164,16 @@ def save_project(project: Project, path: Path) -> Path:
                 json.dumps({"entries": project.dictionary.to_list()}, ensure_ascii=False, indent=2),
             )
             archive.writestr("state.json", json.dumps(asdict(project.state), ensure_ascii=False, indent=2))
+        if path.exists():
+            # Keep a short, deterministic rotation.  The destination is
+            # moved only after the new archive is complete, so an interrupted
+            # write cannot destroy the last valid project.
+            for index in range(MAX_PROJECT_BACKUPS - 1, 0, -1):
+                older = path.with_suffix(path.suffix + f".bak.{index - 1}" if index > 1 else path.suffix + ".bak")
+                newer = path.with_suffix(path.suffix + f".bak.{index}")
+                if older.exists():
+                    older.replace(newer)
+            path.replace(path.with_suffix(path.suffix + ".bak"))
         temp_path.replace(path)
     except BaseException:
         temp_path.unlink(missing_ok=True)
@@ -127,8 +185,9 @@ def save_project(project: Project, path: Path) -> Path:
 
 def load_project(path: Path) -> Project:
     """Le um `.plez`. Levanta ValueError se o arquivo nao for um projeto valido."""
-    if not zipfile.is_zipfile(path):
-        raise ValueError("O arquivo não e um projeto do PGN Live Editor.")
+    schema_problems = validate_project_archive(path)
+    if schema_problems:
+        raise ValueError("Projeto inválido: " + " ".join(schema_problems))
 
     with zipfile.ZipFile(path, "r") as archive:
         names = set(archive.namelist())
@@ -139,12 +198,19 @@ def load_project(path: Path) -> Project:
         meta_payload = _read_json(archive, "meta.json", {})
         state_payload = _read_json(archive, "state.json", {})
 
+        stored_version = int(meta_payload.get("version", 1))
+        if stored_version > FORMAT_VERSION:
+            raise ValueError(f"Projeto usa o formato {stored_version}, mas esta versão entende até {FORMAT_VERSION}.")
+        legacy_locale = str(meta_payload.get("locale", "pt"))
         meta = ProjectMeta(
-            version=int(meta_payload.get("version", FORMAT_VERSION)),
+            version=FORMAT_VERSION,
             title=str(meta_payload.get("title", "")),
             author=str(meta_payload.get("author", "")),
             source=str(meta_payload.get("source", "")),
-            locale=str(meta_payload.get("locale", "pt")),
+            locale=legacy_locale,
+            interface_locale=str(meta_payload.get("interface_locale", legacy_locale)),
+            notation_locale=str(meta_payload.get("notation_locale", legacy_locale)),
+            dictionary_locale=str(meta_payload.get("dictionary_locale", legacy_locale)),
             saved_at=float(meta_payload.get("saved_at", 0.0)),
         )
         state = ProjectState(
@@ -156,6 +222,13 @@ def load_project(path: Path) -> Project:
             },
             pdf_path=str(state_payload.get("pdf_path", "")),
             pdf_page=int(state_payload.get("pdf_page", 0)),
+            pdf_sha256=str(state_payload.get("pdf_sha256", "")),
+            diagram_records=[
+                dict(record) for record in state_payload.get("diagram_records", []) if isinstance(record, dict)
+            ],
+            recognition_records=[
+                dict(record) for record in state_payload.get("recognition_records", []) if isinstance(record, dict)
+            ],
         )
 
         return Project(

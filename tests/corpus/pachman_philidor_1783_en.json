@@ -1,0 +1,8 @@
+{
+  "locale": "en",
+  "cleanup": true,
+  "games": 1,
+  "prose_must_survive": [
+    "Bishop's Opening"
+  ]
+}

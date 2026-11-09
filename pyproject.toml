@@ -24,6 +24,25 @@ dev = [
 package = [
     "pyinstaller>=6.10",
 ]
+# OCR de texto para PDF escaneado, com o OCR embutido no Windows 10/11
+# (services/text_ocr.py). Fora do Windows os pacotes nao instalam e o
+# programa segue sem o botao.
+text-ocr = [
+    "winrt-runtime>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Globalization>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Graphics.Imaging>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Media.Ocr>=3.2; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams>=3.2; sys_platform == 'win32'",
+]
+diagram-ocr = [
+    "numpy>=1.26.0",
+    "opencv-python>=4.9.0",
+    "pymupdf>=1.24.0",
+    "torch>=2.6",
+    "torchvision>=0.21",
+]
 
 [project.scripts]
 pgn-live-editor = "pgn_live_editor.__main__:main"
@@ -32,7 +51,7 @@ pgn-live-editor = "pgn_live_editor.__main__:main"
 include = ["pgn_live_editor*"]
 
 [tool.setuptools.package-data]
-pgn_live_editor = ["data/*.json"]
+pgn_live_editor = ["data/*.json", "models/*.pt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

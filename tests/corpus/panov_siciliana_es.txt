@@ -1,0 +1,18 @@
+1. P4R P4AD Continuación clásica
+
+2. C3AR P3R
+
+(2. ..., C3AR 3. P5R, C4D; 4. C3A, P3R; 5. C×C, P×C; 6. P4D, C3A;
+7. P×P, A×P; 8. D×P, D3C; 9. A4AD.)
+
+3. P4D P×P 4. C×P C3AR 5. C3AD C3A
+
+(En caso de seguir 5. ..., A5C, 6. P5R, C4D; 7. A2D, C×C; 8.
+P×C, A2R; 9. D4C) (5. ..., P3D, 6. A2R, P3TD; 7. P4TD, C3A;
+8. A3R, D2A; 9. 0-0, A2R; 10. P4A, 0-0; 11. C3C.)
+
+6. C(4D)5C A5C
+
+(¡Ojo a la celada! Que a 6. ..., P4D? sigue 7. P×P, P×P; 8. C×P!, C×C; 9. D×C, D×D; 10. C7A+.)
+
+7. P3TD

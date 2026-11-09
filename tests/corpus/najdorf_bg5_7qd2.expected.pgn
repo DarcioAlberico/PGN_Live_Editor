@@ -1,0 +1,9 @@
+[Event "PGN Live Editor Export"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Bg5 e6 7. Qd2 ( {Placing the queen on d2 in the 6.Bg5 Najdorf is much less desirable than in the Rauzer.} 7. Be2 {This slow approach is inconsistent with 6.Bg5. Black easily achieves comfortable play in many ways and the play has a non-forcing character, so there is not much point in delving too deeply into variations. An illustrative line runs as follows:} 7... Be7 8. O-O Qc7 9. Qd3 h6 10. Bd2 O-O 11. Rfd1 Kh8 12. a4 b6 13. Qg3 Bb7 14. f3 Nbd7 15. Be3 Ne5 $10 {The position is approximately equal, but perhaps easier to play for Black.} ) 7... Be7 ( 7... h6 8. Be3 ( 8. Bh4 $2 {falls into an elementary trap:} 8... Nxe4 $1 $17 ) ( 8. Bxf6 Qxf6 9. O-O-O Nc6 10. Nb3 $6 {This has been the most popular move, but it’s way too passive to pose Black any problems. It is White who will have to be precise in order not to be worse.} ( 10. Nxc6 bxc6 11. f4 Qd8 12. Bc4 Be7 $10 {White has the freer play, but Black has the bishop pair and the solid centre.} ) 10... b5 11. f4 Qd8 12. Kb1 Be7 13. h4 b4 14. Ne2 Bb7 15. g4 a5 16. Nbd4 $1 {Admitting that the knight isn’t well placed on b3.} ( {After} 16. Bg2 $6 e5 $1 $17 {White doesn’t get another chance to occupy the d4-square.} ) 16... Qb6 17. f5 Nxd4 18. Nxd4 e5 19. Nb5 Rd8 20. Qg2 Bc6 21. c4 a4 $10 {The position is roughly equal, with my slight preference being for Black.} ) 8... Ng4 ( 8... b5 9. f3 {transposes to the 6.Be3 e6 variation, with Black having the ‘free’ move ...h6. This is rather beneficial for him.} ) 9. O-O-O Nxe3 10. Qxe3 Nc6 11. Kb1 Be7 12. f4 Qb6 ) 8. O-O-O *

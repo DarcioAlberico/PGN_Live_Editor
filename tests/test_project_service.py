@@ -22,6 +22,7 @@ from pgn_live_editor.services.project_service import (
     read_recovery_snapshot,
     remember_recent_file,
     save_project,
+    validate_project_archive,
     write_recovery_snapshot,
 )
 
@@ -61,6 +62,28 @@ class ProjectRoundTripTests(unittest.TestCase):
         self.assertEqual(["[D]"], reopened.state.ignored_issue_tokens)
         self.assertGreater(reopened.meta.saved_at, 0.0)
 
+    def test_diagram_ocr_records_survive_round_trip(self):
+        project = Project(
+            raw_text='[FEN "8/8/8/8/8/8/4K3/4k3 b - - 0 1"]',
+            state=ProjectState(
+                diagram_records=[
+                    {
+                        "pdf_path": "livro.pdf",
+                        "page": 12,
+                        "diagram": 2,
+                        "fen": "8/8/8/8/8/8/4K3/4k3 b - - 0 1",
+                        "review": "pending",
+                    }
+                ]
+            ),
+        )
+
+        reopened = load_project(save_project(project, self.tmp / "diagramas"))
+
+        self.assertEqual(1, len(reopened.state.diagram_records))
+        self.assertEqual(12, reopened.state.diagram_records[0]["page"])
+        self.assertEqual("pending", reopened.state.diagram_records[0]["review"])
+
     def test_a_project_saved_before_the_scoped_dictionary_still_opens(self):
         """Formato antigo: `dictionary.json` era um mapa simples."""
         path = save_project(Project(raw_text="1.e4"), self.tmp / "antigo")
@@ -90,6 +113,16 @@ class ProjectRoundTripTests(unittest.TestCase):
         self.assertEqual([], list(self.tmp.glob("*.tmp")), "sobrou arquivo temporario")
         self.assertEqual(1, len(list(self.tmp.glob(f"*{PROJECT_SUFFIX}"))))
 
+    def test_project_backups_rotate_without_replacing_the_current_file(self):
+        path = save_project(Project(raw_text="versão 0"), self.tmp / "rotativo")
+        for version in range(1, 5):
+            save_project(Project(raw_text=f"versão {version}"), path)
+
+        self.assertEqual("versão 4", load_project(path).raw_text)
+        self.assertEqual("versão 3", load_project(path.with_suffix(".plez.bak")).raw_text)
+        self.assertEqual("versão 2", load_project(path.with_suffix(".plez.bak.1")).raw_text)
+        self.assertEqual("versão 1", load_project(path.with_suffix(".plez.bak.2")).raw_text)
+
     def test_opening_a_file_that_is_not_a_project_fails_clearly(self):
         stray = self.tmp / "qualquer.plez"
         stray.write_text("isto não e um zip", encoding="utf-8")
@@ -104,6 +137,14 @@ class ProjectRoundTripTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             load_project(broken)
+
+    def test_schema_validation_accepts_current_project_and_reports_missing_raw(self):
+        path = save_project(Project(raw_text="1.e4"), self.tmp / "validado")
+        self.assertEqual([], validate_project_archive(path))
+        broken = self.tmp / "sem-raw.plez"
+        with zipfile.ZipFile(broken, "w") as archive:
+            archive.writestr("meta.json", "{}")
+        self.assertTrue(any("raw.txt" in item for item in validate_project_archive(broken)))
 
 
 class ImportTests(unittest.TestCase):

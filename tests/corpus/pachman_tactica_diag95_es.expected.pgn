@@ -1,0 +1,11 @@
+[Event "XI Campeonato Ruso"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Duz-Khotimirsky"]
+[Black "Kotov"]
+[Result "*"]
+[FEN "r3r1k1/1b1nbppp/p3pn2/q2p2B1/Pp1P4/3BPN2/1P1N1PPP/2RQ1RK1 w - - 0 1"]
+[SetUp "1"]
+
+1. Nb3 Qxa4 2. Rc7 Rab8 ( {no es posible} 2... Bc6 {por la interesante maniobra} 3. Qc2 Bb5 4. Ra1 Bxd3 5. Qxd3 Qb5 6. Qxb5 axb5 7. Rxa8 Rxa8 8. Bxf6 {ganando una pieza} ) 3. Ne5 Nf8 ( {o bien} 3... Nxe5 4. dxe5 Nd7 5. Bxe7 Rxe7 6. Qc2 {con la amenaza T1T} ) 4. Bxf6 Bxf6 5. Qh5 Ng6 ( {si} 5... g6 6. Qf3 ) 6. Nd7 Qxb3 7. Nxf6+ gxf6 8. Rxf7 Kxf7 ( 8... Nf8 9. Bxh7+ Kh8 10. Qh6 {no se puede evitar el mate} ) 9. Qxh7+ Kf8 10. Bxg6 *

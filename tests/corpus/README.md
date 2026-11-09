@@ -19,6 +19,9 @@ Opções do `.json`:
 - `cleanup` — se `true`, o texto passa por `clean_pdf_text` antes da análise,
   que é o passo 2 do fluxo do README. Use quando a página tem artefato de
   página no meio do texto.
+- `book_import` — se `true`, o texto passa por `convert_book_text` (SPEC §3.6):
+  rótulos `A)`/`B1.2)` viram variantes, `[ … ]` vira variante, a prosa vira
+  comentário. Use para página de livro de repertório. Substitui `cleanup`.
 - `games` — quantas partidas o texto contém (padrão: o que houver no
   `.expected.pgn`).
 - `allow_errors` — número de alertas de nível `error` tolerados. O padrão é
@@ -43,3 +46,7 @@ vale mais que dez que passam — é ela que diz o que falta implementar.
 | `final_de_torre` | fragmento que parte de um diagrama: só existe com `[FEN]` + `[SetUp]` |
 | `capitulo_duas_partidas` | duas partidas na mesma colagem, a segunda sem cabeçalho, separadas por `=== Partida 2 ===` |
 | `prosa_do_livro` | prosa solta em português **fora** de chaves, com as palavras que já corromperam o texto no passado (`chances`, `Cada`, `Chega`, `mate`) |
+| `najdorf_bg5_7qd2` | três páginas cruas de *The Najdorf Bg5 Revisited* (Thinkers Publishing 2021): rótulos `A)`/`C1)`/`C2)`, colchetes, símbolos da fonte do livro (`²`, `³`, `µ`, `+–`), legendas de diagrama e números de página. O gabarito é o **PGN que a editora distribui** — 84 nós, árvore idêntica |
+| `pachman_philidor_1783_en` | notação descritiva **inglesa** como o OCR entrega: números sem ponto (`1 P-K4 P-K4 2 B-B4`), captura com espaços (`P x P`), colunas sem ala (`N-B3`, `B-N5`), peças qualificadas (`QN-Q2`, `KR-B1`, `NPxB`). O gabarito é a partida histórica Brühl–Philidor, Londres 1783 (94 lances), não a saída do programa |
+| `panov_siciliana_es` | notação descritiva **espanhola** (*ABC de las aperturas*, p. 38): `A` de alfil, colunas `AD`/`AR`, `×`, `2. ..., C3AR` com vírgula, `,`/`;` entre lances, origem entre parênteses `C(4D)5C`, prosa espanhola dentro das variantes |
+| `pachman_tactica_diag95_es` | fragmento a partir de diagrama (`[FEN]`) de *Táctica moderna en ajedrez*: captura com casa da vítima (`D×C3C`), xeque anunciado que desempata (`A×P+`), variantes aninhadas com prosa |

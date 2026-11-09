@@ -9,16 +9,44 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
+from typing import Literal
 
 import chess
 import chess.pgn
 
-from ..core.move_tree import render_game_pgn
+from ..core.move_tree import build_move_entries, render_game_html, render_game_pgn
 from ..core.parser import GameAST, MoveNode
+from .observability import measure
+
+ExportPolicy = Literal["block_pending", "confirm_pending", "quarantine"]
+
+
+@dataclass(frozen=True)
+class ExportDecision:
+    allowed: bool
+    policy: ExportPolicy
+    pending: int
+    message: str
+
+
+def decide_export(policy: ExportPolicy, *, pending: int) -> ExportDecision:
+    """Aplica a política de pendências sem depender de widgets Qt."""
+    if policy not in {"block_pending", "confirm_pending", "quarantine"}:
+        raise ValueError(f"política de exportação inválida: {policy}")
+    if pending <= 0:
+        return ExportDecision(True, policy, 0, "não há pendências")
+    if policy == "block_pending":
+        return ExportDecision(False, policy, pending, "exportação bloqueada enquanto houver pendências")
+    if policy == "quarantine":
+        return ExportDecision(True, policy, pending, "exportação permitida como quarentena")
+    return ExportDecision(True, policy, pending, "exportação requer confirmação explícita")
 
 
 @dataclass
@@ -38,6 +66,25 @@ class RoundTripReport:
         if self.ok:
             return f"Round-trip conferido: {self.actual_nodes} lances relidos sem erro."
         return "\n".join(f"- {problem}" for problem in self.problems)
+
+
+def validate_pgn_headers(headers: dict[str, str], start_fen: str = chess.STARTING_FEN) -> list[str]:
+    """Valida coerência dos headers antes da escrita do PGN."""
+    problems: list[str] = []
+    result = headers.get("Result", "*")
+    if result not in {"1-0", "0-1", "1/2-1/2", "*"}:
+        problems.append(f'Result inválido: "{result}"')
+    fen = headers.get("FEN", "").strip()
+    if fen:
+        try:
+            chess.Board(fen)
+        except ValueError as exc:
+            problems.append(f"FEN inválida: {exc}")
+        if headers.get("SetUp") not in {None, "1"}:
+            problems.append('FEN presente exige SetUp "1".')
+    elif headers.get("SetUp") == "1" and start_fen == chess.STARTING_FEN:
+        problems.append('SetUp "1" sem uma FEN inicial explícita.')
+    return problems
 
 
 def _iter_all_moves(moves: list[MoveNode]):
@@ -126,14 +173,40 @@ def validate_roundtrip(ast: GameAST, pgn_text: str, start_fen: str = chess.START
 
 def build_pgn(ast: GameAST, start_fen: str = chess.STARTING_FEN) -> tuple[str, RoundTripReport]:
     """Gera o PGN e o laudo de round-trip correspondente."""
-    pgn_text = render_game_pgn(ast)
-    return pgn_text, validate_roundtrip(ast, pgn_text, start_fen)
+    with measure("export_pgn", expected_nodes=sum(1 for _ in _iter_all_moves(ast.moves))) as metrics:
+        with measure("render_pgn", expected_nodes=sum(1 for _ in _iter_all_moves(ast.moves))):
+            pgn_text = render_game_pgn(ast)
+        report = validate_roundtrip(ast, pgn_text, start_fen)
+        metrics.update(actual_nodes=report.actual_nodes, ok=int(report.ok))
+        return pgn_text, report
+
+
+def _rotate_backups(path: Path, limit: int = 3) -> None:
+    for index in range(limit - 1, 0, -1):
+        older = path.with_suffix(path.suffix + (".bak" if index == 1 else f".bak.{index - 1}"))
+        newer = path.with_suffix(path.suffix + f".bak.{index}")
+        if older.exists():
+            older.replace(newer)
+    path.replace(path.with_suffix(path.suffix + ".bak"))
 
 
 def write_pgn(path: Path, pgn_text: str) -> None:
-    if not pgn_text.endswith("\n"):
-        pgn_text += "\n"
-    path.write_text(pgn_text, encoding="utf-8")
+    """Grava PGN preservando uma cópia recuperável da versão anterior."""
+    with measure("write_pgn", characters=len(pgn_text)):
+        if not pgn_text.endswith("\n"):
+            pgn_text += "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(suffix=path.suffix, dir=str(path.parent))
+        os.close(handle)
+        temp_path = Path(temporary)
+        try:
+            temp_path.write_text(pgn_text, encoding="utf-8")
+            if path.exists():
+                _rotate_backups(path)
+            temp_path.replace(path)
+        except BaseException:
+            temp_path.unlink(missing_ok=True)
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +237,24 @@ class BookExportReport:
         return f"{len(self.failed_games)} de {self.games} partida(s) não conferem:\n{detail}"
 
 
+def export_audit_text(report: RoundTripReport, *, pending_diagrams: int = 0, policy: str = "confirmado") -> str:
+    """Gera um laudo humano legível da exportação realizada."""
+    lines = [
+        "PGN Live Editor — relatório de exportação",
+        "==========================================",
+        f"Resultado round-trip: {'APROVADO' if report.ok else 'COM DIVERGÊNCIAS'}",
+        f"Nós esperados: {report.expected_nodes}",
+        f"Nós relidos: {report.actual_nodes}",
+        f"Lances inválidos: {len(report.invalid_moves)}",
+        f"Pendências de diagramas: {pending_diagrams}",
+        f"Política: {policy}",
+    ]
+    if report.problems:
+        lines.extend(["", "Problemas:"])
+        lines.extend(f"- {problem}" for problem in report.problems)
+    return "\n".join(lines) + "\n"
+
+
 def build_book_pgn(games: Sequence[tuple[GameAST, str]]) -> tuple[str, BookExportReport]:
     """Um unico PGN com todas as partidas, cada uma conferida por round-trip."""
     report = BookExportReport(games=len(games))
@@ -178,6 +269,37 @@ def build_book_pgn(games: Sequence[tuple[GameAST, str]]) -> tuple[str, BookExpor
 
     # Duas quebras entre partidas: e o separador que o padrao PGN exige.
     return ("\n\n".join(texts) + "\n" if texts else "", report)
+
+
+def build_html(games: Sequence[tuple[GameAST, str]]) -> str:
+    """Exporta o livro como página navegável, preservando variantes e NAGs."""
+    sections: list[str] = []
+    for index, (ast, _start_fen) in enumerate(games):
+        rendered = render_game_html(ast, build_move_entries(ast))
+        body_start = rendered.find("<body>")
+        body_end = rendered.rfind("</body>")
+        content = rendered[body_start + 6 : body_end] if body_start >= 0 and body_end > body_start else rendered
+        headers = dict(ast.headers)
+        title = " — ".join(part for part in (headers.get("White"), headers.get("Black")) if part)
+        title = title or headers.get("Event", f"Partida {index + 1}")
+        sections.append(f"<article><h2>{escape(title)}</h2>{content}</article>")
+
+    return f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PGN Live Editor — exportação</title>
+<style>
+body {{ margin: 0; background: #101216; color: #e9edf3; font-family: system-ui, sans-serif; }}
+main {{ max-width: 1100px; margin: auto; padding: 24px; }}
+article {{ background: #181b21; border: 1px solid #2b313c; border-radius: 10px; margin: 0 0 20px; overflow: hidden; }}
+h2 {{ font-size: 18px; margin: 0; padding: 14px 16px; border-bottom: 1px solid #2b313c; }}
+.wrap {{ padding: 14px 16px 20px; line-height: 1.65; font: 14px Consolas, monospace; }}
+.move {{ color: #d6e2ff; text-decoration: none; border-radius: 6px; padding: 1px 4px; }}
+.move:hover {{ background: #273244; }} .comment {{ color: #8fa2b9; font-style: italic; }}
+.variation {{ color: #c7d0dc; }} .nag {{ color: #f0c05a; font-weight: 700; }}
+.invalid {{ color: #ff8c8c; }} .corrected {{ color: #9ce1a5; }} .result {{ color: #8ee0ff; font-weight: 700; }}
+</style></head><body><main>{"".join(sections)}</main></body></html>
+"""
 
 
 # ---------------------------------------------------------------------------

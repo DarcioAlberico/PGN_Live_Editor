@@ -23,6 +23,7 @@ from pathlib import Path
 
 import chess.pgn
 
+from pgn_live_editor.core.book_import import convert_book_text
 from pgn_live_editor.core.paste_cleanup import clean_pdf_text
 from pgn_live_editor.services.export_service import build_book_pgn
 from pgn_live_editor.services.parse_worker import (
@@ -44,6 +45,9 @@ class CorpusEntry:
     expected_pgn: str
     locale: str = "pt"
     cleanup: bool = False
+    #: Pagina de livro de repertorio, com rotulos `A)`/`B1)` e colchetes:
+    #: passa pelo conversor de estrutura antes de ser analisada.
+    book_import: bool = False
     games: int | None = None
     allow_errors: int = 0
     prose_must_survive: list[str] = field(default_factory=list)
@@ -61,6 +65,7 @@ class CorpusEntry:
             expected_pgn=source.with_suffix(".expected.pgn").read_text(encoding="utf-8"),
             locale=options.get("locale", "pt"),
             cleanup=bool(options.get("cleanup", False)),
+            book_import=bool(options.get("book_import", False)),
             games=options.get("games"),
             allow_errors=int(options.get("allow_errors", 0)),
             prose_must_survive=list(options.get("prose_must_survive", [])),
@@ -68,6 +73,8 @@ class CorpusEntry:
 
     def prepared_text(self) -> str:
         """O passo 2 do fluxo do README, quando a pagina precisa dele."""
+        if self.book_import:
+            return convert_book_text(self.raw_text).text
         return clean_pdf_text(self.raw_text).text if self.cleanup else self.raw_text
 
     def analyze(self) -> list[SegmentAnalysis]:

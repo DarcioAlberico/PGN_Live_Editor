@@ -14,7 +14,9 @@ alerta persegue.
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import chess
@@ -23,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pgn_live_editor.core.issues import (  # noqa: E402
     ACTION_ACCEPT,
+    ENGINE_PREFERENCE,
     SUSPECT_BLUNDER,
 )
 from pgn_live_editor.core.normalizer import LiveTextNormalizer  # noqa: E402
@@ -36,8 +39,11 @@ from pgn_live_editor.services.engine_service import (  # noqa: E402
     ScanFindings,
     discover_engine_path,
     engine_is_available,
+    find_bundled_engine,
     is_annotated_as_bad,
     iter_mainline,
+    iter_variations,
+    scan_game,
     scan_mainline,
 )
 
@@ -280,6 +286,10 @@ class EngineSessionTests(unittest.TestCase):
         patcher = mock.patch("pgn_live_editor.services.engine_service.shutil.which", return_value=None)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Idem para o motor que acompanha o projeto em `engine/`.
+        bundled = mock.patch("pgn_live_editor.services.engine_service.find_bundled_engine", return_value="")
+        bundled.start()
+        self.addCleanup(bundled.stop)
 
     def _restore(self):
         if self._saved is not None:
@@ -299,6 +309,147 @@ class EngineSessionTests(unittest.TestCase):
 
     def test_closing_a_session_that_never_opened_is_harmless(self):
         EngineSession().close()
+
+
+class VariationScanTests(unittest.TestCase):
+    """As variantes do livro tambem passam pelo motor."""
+
+    def setUp(self):
+        self.settings = EngineSettings(threshold_cp=250)
+
+    def test_a_hanging_piece_inside_a_variation_is_reported(self):
+        ast = parse_text("1. Nd1 (1. Nd5)", start_fen=HANGING_KNIGHT_FEN)
+
+        self.assertEqual([], scan_mainline(ast, HANGING_KNIGHT_FEN, shallow_search, self.settings).issues)
+        report = scan_game(ast, HANGING_KNIGHT_FEN, shallow_search, self.settings)
+
+        self.assertEqual(1, len(report.issues), report.summary())
+        self.assertIn("variante", report.issues[0].message)
+        self.assertEqual(1, report.scanned_variation_moves)
+        self.assertIn("em variantes", report.summary())
+
+    def test_variations_can_be_switched_off(self):
+        ast = parse_text("1. Nd1 (1. Nd5)", start_fen=HANGING_KNIGHT_FEN)
+        settings = EngineSettings(threshold_cp=250, include_variations=False)
+
+        self.assertEqual([], scan_game(ast, HANGING_KNIGHT_FEN, shallow_search, settings).issues)
+
+    def test_nested_variations_start_from_their_own_position(self):
+        ast = parse_text("1. e4 e5 (1... c5 2. Nf3 (2. Nc3 Nc6) 2... d6) 2. Nf3")
+        visited = [node.display_san for node, _before, _after in iter_variations(ast)]
+
+        # A alternativa a `2. Nf3` fica pendurada em `c5` (`anchor_after`), e por
+        # isso vem logo depois dele. O que importa: cada lance, uma vez, da posicao certa.
+        self.assertEqual(["c5", "Nc3", "Nc6", "Nf3", "d6"], visited)
+
+    def test_include_variations_survives_the_settings_file(self):
+        restored = EngineSettings.from_dict(EngineSettings(include_variations=False).to_dict())
+        self.assertFalse(restored.include_variations)
+
+
+class DescriptiveRepairTests(unittest.TestCase):
+    def test_a_move_read_from_descriptive_gets_no_san_distance_repair(self):
+        """`C5D` lido como `Nd5`: `Nd1` fica a uma letra no SAN, nao no livro."""
+        ast = parse_text("1. C5D", start_fen=HANGING_KNIGHT_FEN)
+        report = scan_mainline(ast, HANGING_KNIGHT_FEN, shallow_search, EngineSettings(threshold_cp=250))
+
+        self.assertEqual("Nd5", ast.moves[0].display_san)
+        self.assertEqual(1, len(report.issues))
+        self.assertEqual([], report.issues[0].candidates)
+
+
+class BookRefutationTests(unittest.TestCase):
+    """Erro do jogador que o livro mostra e pune nao e erro de leitura."""
+
+    def test_the_book_punishing_the_move_turns_the_alert_into_info(self):
+        ast = parse_text("1. Nd5 exd5", start_fen=HANGING_KNIGHT_FEN)
+        report = scan_mainline(ast, HANGING_KNIGHT_FEN, shallow_search, EngineSettings(threshold_cp=250))
+
+        self.assertEqual(1, len(report.issues))
+        self.assertEqual("info", report.issues[0].severity)
+        self.assertIn("exd5", report.issues[0].message)
+
+    def test_a_reply_that_ignores_the_gift_keeps_the_warning(self):
+        # O livro segue como se nada tivesse acontecido: cheiro de lance mal lido.
+        ast = parse_text("1. Nd5 Kf7", start_fen=HANGING_KNIGHT_FEN)
+        report = scan_mainline(ast, HANGING_KNIGHT_FEN, shallow_search, EngineSettings(threshold_cp=250))
+
+        self.assertEqual("warning", report.issues[0].severity)
+
+
+class EnginePreferenceTests(unittest.TestCase):
+    """`N-B5` com dois cavalos: o motor diz qual leitura nao entrega material."""
+
+    FEN = "6k1/8/4p3/8/7N/3N4/8/6K1 w - - 0 1"
+
+    def parse_en(self, text: str):
+        normalized = LiveTextNormalizer(locale="en").normalize_with_mapping(text)
+        return TolerantParser(locale="en").parse(PGNTokenizer().tokenize(normalized), start_fen=self.FEN)
+
+    def test_only_safe_reading_is_proposed(self):
+        ast = self.parse_en("1. N-B5")
+        self.assertTrue(ast.moves[0].needs_review)
+
+        report = scan_game(ast, self.FEN, shallow_search, EngineSettings(threshold_cp=250))
+        preferences = [issue for issue in report.issues if issue.code == ENGINE_PREFERENCE]
+
+        self.assertEqual(1, len(preferences))
+        self.assertEqual("Nc5", preferences[0].best_candidate.san)
+        # A queda de `Nf5` ja esta explicada; nao vira uma segunda suspeita.
+        self.assertEqual([], [issue for issue in report.issues if issue.code == SUSPECT_BLUNDER])
+
+    def test_no_preference_when_both_readings_are_fine(self):
+        ast = parse_text("1. e4 e5 2. Nf3 Nc6")
+        report = scan_game(ast, chess.STARTING_FEN, shallow_search, EngineSettings(threshold_cp=250))
+
+        self.assertEqual([], [issue for issue in report.issues if issue.code == ENGINE_PREFERENCE])
+
+
+class BundledEngineTests(unittest.TestCase):
+    """O Stockfish que o usuario poe em `engine/` e achado sem configurar nada."""
+
+    def setUp(self):
+        self._saved = os.environ.pop(ENGINE_ENV_VAR, None)
+        self.addCleanup(self._restore)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _restore(self):
+        if self._saved is not None:
+            os.environ[ENGINE_ENV_VAR] = self._saved
+
+    def _fake_engine(self) -> Path:
+        folder = Path(self.tmp.name) / "engine" / "stockfish"
+        folder.mkdir(parents=True)
+        target = folder / ("stockfish-windows-x86-64.exe" if os.name == "nt" else "stockfish-linux")
+        target.write_text("", encoding="utf-8")
+        target.chmod(0o755)
+        return target
+
+    def test_engine_folder_is_searched(self):
+        target = self._fake_engine()
+        with mock.patch(
+            "pgn_live_editor.services.engine_service.bundled_engine_dirs",
+            return_value=[Path(self.tmp.name) / "engine"],
+        ):
+            self.assertEqual(str(target), find_bundled_engine())
+            self.assertEqual(str(target), discover_engine_path(""))
+
+    def test_configured_path_still_wins(self):
+        self._fake_engine()
+        this_file = os.path.abspath(__file__)
+        with mock.patch(
+            "pgn_live_editor.services.engine_service.bundled_engine_dirs",
+            return_value=[Path(self.tmp.name) / "engine"],
+        ):
+            self.assertEqual(this_file, discover_engine_path(this_file))
+
+    def test_missing_folder_is_not_an_error(self):
+        with mock.patch(
+            "pgn_live_editor.services.engine_service.bundled_engine_dirs",
+            return_value=[Path(self.tmp.name) / "nao-existe"],
+        ):
+            self.assertEqual("", find_bundled_engine())
 
 
 if __name__ == "__main__":

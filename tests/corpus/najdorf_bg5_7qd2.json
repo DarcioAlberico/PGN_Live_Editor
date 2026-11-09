@@ -1,0 +1,10 @@
+{
+  "locale": "en",
+  "book_import": true,
+  "games": 1,
+  "prose_must_survive": [
+    "the most popular move",
+    "White has the freer play",
+    "falls into an elementary trap"
+  ]
+}

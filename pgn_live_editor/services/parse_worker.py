@@ -37,6 +37,7 @@ from ..core.parser import GameAST, TolerantParser, iter_moves
 from ..core.pgn_headers import validate_headers
 from ..core.substitutions import Dictionary
 from ..core.tokenizer import PGNTokenizer
+from .observability import measure
 
 
 @dataclass(frozen=True)
@@ -92,9 +93,15 @@ class SegmentAnalysis:
         return count_by_severity(self.ast.issues)
 
 
-def highlight_spans(ast: GameAST) -> tuple[tuple[int, int, str, bool], ...]:
-    """`(inicio, fim, categoria, e_variante)` de cada lance, para o realce."""
-    spans: list[tuple[int, int, str, bool]] = []
+def highlight_spans(ast: GameAST) -> tuple[tuple[int, int, str, int], ...]:
+    """`(inicio, fim, categoria, profundidade)` de cada lance, para o realce.
+
+    A profundidade e um numero, e nao "e variante ou nao": e ela que da a cor
+    de cada nivel. Numa partida de livro com quatro niveis de aninhamento,
+    saber apenas que um lance **esta** numa variante nao ajuda a achar onde
+    ele esta.
+    """
+    spans: list[tuple[int, int, str, int]] = []
 
     def walk(moves: list, depth: int):
         for move in moves:
@@ -107,7 +114,7 @@ def highlight_spans(ast: GameAST) -> tuple[tuple[int, int, str, bool], ...]:
                     kind = "fixed"
                 else:
                     kind = "valid"
-                spans.append((move.start_index, move.end_index, kind, depth > 0))
+                spans.append((move.start_index, move.end_index, kind, depth))
 
             for variation in move.variations:
                 walk(variation, depth + 1)
@@ -127,7 +134,7 @@ class SegmentDigest:
     """
 
     parsed_at: int
-    spans: tuple[tuple[int, int, str, bool], ...]
+    spans: tuple[tuple[int, int, str, int], ...]
     move_count: int
     error_count: int
     warning_count: int
@@ -138,9 +145,7 @@ class SegmentDigest:
             return self
         return SegmentDigest(
             parsed_at=raw_offset,
-            spans=tuple(
-                (start + delta, end + delta, kind, in_variation) for start, end, kind, in_variation in self.spans
-            ),
+            spans=tuple((start + delta, end + delta, kind, depth) for start, end, kind, depth in self.spans),
             move_count=self.move_count,
             error_count=self.error_count,
             warning_count=self.warning_count,
@@ -186,9 +191,9 @@ class DocumentAnalysis:
         return len(self.segments)
 
     @property
-    def highlight_spans(self) -> list[tuple[int, int, str, bool]]:
+    def highlight_spans(self) -> list[tuple[int, int, str, int]]:
         """Realce do documento inteiro, nao so da partida sob o cursor."""
-        spans: list[tuple[int, int, str, bool]] = []
+        spans: list[tuple[int, int, str, int]] = []
         for index in sorted(self.digests):
             spans.extend(self.digests[index].spans)
         return spans
@@ -299,10 +304,14 @@ class ParsePipeline:
             return cached
 
         start_fen = start_fen_of(segment.headers)
-        normalized = self.normalizer.normalize_with_mapping(segment.body, base_offset=segment.raw_offset)
-        tokens = self.tokenizer.tokenize(normalized)
+        with measure("normalize", characters=len(segment.body), game=segment.index) as metrics:
+            normalized = self.normalizer.normalize_with_mapping(segment.body, base_offset=segment.raw_offset)
+            tokens = self.tokenizer.tokenize(normalized)
+            metrics.update(tokens=len(tokens))
 
-        ast = self.parser.parse(tokens, start_fen=start_fen)
+        with measure("parse_ast", tokens=len(tokens), game=segment.index) as metrics:
+            ast = self.parser.parse(tokens, start_fen=start_fen)
+            metrics.update(moves=sum(1 for _ in iter_moves(ast.moves)), issues=len(ast.issues))
         ast.headers = list(segment.headers.items())
         ast.issues.extend(validate_headers(segment.headers, raw_text, segment.content_offset, segment.end_offset))
 
@@ -310,25 +319,32 @@ class ParsePipeline:
 
     def analyze(self, raw_text: str, cursor_position: int = 0) -> DocumentAnalysis:
         """Analisa **so** a partida sob o cursor; o resto vem do cache, se houver."""
-        segments = split_games(raw_text, self.config.separator_pattern)
-        active_index = index_at(segments, cursor_position)
-        active = self.analyze_segment(raw_text, segments[active_index])
+        with measure("parse", characters=len(raw_text), cursor=cursor_position) as metrics:
+            segments = split_games(raw_text, self.config.separator_pattern)
+            active_index = index_at(segments, cursor_position)
+            active = self.analyze_segment(raw_text, segments[active_index])
 
-        digests = {active_index: SegmentDigest.of(active)}
-        for segment in segments:
-            if segment.index == active_index:
-                continue
-            digest = self.digest_for(segment)
-            if digest is not None:
-                digests[segment.index] = digest
+            digests = {active_index: SegmentDigest.of(active)}
+            for segment in segments:
+                if segment.index == active_index:
+                    continue
+                digest = self.digest_for(segment)
+                if digest is not None:
+                    digests[segment.index] = digest
 
-        return DocumentAnalysis(
-            raw_text=raw_text,
-            segments=segments,
-            active_index=active_index,
-            active=active,
-            digests=digests,
-        )
+            metrics.update(
+                games=len(segments),
+                active_moves=active.move_count,
+                active_issues=len(active.ast.issues),
+                cache_entries=len(self._cache),
+            )
+            return DocumentAnalysis(
+                raw_text=raw_text,
+                segments=segments,
+                active_index=active_index,
+                active=active,
+                digests=digests,
+            )
 
     def analyze_all(self, raw_text: str) -> list[SegmentAnalysis]:
         """Todas as partidas -- exportacao em lote e contagem do painel."""
@@ -433,6 +449,13 @@ class AsyncParser(QObject):
         self._request_signal.connect(self._runner.run_request)
         self._configure_signal.connect(self._runner.configure)
         self._runner.finished_signal.connect(self._on_result)
+        # O trabalhador tem de morrer **na thread dele**, e o unico momento em
+        # que isso ainda e possivel e quando o laco de eventos dali esta
+        # terminando: o Qt entrega os `DeferredDelete` pendentes daquela thread
+        # antes de emitir `finished`. Ligar isto na hora de encerrar seria
+        # tarde -- o laco ja parou, o evento nunca chega, e o objeto acaba
+        # destruido pela thread errada, que e corrupcao de memoria.
+        self._thread.finished.connect(self._runner.deleteLater)
         self._thread.start()
 
     def _dispatch(self) -> None:
@@ -466,14 +489,15 @@ class AsyncParser(QObject):
         if self._thread is None:
             return
 
-        thread, runner = self._thread, self._runner
+        thread = self._thread
         self._thread, self._runner = None, None
         self._in_flight = False
 
+        # `quit` + `wait` deixam o laco terminar, e e nesse fim que o
+        # trabalhador e destruido (ver `_ensure_thread`). So depois de a thread
+        # ter parado de verdade e que o objeto `QThread` pode ir embora.
         thread.quit()
         thread.wait(3000)
-        if runner is not None:
-            runner.deleteLater()
         thread.deleteLater()
 
 
