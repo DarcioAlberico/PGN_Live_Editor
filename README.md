@@ -335,6 +335,27 @@ heap. Todo arquivo de teste importa `tests/_isolation.py`, que desvia o
 diretório de dados para uma pasta temporária, então nenhum runner toca as suas
 preferências, o dicionário global ou os recentes.
 
+### Ferramentas de qualidade
+
+Três medidas que a suíte sozinha não dá, em `tools/quality/` (R-004 do
+[roadmap v3](docs/ROADMAP_V3.md)):
+
+```powershell
+# CRAP por função: complexidade que nenhum teste cobre
+uv run coverage run -m pytest -q
+uv run coverage json -o coverage.json
+uv run python tools/quality/crapper.py coverage.json pgn_live_editor/core --threshold 10
+
+# Funções duplicadas (nota >= 0,8 em tokens normalizados)
+uv run python tools/quality/dryer.py pgn_live_editor
+
+# Mutação: regras que nenhum teste segura (roda numa cópia, nunca no projeto)
+uv run python tools/quality/mutator.py pgn_live_editor/core/candidates.py --tests tests/test_regressions.py tests/test_historic_guards.py
+```
+
+O CI publica os três relatórios como artefato; por enquanto eles **não**
+bloqueiam (as metas estão na SPEC v3, §9).
+
 ### Corpus de regressao
 
 `tests/corpus/` guarda páginas de livro em texto bruto com o PGN que cada uma **tem** que

@@ -20,10 +20,10 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Lint
-        run: uv run ruff check pgn_live_editor tests
+        run: uv run ruff check pgn_live_editor tests tools
 
       - name: Formatacao
-        run: uv run ruff format --check pgn_live_editor tests
+        run: uv run ruff format --check pgn_live_editor tests tools
 
       - name: Tipos (modo gradual, obrigatorio em core/)
         run: uv run mypy
@@ -34,3 +34,46 @@ jobs:
         run: |
           uv run coverage run -m pytest -q
           uv run coverage report
+
+  # Relatorios de qualidade (R-004 do docs/ROADMAP_V3.md). Nao bloqueiam ainda:
+  # as metas da SPEC v3 §9 viram portao depois das fases 16 e 20.
+  quality:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - run: uv sync --frozen --extra dev
+
+      - name: CRAP e duplicacao
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run coverage run -m pytest -q
+          uv run coverage json -o coverage.json
+          uv run python tools/quality/crapper.py coverage.json pgn_live_editor/core --threshold 10 > crap.txt
+          uv run python tools/quality/dryer.py pgn_live_editor > dry.txt
+
+      - name: Mutacao dos modulos de decisao
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python tools/quality/mutator.py pgn_live_editor/core/candidates.py \
+            --tests tests/test_regressions.py tests/test_descriptive_notation.py tests/test_core.py tests/test_historic_guards.py \
+            > mutation.txt
+          uv run python tools/quality/mutator.py pgn_live_editor/core/normalizer.py \
+            --tests tests/test_core.py tests/test_regressions.py tests/test_roundtrip.py tests/test_historic_guards.py tests/test_quick_wins.py \
+            >> mutation.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorios-de-qualidade
+          path: |
+            crap.txt
+            dry.txt
+            mutation.txt
