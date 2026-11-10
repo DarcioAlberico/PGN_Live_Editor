@@ -21,7 +21,7 @@ from unittest import mock
 import _isolation  # noqa: F401
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from pgn_live_editor.core.recognition_record import build_recognition_records
+from pgn_live_editor.core.recognition_record import ReviewAction, build_recognition_records
 from pgn_live_editor.core.substitutions import SCOPE_PREFIX, Dictionary, Substitution
 from pgn_live_editor.services.project_service import Project, save_project
 from pgn_live_editor.ui.main_window import MainWindow
@@ -31,20 +31,20 @@ DECIDED_TEXT = "1. e4 e5 2. Xq9 Nc6 3. Bb5 Zz8 4. Ba4"
 
 def decided_project(directory: Path) -> Path:
     project = Project(raw_text=DECIDED_TEXT)
-    records = build_recognition_records(DECIDED_TEXT)
-    for record in records:
-        if record["raw_text"] in ("Xq9", "Zz8"):
-            record["action"] = "rejected"
-            record["decision"] = "rejeitado pelo revisor"
-    project.state.recognition_records = records
+    project.state.recognition_records = [
+        record.decide(ReviewAction.REJECTED, decision="rejeitado pelo revisor")
+        if record.raw_text in ("Xq9", "Zz8")
+        else record
+        for record in build_recognition_records(DECIDED_TEXT)
+    ]
     return save_project(project, directory / "decidido.plez")
 
 
 def actions(window: MainWindow) -> dict[str, str]:
     return {
-        record["raw_text"]: record["action"]
+        record.raw_text: record.action.value
         for record in window.project.state.recognition_records
-        if record["raw_text"] in ("Xq9", "Zz8")
+        if record.raw_text in ("Xq9", "Zz8")
     }
 
 

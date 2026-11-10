@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core.recognition_record import RecognitionRecord, ReviewAction
 from ..core.review_queue import ReviewFilter, filter_records
 
 
@@ -27,8 +28,8 @@ class ReviewPanel(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.records: list[dict] = []
-        self.visible_records: list[dict] = []
+        self.records: list[RecognitionRecord] = []
+        self.visible_records: list[RecognitionRecord] = []
 
         layout = QVBoxLayout(self)
         filters = QHBoxLayout()
@@ -91,23 +92,17 @@ class ReviewPanel(QWidget):
             combo.addItem(value, value)
         combo.blockSignals(False)
 
-    def set_records(self, records: list[dict]):
+    def set_records(self, records: list[RecognitionRecord]):
         self.records = records
-        games = sorted({str(record["game"]) for record in records if record.get("game") is not None})
-        pages = sorted(
-            {
-                str(record.get("source", {}).get("page"))
-                for record in records
-                if record.get("source", {}).get("page") is not None
-            }
-        )
-        types = sorted({str(record.get("interpretation", "")) for record in records})
+        games = sorted({str(record.game) for record in records if record.game is not None})
+        pages = sorted({str(record.source.page) for record in records if record.source.page is not None})
+        types = sorted({record.interpretation for record in records})
         self._fill(self.cmb_game, games, "Todas as partidas")
         self._fill(self.cmb_page, pages, "Todas as páginas")
         self._fill(self.cmb_confidence, ["high", "medium", "low"], "Todas as confianças")
         self._fill(self.cmb_type, types, "Todos os tipos")
         self._fill(self.cmb_altered, ["yes", "no"], "Alteração: todas")
-        self._fill(self.cmb_action, ["pending", "accepted", "rejected", "commented", "ignored"], "Todos os estados")
+        self._fill(self.cmb_action, [action.value for action in ReviewAction], "Todos os estados")
         self.cmb_action.setCurrentIndex(self.cmb_action.findData("pending"))
         self._rebuild_table()
 
@@ -130,31 +125,28 @@ class ReviewPanel(QWidget):
         self.lbl_count.setText(f"{len(self.visible_records)} item(ns)")
         self.table.setRowCount(len(self.visible_records))
         for row, record in enumerate(self.visible_records):
-            source = record.get("source", {})
-            origin = (
-                f"p. {source.get('page')}" if isinstance(source, dict) and source.get("page") is not None else "texto"
-            )
+            origin = f"p. {record.source.page}" if record.source.page is not None else "texto"
             values = [
-                "⚠" if record.get("action", "pending") == "pending" else "✓",
-                str(record.get("raw_text", "")),
-                str(record.get("interpretation", "")),
-                str(record.get("confidence", "")),
-                str(record.get("rule_id", "")),
+                "⚠" if record.action is ReviewAction.PENDING else "✓",
+                record.raw_text,
+                record.interpretation,
+                record.confidence,
+                record.rule_id,
                 origin,
-                str(record.get("action", "pending")),
+                record.action.value,
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setData(Qt.ItemDataRole.UserRole, record.get("source_id", record.get("id", "")))
+                item.setData(Qt.ItemDataRole.UserRole, record.source_id)
                 self.table.setItem(row, column, item)
         self._update_buttons()
 
-    def selected_records(self) -> list[dict]:
+    def selected_records(self) -> list[RecognitionRecord]:
         ids = {
             str(self.table.item(index.row(), 0).data(Qt.ItemDataRole.UserRole))
             for index in self.table.selectionModel().selectedRows()
         }
-        return [record for record in self.visible_records if str(record.get("source_id", record.get("id", ""))) in ids]
+        return [record for record in self.visible_records if record.source_id in ids]
 
     def _on_selected(self):
         selected = self.selected_records()
@@ -165,13 +157,11 @@ class ReviewPanel(QWidget):
     def _update_buttons(self):
         selected = self.selected_records()
         enabled = bool(selected)
-        self.btn_accept.setEnabled(
-            enabled and all(record.get("decision") or record.get("normalized_text") for record in selected)
-        )
-        self.btn_reject_rule.setEnabled(enabled and len({str(record.get("rule_id", "")) for record in selected}) == 1)
+        self.btn_accept.setEnabled(enabled and all(record.altered and record.proposal for record in selected))
+        self.btn_reject_rule.setEnabled(enabled and len({record.rule_id for record in selected}) == 1)
         self.btn_comment.setEnabled(enabled)
 
     def _reject_rule(self):
         selected = self.selected_records()
         if selected:
-            self.reject_rule_requested_signal.emit(str(selected[0].get("rule_id", "")))
+            self.reject_rule_requested_signal.emit(selected[0].rule_id)

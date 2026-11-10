@@ -1,17 +1,17 @@
-"""Fila determinística de revisão dos registros de reconhecimento.
+"""Fila deterministica de revisao dos registros de reconhecimento.
 
-Este módulo não conhece Qt nem o editor.  Ele concentra as regras que tornam
-ações em lote seguras e, por isso, pode ser usado tanto pela interface quanto
-por exportadores/diagnósticos.
+Este modulo nao conhece Qt nem o editor. Ele concentra as regras que tornam
+acoes em lote seguras e, por isso, pode ser usado tanto pela interface quanto
+por exportadores/diagnosticos. Registros sao imutaveis: cada acao devolve a
+lista nova e quantos registros mudaram.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
 
-REVIEW_ACTIONS = {"pending", "accepted", "rejected", "commented", "ignored"}
+from .recognition_record import RecognitionRecord, ReviewAction
 
 
 @dataclass(frozen=True)
@@ -24,88 +24,70 @@ class ReviewFilter:
     action: str = "pending"
 
 
-def _source(record: dict[str, Any]) -> dict[str, Any]:
-    value = record.get("source", {})
-    return value if isinstance(value, dict) else {}
-
-
-def record_is_altered(record: dict[str, Any]) -> bool:
-    """Whether recognition changed or proposed changing the source token."""
-    if "altered" in record:
-        return bool(record["altered"])
-    raw = str(record.get("raw_text", ""))
-    normalized = str(record.get("normalized_text", raw))
-    decision = record.get("decision")
-    return raw != normalized or (decision not in (None, "", raw))
-
-
-def matches(record: dict[str, Any], criteria: ReviewFilter) -> bool:
-    source = _source(record)
-    if criteria.game is not None and record.get("game") != criteria.game:
+def matches(record: RecognitionRecord, criteria: ReviewFilter) -> bool:
+    if criteria.game is not None and record.game != criteria.game:
         return False
-    if criteria.page is not None and source.get("page") != criteria.page:
+    if criteria.page is not None and record.source.page != criteria.page:
         return False
-    if criteria.confidence != "all" and str(record.get("confidence", "")) != criteria.confidence:
+    if criteria.confidence != "all" and record.confidence != criteria.confidence:
         return False
-    if criteria.interpretation != "all" and str(record.get("interpretation", "")) != criteria.interpretation:
+    if criteria.interpretation != "all" and record.interpretation != criteria.interpretation:
         return False
-    if criteria.altered != "all":
-        expected = criteria.altered == "yes"
-        if record_is_altered(record) != expected:
-            return False
-    if criteria.action != "all" and str(record.get("action", "pending")) != criteria.action:
+    if criteria.altered != "all" and record.altered != (criteria.altered == "yes"):
         return False
-    return True
+    return criteria.action == "all" or record.action.value == criteria.action
 
 
-def filter_records(records: Iterable[dict[str, Any]], criteria: ReviewFilter | None = None) -> list[dict[str, Any]]:
+def filter_records(
+    records: Iterable[RecognitionRecord], criteria: ReviewFilter | None = None
+) -> list[RecognitionRecord]:
     criteria = criteria or ReviewFilter()
     return [record for record in records if matches(record, criteria)]
 
 
-def _selected(records: list[dict[str, Any]], source_ids: set[str]) -> list[dict[str, Any]]:
-    return [record for record in records if str(record.get("source_id", record.get("id", ""))) in source_ids]
+def _decide_selected(
+    records: list[RecognitionRecord], source_ids: set[str], action: ReviewAction, decision: str | None = None
+) -> tuple[list[RecognitionRecord], int]:
+    changed = 0
+    result = []
+    for record in records:
+        if record.source_id in source_ids:
+            updated = record.decide(action, decision=decision)
+            if updated != record:
+                changed += 1
+            record = updated
+        result.append(record)
+    return result, changed
 
 
-def accept_identical(records: list[dict[str, Any]], source_ids: set[str]) -> int:
-    """Accept a batch only when every proposal is the same correction.
+def accept_identical(records: list[RecognitionRecord], source_ids: set[str]) -> tuple[list[RecognitionRecord], int]:
+    """Aceita um lote so quando todas as propostas sao a mesma correcao.
 
-    An empty proposal or a mixed batch is rejected as a whole.  This is the
-    guard against applying one candidate to unrelated OCR ambiguities.
+    Lote misto, proposta vazia ou lote sem correcao nenhuma (proposta igual ao
+    bruto) e recusado inteiro -- e a guarda contra aplicar um candidato a
+    ambiguidades de OCR que nao tem nada a ver entre si. O aceito leva a
+    decisao: o registro diz o que entrou no texto.
     """
-    selected = _selected(records, source_ids)
-    proposals = {str(record.get("decision") or record.get("normalized_text", "")) for record in selected}
-    if not selected or "" in proposals or len(proposals) != 1:
-        return 0
-    changed = 0
-    for record in selected:
-        if record.get("action") != "accepted":
-            record["action"] = "accepted"
-            changed += 1
-    return changed
+    selected = [record for record in records if record.source_id in source_ids]
+    proposals = {record.proposal for record in selected}
+    if not selected or len(proposals) != 1 or "" in proposals or not all(r.altered for r in selected):
+        return records, 0
+    return _decide_selected(records, source_ids, ReviewAction.ACCEPTED, decision=proposals.pop())
 
 
-def apply_batch_action(records: list[dict[str, Any]], source_ids: set[str], action: str) -> int:
-    """Apply a non-destructive review action to exact record identities."""
-    if action not in REVIEW_ACTIONS - {"accepted"}:
-        raise ValueError(f"ação em lote inválida: {action}")
-    changed = 0
-    for record in _selected(records, source_ids):
-        if record.get("action") != action:
-            record["action"] = action
-            changed += 1
-        if action == "commented":
-            # Keep the source visible when the UI converts the span to a PGN
-            # comment; export and audit tools can use this without rereading it.
-            record.setdefault("comment_text", str(record.get("raw_text", "")))
-    return changed
+def apply_batch_action(
+    records: list[RecognitionRecord], source_ids: set[str], action: ReviewAction
+) -> tuple[list[RecognitionRecord], int]:
+    """Aplica uma acao nao destrutiva a identidades exatas."""
+    action = ReviewAction(action)
+    if action is ReviewAction.ACCEPTED:
+        raise ValueError("aceitar em lote e `accept_identical`")
+    return _decide_selected(records, source_ids, action)
 
 
-def reject_rule(records: list[dict[str, Any]], rule_id: str) -> int:
-    """Reject all current proposals produced by one exact rule."""
+def reject_rule(records: list[RecognitionRecord], rule_id: str) -> tuple[list[RecognitionRecord], int]:
+    """Rejeita todas as propostas pendentes de uma regra."""
     ids = {
-        str(record.get("source_id", record.get("id", "")))
-        for record in records
-        if str(record.get("rule_id", "")) == rule_id and record.get("action", "pending") == "pending"
+        record.source_id for record in records if record.rule_id == rule_id and record.action is ReviewAction.PENDING
     }
-    return apply_batch_action(records, ids, "rejected")
+    return apply_batch_action(records, ids, ReviewAction.REJECTED)

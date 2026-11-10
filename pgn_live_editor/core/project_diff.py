@@ -31,14 +31,8 @@ class ProjectDiff:
 
 
 def compare_projects(old: Project, new: Project) -> ProjectDiff:
-    old_decisions = {
-        str(record.get("source_id", record.get("id", ""))): str(record.get("action", "pending"))
-        for record in old.state.recognition_records
-    }
-    new_decisions = {
-        str(record.get("source_id", record.get("id", ""))): str(record.get("action", "pending"))
-        for record in new.state.recognition_records
-    }
+    old_decisions = {record.source_id: record.action for record in old.state.recognition_records}
+    new_decisions = {record.source_id: record.action for record in new.state.recognition_records}
     added = sum(1 for key, value in new_decisions.items() if old_decisions.get(key) != value)
     removed = sum(1 for key in old_decisions if key not in new_decisions)
     return ProjectDiff(

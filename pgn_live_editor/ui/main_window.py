@@ -25,7 +25,12 @@ from ..core.issues import SUSPECT_BLUNDER
 from ..core.parser import iter_moves
 from ..core.project_diff import compare_projects, format_project_diff
 from ..core.quality_report import format_quality_report, validate_book
-from ..core.recognition_record import build_recognition_records, reconcile_records
+from ..core.recognition_record import (
+    RecognitionRecord,
+    ReviewAction,
+    build_recognition_records,
+    reconcile_records,
+)
 from ..core.review_queue import accept_identical, apply_batch_action, reject_rule
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
 from ..core.text_ops import (
@@ -730,92 +735,78 @@ class MainWindow(QMainWindow):
     # Revisao de alertas
     # ------------------------------------------------------------------
 
-    def _set_recognition_action(self, issue, action: str, decision: str = "") -> None:
+    def _set_recognition_action(self, issue, action: ReviewAction, decision: str = "") -> None:
         """Persist a human decision for the exact token, when it is known."""
         start, end = int(issue.raw_start), int(issue.raw_end)
-        changed = False
-        for record in self.project.state.recognition_records:
-            source = record.get("source", {})
-            if not isinstance(source, dict):
-                continue
-            if source.get("start") == start and source.get("end") == end and record.get("raw_text") == issue.raw_text:
-                record["action"] = action
-                record["decided_at"] = time.time()
-                if decision:
-                    record["decision"] = decision
-                changed = True
-                break
-        if changed:
-            self._state_dirty = True
-            self.review_panel.set_records(self.project.state.recognition_records)
+        records = self.project.state.recognition_records
+        for index, record in enumerate(records):
+            if record.source.start == start and record.source.end == end and record.raw_text == issue.raw_text:
+                records[index] = record.decide(action, decision=decision or None, at=time.time())
+                self._state_dirty = True
+                self.review_panel.set_records(records)
+                return
 
     def _show_review_queue(self):
         self.review_tabs.setCurrentWidget(self.review_panel)
         self.review_tabs.setVisible(True)
         self.review_panel.table.setFocus()
 
-    def _focus_review_record(self, record: dict):
-        source = record.get("source", {})
-        if not isinstance(source, dict):
-            return
-        start = int(source.get("start", -1))
-        end = int(source.get("end", start))
+    def _focus_review_record(self, record: RecognitionRecord):
+        start, end = record.source.start, record.source.end
         if start >= 0 and end > start:
             self.editor_panel.focus_span(start, end)
-        page = source.get("page")
-        pdf_path = source.get("pdf_path") or self.project.state.pdf_path
+        page = record.source.page
+        pdf_path = record.source.pdf_path or self.project.state.pdf_path
         if page is not None:
             if not self.pdf_panel.has_document() and pdf_path:
-                problem = self.pdf_panel.open_pdf(Path(str(pdf_path)), max(0, int(page) - 1))
+                problem = self.pdf_panel.open_pdf(Path(pdf_path), max(0, page - 1))
                 if problem:
                     self._report(problem)
             elif self.pdf_panel.has_document():
-                self.pdf_panel.go_to_page(max(0, int(page) - 1))
+                self.pdf_panel.go_to_page(max(0, page - 1))
             if self.pdf_panel.has_document():
                 self.pdf_panel.setVisible(True)
 
-    @staticmethod
-    def _review_ids(records: list[dict]) -> set[str]:
-        return {str(record.get("source_id", record.get("id", ""))) for record in records}
+    def _store_review_records(self, records: list[RecognitionRecord], changed: int) -> None:
+        self.project.state.recognition_records = records
+        if changed:
+            self._state_dirty = True
+            self.review_panel.set_records(records)
 
-    def _accept_review_records(self, records: list[dict]):
-        ids = self._review_ids(records)
-        if not ids or accept_identical(self.project.state.recognition_records, ids) == 0:
+    def _accept_review_records(self, selected: list[RecognitionRecord]):
+        records, changed = accept_identical(
+            self.project.state.recognition_records, {record.source_id for record in selected}
+        )
+        if not changed:
             self._report("Aceitação em lote cancelada: as propostas não são idênticas.")
             return
-        edits = []
-        for record in records:
-            source = record.get("source", {})
-            replacement = str(record.get("decision") or record.get("normalized_text", ""))
-            if isinstance(source, dict) and int(source.get("end", 0)) > int(source.get("start", 0)):
-                edits.append(TextEdit(int(source["start"]), int(source["end"]), replacement))
+        edits = [
+            TextEdit(record.source.start, record.source.end, record.proposal)
+            for record in selected
+            if record.source.end > record.source.start
+        ]
         self.editor_panel.apply_operation(OperationResult(edits, "Correções idênticas aceitas."))
-        self._state_dirty = True
-        self.review_panel.set_records(self.project.state.recognition_records)
+        self._store_review_records(records, changed)
 
     def _reject_review_rule(self, rule_id: str):
-        changed = reject_rule(self.project.state.recognition_records, rule_id)
+        records, changed = reject_rule(self.project.state.recognition_records, rule_id)
+        self._store_review_records(records, changed)
         if changed:
-            self._state_dirty = True
-            self.review_panel.set_records(self.project.state.recognition_records)
             self._report(f"{changed} proposta(s) da regra '{rule_id}' rejeitada(s).")
 
-    def _comment_review_records(self, records: list[dict]):
-        ids = self._review_ids(records)
-        changed = apply_batch_action(self.project.state.recognition_records, ids, "commented")
-        edits = []
-        for record in records:
-            source = record.get("source", {})
-            if isinstance(source, dict):
-                start, end = int(source.get("start", -1)), int(source.get("end", -1))
-                if 0 <= start < end:
-                    text = self.editor_panel.document_text()[start:end]
-                    edits.append(TextEdit(start, end, "{" + text + "}"))
+    def _comment_review_records(self, selected: list[RecognitionRecord]):
+        records, changed = apply_batch_action(
+            self.project.state.recognition_records, {record.source_id for record in selected}, ReviewAction.COMMENTED
+        )
+        text = self.editor_panel.document_text()
+        edits = [
+            TextEdit(record.source.start, record.source.end, "{" + text[record.source.start : record.source.end] + "}")
+            for record in selected
+            if 0 <= record.source.start < record.source.end
+        ]
         if edits:
             self.editor_panel.apply_operation(OperationResult(edits, "Itens transformados em comentário."))
-        if changed:
-            self._state_dirty = True
-            self.review_panel.set_records(self.project.state.recognition_records)
+        self._store_review_records(records, changed)
 
     def _on_parsed(self, ast):
         self.issues_panel.set_issues(ast.issues + self._live_engine_issues())
@@ -839,10 +830,9 @@ class MainWindow(QMainWindow):
             self.project.state.recognition_records = []
         else:
             fresh_records = build_recognition_records(analysis.raw_text)
-            self.project.state.recognition_records = reconcile_records(
-                fresh_records, self.project.state.recognition_records
+            self.project.state.recognition_records = self._enrich_recognition_records(
+                reconcile_records(fresh_records, self.project.state.recognition_records), analysis
             )
-            self._enrich_recognition_records(self.project.state.recognition_records, analysis)
         self.review_panel.set_records(self.project.state.recognition_records)
         self.games_panel.set_completed(self.project.state.completed_games)
         self.games_panel.set_summaries(analysis.summaries(), analysis.active_index)
@@ -851,19 +841,21 @@ class MainWindow(QMainWindow):
         self._update_book_status(analysis)
         self._update_touch_status()
 
-    def _enrich_recognition_records(self, records: list[dict], analysis) -> None:
+    def _enrich_recognition_records(self, records: list[RecognitionRecord], analysis) -> list[RecognitionRecord]:
         """Attach stable book/PDF provenance without putting it in token IDs."""
+        pdf_path = self.project.state.pdf_path or None
+        page = self.project.state.pdf_page + 1 if pdf_path else None
+        enriched = []
         for record in records:
-            source = record.get("source", {})
-            if not isinstance(source, dict):
-                continue
-            start = int(source.get("start", -1))
-            segment = analysis.segment_at(start) if start >= 0 else None
-            if segment is not None:
-                record["game"] = segment.index
-            if self.project.state.pdf_path:
-                source["page"] = self.project.state.pdf_page + 1
-                source["pdf_path"] = self.project.state.pdf_path
+            segment = analysis.segment_at(record.source.start) if record.source.start >= 0 else None
+            enriched.append(
+                record.with_provenance(
+                    game=segment.index if segment is not None else record.game,
+                    page=page if pdf_path else record.source.page,
+                    pdf_path=pdf_path or record.source.pdf_path,
+                )
+            )
+        return enriched
 
     def _update_book_status(self, analysis):
         moves = len(list(iter_moves(analysis.ast.moves)))
@@ -1673,7 +1665,7 @@ class MainWindow(QMainWindow):
         candidate = issue.best_candidate
         if not candidate:
             return
-        self._set_recognition_action(issue, "accepted", candidate.san)
+        self._set_recognition_action(issue, ReviewAction.ACCEPTED, candidate.san)
         text = candidate.replacement or candidate.san
         self.editor_panel.replace_span(issue.raw_start, issue.raw_end, text)
         self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{text}'.", 4000)
@@ -1682,7 +1674,7 @@ class MainWindow(QMainWindow):
             self._count_acceptance(issue, candidate)
 
     def _comment_issue(self, issue):
-        self._set_recognition_action(issue, "commented")
+        self._set_recognition_action(issue, ReviewAction.COMMENTED)
         self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
         self.statusBar().showMessage(f"'{issue.raw_text}' virou comentário.", 4000)
 
@@ -1697,7 +1689,7 @@ class MainWindow(QMainWindow):
         token = issue.raw_text
         if not token or token in self.project.state.ignored_issue_tokens:
             return
-        self._set_recognition_action(issue, "ignored")
+        self._set_recognition_action(issue, ReviewAction.IGNORED)
         self.project.state.ignored_issue_tokens.append(token)
         self.editor_panel.set_ignored_tokens(self.project.state.ignored_issue_tokens)
         self.statusBar().showMessage(f"'{token}' passa a ser tratado como texto neste projeto.", 5000)

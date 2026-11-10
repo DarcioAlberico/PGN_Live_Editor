@@ -22,6 +22,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from ..core.recognition_record import RecognitionRecord, records_from_json
 from ..core.substitutions import LAYER_PROJECT, Dictionary
 from .durable_io import write_durable_text, write_durable_with
 from .schemas import LoadWarning, ProjectFormatError, from_payload
@@ -92,7 +93,8 @@ class ProjectState:
     # reabrir o projeto. O dicionário é intencionalmente tolerante a futuras
     # versões do schema.
     diagram_records: list[dict[str, object]] = field(default_factory=list)
-    recognition_records: list[dict[str, object]] = field(default_factory=list)
+    # Tipados (R-302a); o JSON cru so existe em `project_to_parts`/`project_from_parts`.
+    recognition_records: list[RecognitionRecord] = field(default_factory=list)
 
 
 @dataclass
@@ -206,7 +208,8 @@ def project_to_parts(project: Project) -> dict[str, object]:
         "raw_text": project.raw_text,
         "headers": dict(project.header_template),
         "dictionary": {"entries": project.dictionary.to_list()},
-        "state": asdict(project.state),
+        "state": asdict(project.state)
+        | {"recognition_records": [record.to_json() for record in project.state.recognition_records]},
     }
 
 
@@ -235,7 +238,16 @@ def project_from_parts(
         if not isinstance(meta_payload, dict) or name not in meta_payload:
             setattr(meta, name, meta.locale)
     meta.version = FORMAT_VERSION
+    records_payload: object = []
+    if isinstance(state_payload, dict):
+        state_payload = dict(state_payload)
+        records_payload = state_payload.pop("recognition_records", [])
     state, state_warnings = from_payload(ProjectState, state_payload, source="state.json")
+    state.recognition_records, dropped = records_from_json(records_payload)
+    if dropped:
+        state_warnings.append(
+            LoadWarning("state.json", "recognition_records", "", f"{dropped} registro(s) inválido(s) descartado(s)")
+        )
     headers, header_warnings = _parse_headers(headers_payload)
     return Project(
         raw_text=raw_text,

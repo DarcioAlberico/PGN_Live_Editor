@@ -88,7 +88,7 @@ class PGNTokenizer:
         ("TEXT", r"[^\s()]+"),
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         regex_parts = [f"(?P<{name}>{pattern})" for name, pattern in self.TOKEN_PATTERNS]
         self.tokenizer_regex = re.compile("|".join(regex_parts), re.MULTILINE)
 
