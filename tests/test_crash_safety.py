@@ -82,14 +82,15 @@ class WindowEmergencyTests(unittest.TestCase):
         self.addCleanup(self.window.deleteLater)
 
     def test_the_emergency_snapshot_keeps_the_text(self):
-        from pgn_live_editor.services.project_service import clear_recovery_snapshot, read_recovery_snapshot
+        import json
 
-        self.addCleanup(clear_recovery_snapshot)
+        self.addCleanup(self.window.recovery.clear)
         self.window.editor_panel.load_document_text("1. e4 e5 2. Nf3 {texto nao salvo}")
 
         self.window.emergency_snapshot()
 
-        self.assertIn("texto nao salvo", read_recovery_snapshot().raw_text)
+        payload = json.loads(self.window.recovery.snapshot_path.read_text(encoding="utf-8"))
+        self.assertIn("texto nao salvo", payload["project"]["raw_text"])
 
     def test_the_error_notice_does_not_block_the_window(self):
         self.window.show_unexpected_error("RuntimeError: teste")

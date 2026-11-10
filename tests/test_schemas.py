@@ -197,7 +197,9 @@ class WindowLoadWarningTests(unittest.TestCase):
 
         from pgn_live_editor.ui.main_window import MainWindow
 
-        QApplication.instance() or QApplication([])
+        # A referencia precisa ficar viva: uma QApplication coletada antes da
+        # janela nascer derruba o processo.
+        self.app = QApplication.instance() or QApplication([])
         tmp = Path(tempfile.mkdtemp(prefix="schema-ui-"))
         path = save_project(Project(raw_text="1. e4 e5 2. Nf3"), tmp / "estragado.plez")
         rewrite_member(path, "state.json", {"completed_games": None, "cursor_position": "x"})

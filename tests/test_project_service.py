@@ -18,15 +18,12 @@ from pgn_live_editor.services.project_service import (
     Project,
     ProjectMeta,
     ProjectState,
-    clear_recovery_snapshot,
     import_text_file,
     load_project,
     load_recent_files,
-    read_recovery_snapshot,
     remember_recent_file,
     save_project,
     validate_project_archive,
-    write_recovery_snapshot,
 )
 
 BOOK_TEXT = (
@@ -185,41 +182,6 @@ class ImportTests(unittest.TestCase):
 
         self.assertEqual("{ameaça} 1.e4", import_text_file(utf8_path))
         self.assertEqual("{ameaça} 1.e4", import_text_file(cp1252_path))
-
-
-class RecoveryTests(unittest.TestCase):
-    def setUp(self):
-        self._temp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._temp.name)
-        self.addCleanup(self._temp.cleanup)
-
-        patcher = mock.patch.object(project_service, "app_data_dir", return_value=self.tmp)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_snapshot_survives_a_crash_and_can_be_read_back(self):
-        write_recovery_snapshot(BOOK_TEXT, self.tmp / "livro.plez")
-
-        snapshot = read_recovery_snapshot()
-
-        self.assertIsNotNone(snapshot)
-        self.assertEqual(BOOK_TEXT, snapshot.raw_text)
-        self.assertEqual("livro.plez", snapshot.origin_path.name)
-        self.assertLess(snapshot.age_seconds, 60)
-
-    def test_no_snapshot_when_nothing_was_written(self):
-        self.assertIsNone(read_recovery_snapshot())
-
-    def test_clearing_removes_the_snapshot(self):
-        write_recovery_snapshot(BOOK_TEXT, None)
-        clear_recovery_snapshot()
-
-        self.assertIsNone(read_recovery_snapshot())
-
-    def test_empty_text_does_not_produce_a_recovery_offer(self):
-        write_recovery_snapshot("   \n  ", None)
-
-        self.assertIsNone(read_recovery_snapshot())
 
 
 class RecentFilesTests(unittest.TestCase):

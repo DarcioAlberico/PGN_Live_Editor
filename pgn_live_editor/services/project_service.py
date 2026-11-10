@@ -157,16 +157,15 @@ def save_project(project: Project, path: Path) -> Path:
     project.meta.version = FORMAT_VERSION
     project.meta.saved_at = time.time()
 
+    parts = project_to_parts(project)
+
     def write_archive(stream) -> None:
         with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("meta.json", json.dumps(asdict(project.meta), ensure_ascii=False, indent=2))
+            archive.writestr("meta.json", json.dumps(parts["meta"], ensure_ascii=False, indent=2))
             archive.writestr("raw.txt", project.raw_text)
-            archive.writestr("headers.json", json.dumps(project.header_template, ensure_ascii=False, indent=2))
-            archive.writestr(
-                "dictionary.json",
-                json.dumps({"entries": project.dictionary.to_list()}, ensure_ascii=False, indent=2),
-            )
-            archive.writestr("state.json", json.dumps(asdict(project.state), ensure_ascii=False, indent=2))
+            archive.writestr("headers.json", json.dumps(parts["headers"], ensure_ascii=False, indent=2))
+            archive.writestr("dictionary.json", json.dumps(parts["dictionary"], ensure_ascii=False, indent=2))
+            archive.writestr("state.json", json.dumps(parts["state"], ensure_ascii=False, indent=2))
 
     write_durable_with(path, write_archive, backups=MAX_PROJECT_BACKUPS)
     project.path = path
@@ -189,34 +188,79 @@ def load_project(path: Path) -> Project:
         text_warnings = []
         if "�" in raw_text and "�".encode() not in raw_bytes:
             text_warnings.append(LoadWarning("raw.txt", "texto", "UTF-8", "tinha bytes inválidos, trocados por �"))
-        meta_payload = _read_json_payload(archive, "meta.json")
-        state_payload = _read_json_payload(archive, "state.json")
-
-        meta, meta_warnings = from_payload(ProjectMeta, meta_payload, source="meta.json")
-        stored_version = meta.version if isinstance(meta_payload, dict) and "version" in meta_payload else 1
-        if stored_version > FORMAT_VERSION:
-            raise ProjectFormatError(
-                f"Projeto usa o formato {stored_version}, mas esta versão entende até {FORMAT_VERSION}."
-            )
-        # Formato 1 guardava um `locale` so para tres coisas independentes.
-        legacy_locale = meta.locale
-        for name in ("interface_locale", "notation_locale", "dictionary_locale"):
-            if not isinstance(meta_payload, dict) or name not in meta_payload:
-                setattr(meta, name, legacy_locale)
-        meta.version = FORMAT_VERSION
-        state, state_warnings = from_payload(ProjectState, state_payload, source="state.json")
-
-        return Project(
+        return project_from_parts(
             raw_text=raw_text,
-            meta=meta,
-            header_template=_read_json(archive, "headers.json", {}),
-            # `from_payload` le tanto o formato novo (lista com escopo) quanto
-            # o antigo (mapa simples) -- projeto salvo antes da fase 5 abre.
-            dictionary=Dictionary.from_payload(_read_json(archive, "dictionary.json", {}), LAYER_PROJECT),
-            state=state,
+            meta_payload=_read_json_payload(archive, "meta.json"),
+            state_payload=_read_json_payload(archive, "state.json"),
+            headers_payload=_read_json_payload(archive, "headers.json"),
+            dictionary_payload=_read_json_payload(archive, "dictionary.json"),
             path=path,
-            load_warnings=text_warnings + meta_warnings + state_warnings,
+            warnings=text_warnings,
         )
+
+
+def project_to_parts(project: Project) -> dict[str, object]:
+    """As cinco partes de um projeto, como JSON. O `.plez` e o snapshot de recuperacao gravam isto."""
+    return {
+        "meta": asdict(project.meta),
+        "raw_text": project.raw_text,
+        "headers": dict(project.header_template),
+        "dictionary": {"entries": project.dictionary.to_list()},
+        "state": asdict(project.state),
+    }
+
+
+def project_from_parts(
+    *,
+    raw_text: str,
+    meta_payload: object,
+    state_payload: object,
+    headers_payload: object,
+    dictionary_payload: object,
+    path: Path | None,
+    warnings: list[LoadWarning] | None = None,
+) -> Project:
+    """O inverso de `project_to_parts`, tolerante campo a campo (R-103).
+
+    Levanta `ProjectFormatError` so para formato mais novo que esta versao.
+    """
+    meta, meta_warnings = from_payload(ProjectMeta, meta_payload, source="meta.json")
+    stored_version = meta.version if isinstance(meta_payload, dict) and "version" in meta_payload else 1
+    if stored_version > FORMAT_VERSION:
+        raise ProjectFormatError(
+            f"Projeto usa o formato {stored_version}, mas esta versão entende até {FORMAT_VERSION}."
+        )
+    # Formato 1 guardava um `locale` so para tres coisas independentes.
+    for name in ("interface_locale", "notation_locale", "dictionary_locale"):
+        if not isinstance(meta_payload, dict) or name not in meta_payload:
+            setattr(meta, name, meta.locale)
+    meta.version = FORMAT_VERSION
+    state, state_warnings = from_payload(ProjectState, state_payload, source="state.json")
+    headers, header_warnings = _parse_headers(headers_payload)
+    return Project(
+        raw_text=raw_text,
+        meta=meta,
+        header_template=headers,
+        # `from_payload` le tanto o formato novo (lista com escopo) quanto
+        # o antigo (mapa simples) -- projeto salvo antes da fase 5 abre.
+        dictionary=Dictionary.from_payload(
+            dictionary_payload if isinstance(dictionary_payload, dict) else {}, LAYER_PROJECT
+        ),
+        state=state,
+        path=path,
+        load_warnings=[*(warnings or []), *meta_warnings, *state_warnings, *header_warnings],
+    )
+
+
+def _parse_headers(payload: object) -> tuple[dict[str, str], list[LoadWarning]]:
+    if not isinstance(payload, dict):
+        return {}, [LoadWarning("headers.json", "*", repr(payload)[:40], "não é um objeto; cabeçalhos vazios")]
+    headers = {key: value for key, value in payload.items() if isinstance(key, str) and isinstance(value, str)}
+    if len(headers) == len(payload):
+        return headers, []
+    return headers, [
+        LoadWarning("headers.json", "*", "", f"{len(payload) - len(headers)} cabeçalho(s) inválido(s) descartado(s)")
+    ]
 
 
 def import_text_file(path: Path) -> str:
@@ -233,63 +277,6 @@ def import_text_file(path: Path) -> str:
 # --------------------------------------------------------------------------
 # Autosave / recuperacao
 # --------------------------------------------------------------------------
-
-
-@dataclass
-class RecoverySnapshot:
-    raw_text: str
-    origin_path: Path | None
-    saved_at: float
-    snapshot_path: Path
-
-    @property
-    def age_seconds(self) -> float:
-        return max(0.0, time.time() - self.saved_at)
-
-
-def _recovery_file() -> Path:
-    return recovery_dir() / "session.json"
-
-
-def write_recovery_snapshot(raw_text: str, origin_path: Path | None) -> Path:
-    """Grava o texto bruto atual para sobreviver a um fechamento anormal."""
-    target = _recovery_file()
-    payload = {
-        "version": FORMAT_VERSION,
-        "raw_text": raw_text,
-        "origin_path": str(origin_path) if origin_path else "",
-        "saved_at": time.time(),
-    }
-
-    write_durable_text(target, json.dumps(payload, ensure_ascii=False))
-    return target
-
-
-def read_recovery_snapshot() -> RecoverySnapshot | None:
-    target = _recovery_file()
-    if not target.is_file():
-        return None
-
-    try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-    raw_text = payload.get("raw_text", "")
-    if not isinstance(raw_text, str) or not raw_text.strip():
-        return None
-
-    origin = payload.get("origin_path") or ""
-    return RecoverySnapshot(
-        raw_text=raw_text,
-        origin_path=Path(origin) if origin else None,
-        saved_at=float(payload.get("saved_at", 0.0)),
-        snapshot_path=target,
-    )
-
-
-def clear_recovery_snapshot() -> None:
-    _recovery_file().unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------

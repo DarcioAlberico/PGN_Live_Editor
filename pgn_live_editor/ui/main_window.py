@@ -69,15 +69,13 @@ from ..services.preferences_service import LOCALE_NAME, Layout, load_preferences
 from ..services.project_service import (
     PROJECT_SUFFIX,
     Project,
-    clear_recovery_snapshot,
     import_text_file,
     load_project,
     load_recent_files,
-    read_recovery_snapshot,
     remember_recent_file,
     save_project,
-    write_recovery_snapshot,
 )
+from ..services.recovery import RecoverySession, discard, orphan_snapshots, restore_project
 from .book_import_dialog import BookImportDialog
 from .chess_panel import ChessPanel
 from .cleanup_dialog import CleanupDialog
@@ -278,6 +276,8 @@ class MainWindow(QMainWindow):
         self._apply_preferences()
         self._restore_layout()
         self._update_window_title()
+        # O snapshot desta janela (R-102): um arquivo e uma trava so dela.
+        self.recovery = RecoverySession()
         # Com dono: uma janela ja destruida nao pode abrir dialogo de
         # recuperacao. Ver `qt_helpers.single_shot`.
         single_shot(self, 0, self._offer_session_recovery)
@@ -481,7 +481,7 @@ class MainWindow(QMainWindow):
         self.dictionary_service.set_project(self.project.dictionary)
         self.editor_panel.set_dictionary(self.dictionary_service.merged())
         self.editor_panel.load_document_text("")
-        clear_recovery_snapshot()
+        self.recovery.clear()
         self._last_autosaved_text = ""
         self._state_dirty = False
         self._update_window_title()
@@ -507,20 +507,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Abrir projeto", f"Não foi possível abrir o projeto.\n\n{exc}")
             return
 
-        self.project = project
-        self.dictionary_service.set_locale(project.meta.dictionary_locale)
-        self.dictionary_service.set_project(project.dictionary)
-        self.editor_panel.configure_recognition(
-            locale=project.meta.notation_locale,
-            dictionary=self.dictionary_service.merged(),
-            ignored_tokens=project.state.ignored_issue_tokens,
-        )
-        self.games_panel.set_completed(project.state.completed_games)
-        self._restore_pdf(project)
-        self.editor_panel.load_document_text(project.raw_text, project.state.cursor_position)
-        self._last_autosaved_text = project.raw_text
-        self._chars_since_autosave = 0
-        self._state_dirty = False
+        self._install_project(project, cursor_position=project.state.cursor_position)
         remember_recent_file(path)
         self._rebuild_recent_menu()
         self._update_window_title()
@@ -547,6 +534,23 @@ class MainWindow(QMainWindow):
         box.setModal(False)
         box.show()
         self._load_warnings_box = box
+
+    def _install_project(self, project: Project, *, cursor_position: int = 0) -> None:
+        """Poe `project` na janela: dicionario, reconhecimento, partidas, PDF e texto."""
+        self.project = project
+        self.dictionary_service.set_locale(project.meta.dictionary_locale)
+        self.dictionary_service.set_project(project.dictionary)
+        self.editor_panel.configure_recognition(
+            locale=project.meta.notation_locale,
+            dictionary=self.dictionary_service.merged(),
+            ignored_tokens=project.state.ignored_issue_tokens,
+        )
+        self.games_panel.set_completed(project.state.completed_games)
+        self._restore_pdf(project)
+        self.editor_panel.load_document_text(project.raw_text, cursor_position)
+        self._last_autosaved_text = project.raw_text
+        self._chars_since_autosave = 0
+        self._state_dirty = False
 
     def _restore_pdf(self, project):
         """O PDF que acompanha o trabalho, na pagina em que se parou."""
@@ -607,7 +611,7 @@ class MainWindow(QMainWindow):
         self._chars_since_autosave = 0
         self._state_dirty = False
         self.editor_panel.text_edit.document().setModified(False)
-        clear_recovery_snapshot()
+        self.recovery.clear()
         remember_recent_file(saved_path)
         self._rebuild_recent_menu()
         self._update_window_title()
@@ -2063,8 +2067,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            write_recovery_snapshot(text, self.project.path)
+            self._write_snapshot(text)
         except OSError:
+            logger.warning("Autosave falhou", exc_info=True)
             self.lbl_autosave.setText("autosave indisponivel")
             return
 
@@ -2076,8 +2081,17 @@ class MainWindow(QMainWindow):
         """Grava a recuperacao ja, sem olhar contador: chamado por `crash_safety`."""
         text = self.editor_panel.document_text()
         if text.strip():
-            write_recovery_snapshot(text, self.project.path)
+            self._write_snapshot(text)
             self._last_autosaved_text = text
+
+    def _write_snapshot(self, text: str) -> None:
+        """O projeto inteiro com o texto do editor -- sem mexer em `self.project`.
+
+        `_is_dirty` compara o editor com `project.raw_text`; sincronizar o
+        projeto aqui faria o programa esquecer que ha trabalho nao salvo.
+        """
+        meta = replace(self.project.meta, notation_locale=self.editor_panel.locale)
+        self.recovery.write(replace(self.project, meta=meta), text, cursor_position=self.editor_panel.cursor_position())
 
     def show_unexpected_error(self, summary: str) -> None:
         """Aviso nao modal: o programa continua aberto e o trabalho foi guardado."""
@@ -2100,33 +2114,41 @@ class MainWindow(QMainWindow):
         box.show()
 
     def _offer_session_recovery(self):
-        snapshot = read_recovery_snapshot()
-        if snapshot is None:
+        """Oferece o snapshot mais novo de uma instancia que morreu (R-102)."""
+        orphans = orphan_snapshots()
+        if not orphans:
             return
+        snapshot = orphans[0]
 
         minutes = int(snapshot.age_seconds // 60)
         when = f"ha {minutes} min" if minutes else "ha menos de 1 min"
         origin = snapshot.origin_path.name if snapshot.origin_path else "projeto sem nome"
+        others = f"\n(Há mais {len(orphans) - 1} sessão(ões) para recuperar depois.)" if len(orphans) > 1 else ""
 
         choice = QMessageBox.question(
             self,
             "Recuperar sessão",
             f"O editor foi fechado sem salvar.\n\n"
             f"Origem: {origin}\n"
-            f"Gravado {when} ({len(snapshot.raw_text)} caracteres).\n\n"
-            "Deseja recuperar esse texto?",
+            f"Gravado {when} ({len(snapshot.raw_text)} caracteres).{others}\n\n"
+            "Deseja recuperar esse trabalho?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
         if choice == QMessageBox.StandardButton.Yes:
-            self.editor_panel.load_document_text(snapshot.raw_text)
-            if snapshot.origin_path and snapshot.origin_path.is_file():
-                self.project.path = snapshot.origin_path
-            self._last_autosaved_text = snapshot.raw_text
-            self._update_window_title()
-            self.statusBar().showMessage("Sessão recuperada. Salve o projeto para consolidar.", 8000)
+            self._recover(snapshot)
         else:
-            clear_recovery_snapshot()
+            discard(snapshot)
+
+    def _recover(self, snapshot) -> None:
+        """Reabre o projeto inteiro do snapshot; ele passa a ser desta janela."""
+        self._install_project(restore_project(snapshot), cursor_position=snapshot.cursor_position)
+        # O texto recuperado ainda nao esta no `.plez`: salvar e o que consolida.
+        self._state_dirty = True
+        self._write_snapshot(self.editor_panel.document_text())
+        discard(snapshot)
+        self._update_window_title()
+        self.statusBar().showMessage("Sessão recuperada. Salve o projeto para consolidar.", 8000)
 
     def closeEvent(self, event):
         if self._is_dirty():
@@ -2153,7 +2175,7 @@ class MainWindow(QMainWindow):
         self.editor_panel.shutdown()
         self.engine_scanner.shutdown()
         self.pdf_panel.shutdown()
-        clear_recovery_snapshot()
+        self.recovery.clear()
         event.accept()
 
 
