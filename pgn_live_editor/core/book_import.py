@@ -42,6 +42,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from .delimiters import comment_spans, in_comment
 from .fen_tools import DIAGRAM_MARK
 from .nag_table import SEARCHABLE_GLYPHS, map_book_symbols
 from .normalizer import comment_span_end
@@ -747,6 +748,48 @@ def convert_book_text(text: str, options: BookImportOptions | None = None) -> Bo
     return report
 
 
+_NUMBERED_TOKEN_RE = re.compile(r"^(\d+)\.(\.\.)?(.*)$")
+_NOT_A_MOVE_TOKEN_RE = re.compile(r"^(?:\$\d+|[!?]{1,2}|1-0|0-1|1/2-1/2|\*|[^\w].*)$")
+
+
+def _split_after_ply(text: str, number: int, is_black: bool) -> tuple[str, str] | None:
+    """`text` partido logo depois do lance `number` (das brancas ou pretas), ou None.
+
+    So olha a linha do proprio paragrafo: o que esta em comentario ou dentro de
+    parenteses nao conta. NAG colado ou logo depois do lance fica com ele.
+    """
+    target = 2 * (number - 1) + int(is_black)
+    spans = comment_spans(text)
+    next_ply: int | None = None
+    depth = 0
+    tokens = list(re.finditer(r"\S+", text))
+    for position, match in enumerate(tokens):
+        token = match.group()
+        if in_comment(spans, match.start()):
+            continue
+        opened, closed = token.count("("), token.count(")")
+        if depth or opened:
+            depth = max(0, depth + opened - closed)
+            continue
+        numbered = _NUMBERED_TOKEN_RE.match(token)
+        if numbered:
+            next_ply = 2 * (int(numbered.group(1)) - 1) + int(bool(numbered.group(2)))
+            token = numbered.group(3)
+            if not token:
+                continue
+        if next_ply is None or _NOT_A_MOVE_TOKEN_RE.match(token):
+            continue
+        if next_ply == target:
+            end = match.end()
+            for following in tokens[position + 1 :]:
+                if not re.fullmatch(r"\$\d+|[!?]{1,2}", following.group()):
+                    break
+                end = following.end()
+            return text[:end], text[end:]
+        next_ply += 1
+    return None
+
+
 def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImportReport) -> str:
     """Monta o documento: espinha sem rotulo + arvore de rotulos em cada no."""
     documents: list[str] = []
@@ -756,6 +799,16 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
     # ele esta voltando -- `8...b5` depois de uma variante que chegou ao
     # lance 19 nao continua a variante, volta a linha principal.
     open_levels: list[tuple[int, bool] | None] = [None]
+    # O resto do paragrafo que a regressao interrompeu (`d6 3.d4 cxd4`), um por
+    # nivel aberto: ele volta logo depois do `)` (R-211).
+    tails: list[str] = []
+
+    def close_level() -> None:
+        open_levels.pop()
+        pieces.append(")")
+        tail = tails.pop().strip()
+        if tail:
+            pieces.append(tail)
 
     index = 0
     while index < len(chunks):
@@ -763,8 +816,7 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
 
         if chunk.separator:
             while len(open_levels) > 1:
-                open_levels.pop()
-                pieces.append(")")
+                close_level()
             if pieces:
                 documents.append(" ".join(pieces))
                 pieces = []
@@ -783,12 +835,21 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
         candidate = _first_move_number(chunk.text)
         if options.regressions_to_variations and candidate is not None:
             while len(open_levels) > 1 and not _continues(open_levels[-1], candidate):
-                open_levels.pop()
-                pieces.append(")")
+                close_level()
 
             if not _continues(open_levels[-1], candidate):
+                # A variante vem logo depois do lance que ela repete -- o lugar
+                # padrao do PGN. Antes o `(` ia para o fim do paragrafo
+                # anterior (`3.d4 cxd4 ( 2.Nc3 ... )`), e so o parser tolerante
+                # entendia (L-18). Sem achar o lance ali, fica como era.
+                number, is_white = candidate
+                split = _split_after_ply(pieces[-1], number, is_black=not is_white) if pieces else None
+                tail = ""
+                if split is not None:
+                    pieces[-1], tail = split
                 pieces.append("(")
                 open_levels.append(None)
+                tails.append(tail)
                 report.stats["regressions"] += 1
                 excerpt = chunk.text[:38].strip()
                 report.notes.append(
@@ -804,8 +865,7 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
             open_levels[-1] = tail or open_levels[-1]
 
     while len(open_levels) > 1:
-        open_levels.pop()
-        pieces.append(")")
+        close_level()
     if pieces:
         documents.append(" ".join(pieces))
 
