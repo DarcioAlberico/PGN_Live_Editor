@@ -103,3 +103,7 @@ def count_by_severity(issues: list[Issue]) -> dict[str, int]:
         if issue.severity in counts:
             counts[issue.severity] += 1
     return counts
+
+
+# Caractere que nao era texto (surrogate solitario) e virou U+FFFD na entrada.
+INVALID_CHARACTER = "INVALID_CHARACTER"

@@ -25,6 +25,7 @@ from .issues import (
     AMBIGUOUS_MOVE,
     AUTO_CORRECTED,
     CITED_MOVE,
+    INVALID_CHARACTER,
     MOVE_NUMBER_MISMATCH,
     ORPHAN_VARIATION,
     UNBALANCED_PAREN,
@@ -35,6 +36,7 @@ from .issues import (
     Severity,
 )
 from .move_validator import MoveValidator
+from .text_hygiene import REPLACEMENT_CHARACTER
 from .tokenizer import Token, comment_is_unclosed
 
 MOVE_TOKEN_TYPES = {"SAN_MOVE", "MOVE_CANDIDATE"}
@@ -1032,5 +1034,17 @@ class TolerantParser:
 
             index += 1
 
+        self._flag_invalid_characters(tokens)
         self.ast.issues = list(self.issues)
         return self.ast
+
+    def _flag_invalid_characters(self, tokens: list[Token]) -> None:
+        """U+FFFD no texto e um caractere que nao era texto ao entrar (R-107)."""
+        for token in tokens:
+            if REPLACEMENT_CHARACTER in token.value:
+                self._add_issue(
+                    "warning",
+                    INVALID_CHARACTER,
+                    "Caractere inválido trocado por '�' ao entrar no editor; confira o original.",
+                    token,
+                )

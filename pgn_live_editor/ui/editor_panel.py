@@ -39,6 +39,7 @@ from ..core.notation_detect import detect_notation_locale
 from ..core.parser import GameAST, MoveNode, iter_moves
 from ..core.paste_cleanup import clean_pdf_text
 from ..core.pgn_headers import insert_or_replace_headers, upsert_headers
+from ..core.text_hygiene import replace_lone_surrogates
 from ..core.text_insertion import build_board_move_insertion
 from ..core.text_ops import (
     OperationResult,
@@ -121,6 +122,8 @@ class PGNTextEdit(QPlainTextEdit):
         self.auto_close_enabled = True
         # Quem sabe renumerar e o painel: aqui so se pergunta.
         self.renumber_paste: Callable[[str], str] | None = None
+        # E a higiene da entrada (R-107): quem sabe avisar e o painel.
+        self.clean_text: Callable[[str], str] | None = None
 
     def insertFromMimeData(self, source):
         """Colar um trecho de movetext o renumera a partir da posicao do cursor.
@@ -131,12 +134,13 @@ class PGNTextEdit(QPlainTextEdit):
         trecho que nao encaixa na posicao volta **intocado** em vez de sair
         numerado errado.
         """
-        if self.renumber_paste is None or not source.hasText():
+        if not source.hasText():
             super().insertFromMimeData(source)
             return
 
         text = source.text()
-        renumbered = self.renumber_paste(text)
+        cleaned = self.clean_text(text) if self.clean_text else text
+        renumbered = self.renumber_paste(cleaned) if self.renumber_paste else cleaned
         if renumbered == text:
             super().insertFromMimeData(source)
             return
@@ -199,6 +203,8 @@ class EditorPanel(QWidget):
     #: Recado de um gesto que partiu **de dentro** do painel -- da arvore, por
     #: exemplo. Os gestos que a janela dispara devolvem a mensagem no retorno.
     status_message_signal = Signal(str)
+    #: Quantos caracteres invalidos (surrogate sem par) viraram U+FFFD na entrada.
+    invalid_characters_replaced = Signal(int)
     #: O usuario trocou o idioma do texto na caixa do cabecalho.
     notation_locale_changed_signal = Signal(str)
 
@@ -282,6 +288,7 @@ class EditorPanel(QWidget):
 
         self.text_edit = PGNTextEdit()
         self.text_edit.renumber_paste = self._renumber_pasted_movetext
+        self.text_edit.clean_text = self._clean
         editor_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         editor_font.setPointSize(11)
         self.text_edit.setFont(editor_font)
@@ -339,8 +346,19 @@ class EditorPanel(QWidget):
     def cursor_position(self) -> int:
         return self.text_edit.textCursor().position()
 
+    def _clean(self, text: str) -> str:
+        """Toda porta de entrada de texto passa por aqui (R-107)."""
+        cleaned, count = replace_lone_surrogates(text)
+        if count:
+            self.invalid_characters_replaced.emit(count)
+            self.status_message_signal.emit(
+                f"{count} caractere(s) inválido(s) trocado(s) por '�' -- confira os alertas."
+            )
+        return cleaned
+
     def load_document_text(self, text: str, cursor_position: int = 0):
         """Carrega um documento novo (abrir/importar). Zera o historico de desfazer."""
+        text = self._clean(text)
         self._parse_schedule_timer.stop()
         self.text_edit.setPlainText(text)
         cursor = self.text_edit.textCursor()
@@ -361,6 +379,7 @@ class EditorPanel(QWidget):
         proprio usuario: `setPlainText` apaga a pilha de Ctrl+Z e joga o cursor
         para o inicio, o que ja custou trabalho perdido em capítulos grandes.
         """
+        new_text = self._clean(new_text)
         if new_text == self.text_edit.toPlainText():
             return
 
@@ -383,6 +402,7 @@ class EditorPanel(QWidget):
         """Troca um trecho do texto bruto, de forma undoavel."""
         if start_index < 0 or end_index < start_index:
             return
+        replacement = self._clean(replacement)
 
         cursor = self.text_edit.textCursor()
         cursor.beginEditBlock()
@@ -419,6 +439,7 @@ class EditorPanel(QWidget):
     def insert_text_at_cursor(self, text: str):
         if not text:
             return
+        text = self._clean(text)
 
         cursor = self.text_edit.textCursor()
         cursor.insertText(text)

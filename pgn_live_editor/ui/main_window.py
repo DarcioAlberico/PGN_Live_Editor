@@ -603,7 +603,11 @@ class MainWindow(QMainWindow):
 
         try:
             saved_path = save_project(self.project, path)
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - segunda linha de defesa (R-107)
+            # OSError e o esperado (disco, permissao). Qualquer outra coisa e um
+            # defeito -- mas o texto continua no editor e o programa, aberto: o
+            # usuario pode tentar "Salvar como" noutro lugar.
+            logger.exception("Falha ao salvar %s", path)
             QMessageBox.critical(self, "Salvar projeto", f"Não foi possível salvar o projeto.\n\n{exc}")
             return False
 
