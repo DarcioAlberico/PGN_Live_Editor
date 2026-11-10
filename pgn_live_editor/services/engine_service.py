@@ -55,6 +55,7 @@ from ..core.issues import (
 from ..core.parser import GameAST, MoveNode
 from .durable_io import write_durable_text
 from .project_service import app_data_dir
+from .schemas import from_payload
 
 logger = logging.getLogger(__name__)
 
@@ -110,17 +111,21 @@ class EngineSettings:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> EngineSettings:
+    def from_dict(cls, payload: object) -> EngineSettings:
+        """So os campos que `to_dict` grava; cada um valida sozinho (S-07)."""
         base = cls()
-        if not isinstance(payload, dict):
-            return base
+        stored = (
+            {key: payload[key] for key in base.to_dict() if key in payload} if isinstance(payload, dict) else payload
+        )
+        settings, warnings = from_payload(cls, stored, source="engine.json")
+        for warning in warnings:
+            logger.warning("%s", warning)
+        # Zero nao e configuracao valida para tempo e limiar: volta ao padrao.
         return replace(
-            base,
-            path=str(payload.get("path", base.path)),
-            movetime_ms=int(payload.get("movetime_ms", base.movetime_ms) or base.movetime_ms),
-            depth=int(payload.get("depth", base.depth) or 0),
-            threshold_cp=int(payload.get("threshold_cp", base.threshold_cp) or base.threshold_cp),
-            include_variations=bool(payload.get("include_variations", base.include_variations)),
+            settings,
+            movetime_ms=settings.movetime_ms if settings.movetime_ms > 0 else base.movetime_ms,
+            depth=max(settings.depth, 0),
+            threshold_cp=settings.threshold_cp if settings.threshold_cp > 0 else base.threshold_cp,
         )
 
 

@@ -16,6 +16,7 @@ migrar: chave que nao existe devolve o padrao, chave desconhecida e ignorada.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict, dataclass, field, replace
@@ -23,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from .project_service import app_data_dir
+from .schemas import from_payload
+
+logger = logging.getLogger(__name__)
 
 DATABASE_FILE = "app.db"
 
@@ -159,34 +163,18 @@ def write_all(values: dict[str, Any]) -> None:
 
 
 def load_preferences() -> Preferences:
+    """Preferencias gravadas, campo a campo: uma ruim volta ao padrao sozinha (S-06)."""
     stored = read_all()
-    base = Preferences()
-
-    layout_payload = stored.get("layout")
-    layout = (
-        Layout(
-            **{
-                key: layout_payload[key]
-                for key in Layout().__dataclass_fields__
-                if isinstance(layout_payload, dict) and key in layout_payload
-            }
-        )
-        if isinstance(layout_payload, dict)
-        else Layout()
-    )
-
-    values = {key: stored[key] for key in base.__dataclass_fields__ if key in stored and key != "layout"}
-    # Version 1 stored one locale for three independent concerns.  Migrate it
-    # explicitly instead of silently coupling the new preferences again.
+    # Versao 1 guardava um `locale` so para tres coisas independentes.
     if "locale" in stored:
-        legacy = stored["locale"]
-        values.setdefault("interface_locale", legacy)
-        values.setdefault("notation_locale", legacy)
-        values.setdefault("dictionary_locale", legacy)
-    try:
-        return replace(base, **values, layout=layout).sanitized()
-    except TypeError:
-        return base
+        for name in ("interface_locale", "notation_locale", "dictionary_locale"):
+            stored.setdefault(name, stored["locale"])
+    values = {key: value for key, value in stored.items() if key != "layout"}
+    preferences, warnings = from_payload(Preferences, values, source="preferências")
+    layout, layout_warnings = from_payload(Layout, stored.get("layout", {}), source="preferências/layout")
+    for warning in warnings + layout_warnings:
+        logger.warning("%s", warning)
+    return replace(preferences, layout=layout).sanitized()
 
 
 def save_preferences(preferences: Preferences) -> None:

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from ..core.substitutions import LAYER_PROJECT, Dictionary
 from .durable_io import write_durable_text, write_durable_with
+from .schemas import LoadWarning, ProjectFormatError, from_payload
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,8 @@ class Project:
     dictionary: Dictionary = field(default_factory=Dictionary)
     state: ProjectState = field(default_factory=ProjectState)
     path: Path | None = None
+    # O que veio estragado no arquivo e voltou ao padrao (R-103). Nao e gravado.
+    load_warnings: list[LoadWarning] = field(default_factory=list, compare=False)
 
     @property
     def display_name(self) -> str:
@@ -112,36 +115,38 @@ class Project:
         return self.meta.title or "Sem título"
 
 
-def _read_json(archive: zipfile.ZipFile, name: str, fallback: dict) -> dict:
+def _read_json_payload(archive: zipfile.ZipFile, name: str) -> object:
+    """O JSON como veio (qualquer tipo), ou `{}` se ausente/ilegivel -- quem valida e o `from_payload`."""
     try:
-        payload = json.loads(archive.read(name).decode("utf-8"))
+        return json.loads(archive.read(name).decode("utf-8"))
     except (KeyError, ValueError, UnicodeDecodeError):
-        return dict(fallback)
+        return {}
+
+
+def _read_json(archive: zipfile.ZipFile, name: str, fallback: dict) -> dict:
+    payload = _read_json_payload(archive, name)
     return payload if isinstance(payload, dict) else dict(fallback)
 
 
 def validate_project_archive(path: Path) -> list[str]:
-    """Return safe, user-facing schema errors without reading document text."""
-    problems: list[str] = []
+    """O que impede abrir o projeto, em frases para o usuario (nunca le o texto).
+
+    So tres coisas impedem: nao ser ZIP, faltar `raw.txt` (a fonte da verdade) e
+    ser de um formato mais novo. `meta.json`/`state.json` estragados nao
+    impedem: o projeto abre com o texto e avisos (`Project.load_warnings`).
+    """
     if not zipfile.is_zipfile(path):
         return ["O arquivo não é um ZIP de projeto válido."]
+    problems: list[str] = []
     try:
         with zipfile.ZipFile(path, "r") as archive:
-            names = set(archive.namelist())
-            if "raw.txt" not in names:
+            if "raw.txt" not in set(archive.namelist()):
                 problems.append("Falta raw.txt, a fonte de verdade do projeto.")
-            for name in ("meta.json", "state.json"):
-                if name not in names:
-                    continue
-                payload = json.loads(archive.read(name).decode("utf-8"))
-                if not isinstance(payload, dict):
-                    problems.append(f"{name} precisa conter um objeto JSON.")
-            if "meta.json" in names:
-                version = int(_read_json(archive, "meta.json", {}).get("version", 1))
-                if version > FORMAT_VERSION:
-                    problems.append(f"Projeto usa o formato {version}, mas esta versão entende até {FORMAT_VERSION}.")
-    except (OSError, ValueError, TypeError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
-        problems.append(f"Não foi possível validar o projeto: {exc}")
+            meta, _ = from_payload(ProjectMeta, _read_json(archive, "meta.json", {}), source="meta.json")
+            if meta.version > FORMAT_VERSION:
+                problems.append(f"Projeto usa o formato {meta.version}, mas esta versão entende até {FORMAT_VERSION}.")
+    except (OSError, zipfile.BadZipFile) as exc:
+        problems.append(f"Não foi possível ler o projeto: {exc}")
     return problems
 
 
@@ -172,49 +177,34 @@ def load_project(path: Path) -> Project:
     """Le um `.plez`. Levanta ValueError se o arquivo nao for um projeto valido."""
     schema_problems = validate_project_archive(path)
     if schema_problems:
-        raise ValueError("Projeto inválido: " + " ".join(schema_problems))
+        raise ProjectFormatError("Projeto inválido: " + " ".join(schema_problems))
 
     with zipfile.ZipFile(path, "r") as archive:
         names = set(archive.namelist())
         if "raw.txt" not in names:
-            raise ValueError("Projeto inválido: não contem o texto bruto (raw.txt).")
+            raise ProjectFormatError("Projeto inválido: não contem o texto bruto (raw.txt).")
 
-        raw_text = archive.read("raw.txt").decode("utf-8")
-        meta_payload = _read_json(archive, "meta.json", {})
-        state_payload = _read_json(archive, "state.json", {})
+        raw_bytes = archive.read("raw.txt")
+        raw_text = raw_bytes.decode("utf-8", errors="replace")
+        text_warnings = []
+        if "�" in raw_text and "�".encode() not in raw_bytes:
+            text_warnings.append(LoadWarning("raw.txt", "texto", "UTF-8", "tinha bytes inválidos, trocados por �"))
+        meta_payload = _read_json_payload(archive, "meta.json")
+        state_payload = _read_json_payload(archive, "state.json")
 
-        stored_version = int(meta_payload.get("version", 1))
+        meta, meta_warnings = from_payload(ProjectMeta, meta_payload, source="meta.json")
+        stored_version = meta.version if isinstance(meta_payload, dict) and "version" in meta_payload else 1
         if stored_version > FORMAT_VERSION:
-            raise ValueError(f"Projeto usa o formato {stored_version}, mas esta versão entende até {FORMAT_VERSION}.")
-        legacy_locale = str(meta_payload.get("locale", "pt"))
-        meta = ProjectMeta(
-            version=FORMAT_VERSION,
-            title=str(meta_payload.get("title", "")),
-            author=str(meta_payload.get("author", "")),
-            source=str(meta_payload.get("source", "")),
-            locale=legacy_locale,
-            interface_locale=str(meta_payload.get("interface_locale", legacy_locale)),
-            notation_locale=str(meta_payload.get("notation_locale", legacy_locale)),
-            dictionary_locale=str(meta_payload.get("dictionary_locale", legacy_locale)),
-            saved_at=float(meta_payload.get("saved_at", 0.0)),
-        )
-        state = ProjectState(
-            cursor_position=int(state_payload.get("cursor_position", 0)),
-            ignored_issue_tokens=list(state_payload.get("ignored_issue_tokens", [])),
-            completed_games=[int(index) for index in state_payload.get("completed_games", [])],
-            accepted_corrections={
-                str(key): int(value) for key, value in dict(state_payload.get("accepted_corrections", {})).items()
-            },
-            pdf_path=str(state_payload.get("pdf_path", "")),
-            pdf_page=int(state_payload.get("pdf_page", 0)),
-            pdf_sha256=str(state_payload.get("pdf_sha256", "")),
-            diagram_records=[
-                dict(record) for record in state_payload.get("diagram_records", []) if isinstance(record, dict)
-            ],
-            recognition_records=[
-                dict(record) for record in state_payload.get("recognition_records", []) if isinstance(record, dict)
-            ],
-        )
+            raise ProjectFormatError(
+                f"Projeto usa o formato {stored_version}, mas esta versão entende até {FORMAT_VERSION}."
+            )
+        # Formato 1 guardava um `locale` so para tres coisas independentes.
+        legacy_locale = meta.locale
+        for name in ("interface_locale", "notation_locale", "dictionary_locale"):
+            if not isinstance(meta_payload, dict) or name not in meta_payload:
+                setattr(meta, name, legacy_locale)
+        meta.version = FORMAT_VERSION
+        state, state_warnings = from_payload(ProjectState, state_payload, source="state.json")
 
         return Project(
             raw_text=raw_text,
@@ -225,6 +215,7 @@ def load_project(path: Path) -> Project:
             dictionary=Dictionary.from_payload(_read_json(archive, "dictionary.json", {}), LAYER_PROJECT),
             state=state,
             path=path,
+            load_warnings=text_warnings + meta_warnings + state_warnings,
         )
 
 

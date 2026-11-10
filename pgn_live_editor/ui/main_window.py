@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import sys
 import time
 from dataclasses import replace
@@ -95,6 +96,8 @@ from .qt_helpers import single_shot
 from .review_panel import ReviewPanel
 from .search_dialog import SearchDialog
 from .theme import apply_theme
+
+logger = logging.getLogger(__name__)
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
@@ -522,6 +525,28 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
         self._update_window_title()
         self.statusBar().showMessage(f"Projeto aberto: {path.name}", 5000)
+        if project.load_warnings:
+            self._show_load_warnings(path, project.load_warnings)
+
+    def _show_load_warnings(self, path: Path, warnings) -> None:
+        """Parte do projeto veio estragada e voltou ao padrao: o usuario precisa saber (R-103).
+
+        Nao modal: o texto ja esta aberto e e o que importa; o aviso so conta o
+        que nao veio junto.
+        """
+        for warning in warnings:
+            logger.warning("%s: %s", path.name, warning)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Projeto aberto com avisos")
+        box.setText(
+            f"{path.name} abriu com o texto completo, mas {len(warnings)} configuração(ões) "
+            "estavam ilegíveis e voltaram ao padrão. Salvar grava o projeto já corrigido."
+        )
+        box.setDetailedText("\n".join(str(warning) for warning in warnings))
+        box.setModal(False)
+        box.show()
+        self._load_warnings_box = box
 
     def _restore_pdf(self, project):
         """O PDF que acompanha o trabalho, na pagina em que se parou."""
