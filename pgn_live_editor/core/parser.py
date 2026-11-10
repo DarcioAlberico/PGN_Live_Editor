@@ -119,6 +119,12 @@ class MoveNode(ASTNode):
         # exatamente o que a renumeracao reescreve.
         self.san_start_index = san.start_index
         self.san_end_index = san.end_index
+        # Span so do numero impresso (`12.`), quando ha um: renumerar reescreve
+        # isto e nada mais -- entre o numero e o lance pode haver prosa (N-05).
+        self.number_start: int | None = number.start_index if number else None
+        self.number_end: int | None = number.end_index if number else None
+        # Fim do ultimo NAG do lance (`e5!`, `e5 $1`); sem NAG, o fim da SAN.
+        self.nag_end = san.end_index
 
         if number:
             self.start_index = number.start_index
@@ -1073,6 +1079,7 @@ class TolerantParser:
             elif token.type == "NAG":
                 if active_list:
                     active_list[-1].nags.append(token.value)
+                    active_list[-1].nag_end = max(active_list[-1].nag_end, token.end_index)
 
             elif token.type == "RESULT":
                 self.ast.result = token.value

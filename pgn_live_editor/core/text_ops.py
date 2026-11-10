@@ -33,6 +33,7 @@ from .tokenizer import PGNTokenizer
 #:
 #: `[ \t]*` e nao `\s*`: um `!` na linha seguinte e do proximo lance.
 _TRAILING_NAG_RE = re.compile(rf"[ \t]*(?:{PGNTokenizer.NAG_PATTERN})")
+_STANDALONE_NAG_RE = re.compile(rf"(?:{PGNTokenizer.NAG_PATTERN})+")
 
 
 @dataclass
@@ -122,6 +123,27 @@ def _skip_trailing_nags(text: str, position: int) -> int:
         if match is None or match.end() == position:
             return position
         position = match.end()
+
+
+def nag_end_of(text: str, move: MoveNode) -> int:
+    """Fim do lance com os NAGs dele (`e5!`, `e5 $1 $14`) -- R-202.
+
+    E o ponto em que o lance acaba para todo gesto de edicao: o comentario
+    novo nasce aqui, a prosa solta comeca depois daqui. Usar o fim da SAN
+    deixava o NAG do lado errado (N-08).
+    """
+    return _skip_trailing_nags(text, max(move.san_end_index, move.nag_end))
+
+
+def move_end(text: str, move: MoveNode) -> int:
+    """Fim do lance com os NAGs **e o comentario dele** -- o que pertence ao lance (R-202).
+
+    Promover uma variante troca o que vem **depois** disto; antes, o NAG e o
+    comentario da ancora iam junto para a linha rebaixada (N-06).
+    """
+    end = nag_end_of(text, move)
+    span = _comment_starting_at(text, end)
+    return span[1] if span else end
 
 
 def _comment_starting_at(text: str, position: int) -> tuple[int, int] | None:
@@ -256,7 +278,7 @@ def paragraph_to_comment(text: str, position: int, ast: GameAST) -> OperationRes
     upper = len(text)
     for move in moves:
         if move.san_end_index <= position:
-            lower = max(lower, move.san_end_index)
+            lower = max(lower, nag_end_of(text, move))
         if move.san_start_index >= position:
             upper = min(upper, move.start_index)
 
@@ -306,7 +328,7 @@ def insert_comment(text: str, move: MoveNode, body: str, *, before: bool) -> Ope
     if not body:
         return OperationResult([], "Não ha texto para colar como comentário.")
 
-    position = move.start_index if before else _skip_trailing_nags(text, move.san_end_index)
+    position = move.start_index if before else nag_end_of(text, move)
     if not 0 <= position <= len(text):
         return OperationResult([], "Lance fora do texto.")
 
@@ -374,11 +396,20 @@ def renumber_document(text: str, ast: GameAST) -> OperationResult:
                 needs_number = (
                     is_white or position == 0 or bool(move.number) or bool(move.comments_before) or interrupted
                 )
-                desired = f"{move_number_for(move)} " if needs_number else ""
-
-                current = text[move.start_index : move.san_start_index]
-                if current != desired:
-                    edits.append(TextEdit(move.start_index, move.san_start_index, desired))
+                between = text[move.number_end : move.san_start_index] if move.number_end is not None else ""
+                if between.strip(" \t\n."):
+                    # Prosa ou comentario entre o numero e o lance (`2. {boa ideia} Nf3`):
+                    # reescrever o numero, e so ele (N-05). Pontos soltos (`10. ... Nc6`,
+                    # o D5 do OCR) sao pedaco do numero quebrado, nao texto do autor.
+                    assert move.number_start is not None and move.number_end is not None
+                    number = move_number_for(move) if needs_number else ""
+                    if text[move.number_start : move.number_end] != number:
+                        edits.append(TextEdit(move.number_start, move.number_end, number or ""))
+                else:
+                    desired = f"{move_number_for(move)} " if needs_number else ""
+                    current = text[move.start_index : move.san_start_index]
+                    if current != desired:
+                        edits.append(TextEdit(move.start_index, move.san_start_index, desired))
 
             for variation in move.variations:
                 walk(variation)
@@ -412,7 +443,7 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
     # O parser ancora a variante numa **posicao**, nao num lance. Com
     # `anchor_after`, ela parte de depois do lance ancora -- entao o lance da
     # linha principal que vem logo a seguir tambem faz parte do que e rebaixado.
-    region_start = owner.san_end_index if anchor_after else owner.start_index
+    region_start = move_end(text, owner) if anchor_after else owner.start_index
     demoted_head = text[region_start:open_index].strip()
 
     region_end = scope_end(text, close_index)
@@ -487,7 +518,7 @@ def reanchor_variation(
     if new_owner is owner:
         return OperationResult([], "A variante já esta neste lance.")
 
-    destination = new_owner.san_end_index if anchor_after else new_owner.start_index
+    destination = move_end(text, new_owner) if anchor_after else new_owner.start_index
     if open_index <= destination <= close_index:
         return OperationResult([], "Não da para pendurar a variante nela mesma.")
 
@@ -543,13 +574,20 @@ def renumber_movetext(movetext: str, board: chess.Board) -> str:
 
     for token in tokens:
         # O numero antigo sai fora -- solto (`12...`) ou colado ao lance
-        # (`13.Bb5`), que e como o livro escreve. O novo vem da posicao.
-        san = re.sub(r"^\d+\s*\.*\s*", "", token)
+        # (`13.Bb5`), que e como o livro escreve. O novo vem da posicao. O
+        # ponto e obrigatorio: sem ele a regra comia o `0` de `0-0` (N-14).
+        san = re.sub(r"^\d+\s*\.+\s*", "", token)
         if not san:
             continue
+        if _STANDALONE_NAG_RE.fullmatch(san):
+            parts.append(san)
+            continue
+        # `e4!`: o sinal de avaliacao fica com o lance, mas nao entra na SAN.
+        core = san.rstrip("!?") or san
+        suffix = san[len(core) :]
 
         try:
-            move = working.parse_san(san)
+            move = working.parse_san(core)
         except (ValueError, AssertionError):
             return movetext
 
@@ -558,7 +596,7 @@ def renumber_movetext(movetext: str, board: chess.Board) -> str:
         elif not parts:
             parts.append(f"{working.fullmove_number}...")
 
-        parts.append(working.san(move))
+        parts.append(working.san(move) + suffix)
         working.push(move)
 
     return " ".join(parts) if parts else movetext
@@ -578,7 +616,7 @@ def set_move_annotations(text: str, move: MoveNode, annotations: VisualAnnotatio
     so os comandos `[%cal]`/`[%csl]` sao trocados; se nao tem, um comentario
     novo nasce logo depois do lance.
     """
-    insert_at = move.san_end_index
+    insert_at = nag_end_of(text, move)
     if not 0 <= insert_at <= len(text):
         return OperationResult([], "Lance fora do texto.")
 
