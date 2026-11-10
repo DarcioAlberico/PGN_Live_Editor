@@ -181,12 +181,27 @@ def _alternation(aliases: list[str]) -> str:
     return "|".join(re.escape(alias) for alias in sorted(aliases, key=len, reverse=True))
 
 
-_FREE_ALIASES = [alias for alias in BOOK_SYMBOL_ALIASES if alias not in _PREFIX_ONLY_ALIASES]
+#: O que pode terminar um lance em SAN. E o que a espiada-atras do sufixo
+#: exige: `12.Nf4N` tem `4` antes do `N`, e `2.Nf3 Nc6` tem um espaco.
+_MOVE_END_CLASS = "[a-h1-8QRBNO#+=]"
+
+#: Apelidos que tambem sao tipografia comum: aspa baixa alema/polonesa (`„`),
+#: aspa simples baixa (`‚`), florim (`ƒ`) e por mil (`‰`). Soltos na prosa eles
+#: sao o que parecem; so colados ao fim de um lance (`Nf3‚`) valem como simbolo
+#: de livro. Antes `Nf3 „gute Idee“` virava `Nf3 $132 {gute Idee"}` (N-10).
+_GLUED_ONLY_ALIASES = frozenset({"„", "‚", "ƒ", "‰"})
+
+_FREE_ALIASES = [
+    alias for alias in BOOK_SYMBOL_ALIASES if alias not in _PREFIX_ONLY_ALIASES and alias not in _GLUED_ONLY_ALIASES
+]
 _PREFIX_ALIASES = [alias for alias in BOOK_SYMBOL_ALIASES if alias in _PREFIX_ONLY_ALIASES]
+_GLUED_ALIASES = [alias for alias in BOOK_SYMBOL_ALIASES if alias in _GLUED_ONLY_ALIASES]
 
 #: Padrao publico -- o normalizador o aplica no texto bruto, antes do NFKC.
-BOOK_SYMBOL_PATTERN = f"(?:{_alternation(_FREE_ALIASES)})" + (
-    f"|(?<![A-Za-z0-9])(?:{_alternation(_PREFIX_ALIASES)})" if _PREFIX_ALIASES else ""
+BOOK_SYMBOL_PATTERN = (
+    f"(?:{_alternation(_FREE_ALIASES)})"
+    + (f"|(?<![A-Za-z0-9])(?:{_alternation(_PREFIX_ALIASES)})" if _PREFIX_ALIASES else "")
+    + (f"|(?<={_MOVE_END_CLASS})(?:{_alternation(_GLUED_ALIASES)})" if _GLUED_ALIASES else "")
 )
 
 _ALIAS_RE = re.compile(BOOK_SYMBOL_PATTERN)
@@ -229,10 +244,6 @@ SYMBOLIC_GLYPHS: tuple[str, ...] = tuple(glyph for glyph in SEARCHABLE_GLYPHS if
 
 #: Glifos que so valem colados no fim de um lance.
 SUFFIX_GLYPHS: tuple[str, ...] = tuple(nag.glyph for nag in NAG_TABLE if nag.suffix_only)
-
-#: O que pode terminar um lance em SAN. E o que a espiada-atras do sufixo
-#: exige: `12.Nf4N` tem `4` antes do `N`, e `2.Nf3 Nc6` tem um espaco.
-_MOVE_END_CLASS = "[a-h1-8QRBNO#+=]"
 
 
 def symbolic_nag_pattern() -> str:
