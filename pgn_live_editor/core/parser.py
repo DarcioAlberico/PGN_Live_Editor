@@ -76,6 +76,13 @@ class ASTNode:
         self.is_valid = True
 
 
+class _TextRun(list):
+    """Partes de um comentario de prosa ainda sendo juntadas (ver `_append_comment`)."""
+
+    def text(self) -> str:
+        return " ".join(self).strip()
+
+
 class Variation(list):
     """Uma variante: os lances (a propria lista), de onde ela parte e onde esta no texto.
 
@@ -221,12 +228,28 @@ class TolerantParser:
             return None
         return chess.Board(fen).turn
 
-    def _append_comment(self, comments: list[str], value: str, token_type: str):
+    def _append_comment(self, comments: list[str], value: str, token_type: str, floor: int = 0):
+        """Acrescenta um comentario; prosa solta se junta ao anterior **depois de `floor`**.
+
+        `floor` e a fronteira do que veio depois do ultimo lance ou da ultima
+        variante: a prosa nunca se cola num comentario de antes dela. Antes
+        havia uma segunda lista (`comments_since_last_move`) que divergia desta
+        quando a prosa se colava, e o `del [-n:]` da transferencia para a
+        variante apagava o comentario errado (N-03).
+
+        A juncao acumula partes (`_TextRun`) e so vira texto em
+        `_finish_comments`: juntar string a string era quadratico numa prosa
+        longa (N-16).
+        """
         if not value:
             return
 
-        if token_type == "TEXT" and comments:
-            comments[-1] = f"{comments[-1]} {value}".strip()
+        if token_type == "TEXT" and len(comments) > floor:
+            last = comments[-1]
+            if isinstance(last, _TextRun):
+                last.append(value)
+            else:
+                comments[-1] = _TextRun([last, value])  # type: ignore[call-overload]
             return
 
         comments.append(value)
@@ -836,15 +859,14 @@ class TolerantParser:
         value: str,
         active_list: list[MoveNode],
         pending_comments: list[str],
-        comments_since_last_move: list[str],
+        comment_floor: int,
     ) -> None:
         if not value:
             return
         if not active_list:
             self._append_comment(pending_comments, value, "TEXT")
         else:
-            self._append_comment(active_list[-1].comments_after, value, "TEXT")
-            self._append_comment(comments_since_last_move, value, "TEXT")
+            self._append_comment(active_list[-1].comments_after, value, "TEXT", comment_floor)
 
     # ------------------------------------------------------------------
     # Parse
@@ -880,10 +902,12 @@ class TolerantParser:
 
         current_move_number_token: Token | None = None
         pending_comments: list[str] = []
-        comments_since_last_move: list[str] = []
+        # Onde comecam, em `active_list[-1].comments_after`, os comentarios
+        # vindos depois do ultimo lance ou da ultima variante fechada.
+        comment_floor = 0
 
         active_list = self.ast.moves
-        stack: list[tuple[list[MoveNode], str, list[str], list[str], Token | None, tuple[MoveNode, int]]] = []
+        stack: list[tuple[list[MoveNode], str, list[str], Token | None, tuple[MoveNode, int]]] = []
 
         index = 0
         while index < len(tokens):
@@ -902,28 +926,26 @@ class TolerantParser:
 
                     # Depois que a primeira variante irma abre, estes comentarios
                     # seguem colados ao lance pai, salvo transferencia explicita.
-                    parent_comments_since_last_move: list[str] = []
                     transferred_comments: list[str] = []
 
                     if not (anchor_move is active_list[-1] and anchor_after_current):
                         if not self._variation_has_leading_annotation(preview_tokens):
-                            transferred_comments = list(comments_since_last_move)
+                            transferred_comments = list(active_list[-1].comments_after[comment_floor:])
                         if transferred_comments:
-                            del active_list[-1].comments_after[-len(transferred_comments) :]
+                            del active_list[-1].comments_after[comment_floor:]
 
                     stack.append(
                         (
                             active_list,
                             self.validator.board.fen(),
                             pending_comments,
-                            parent_comments_since_last_move,
                             current_move_number_token,
                             open_variation,
                         )
                     )
 
                     pending_comments = transferred_comments
-                    comments_since_last_move = []
+                    comment_floor = 0
                     current_move_number_token = None
 
                     if anchor_fen:
@@ -945,10 +967,11 @@ class TolerantParser:
                         active_list,
                         old_fen,
                         pending_comments,
-                        comments_since_last_move,
                         current_move_number_token,
                         open_variation,
                     ) = stack.pop()
+                    # Depois do `)`, prosa nova nao se cola no que veio antes dele.
+                    comment_floor = len(active_list[-1].comments_after) if active_list else 0
                     owner, variation_index = open_variation
                     variation = owner.variations[variation_index]
                     variation.span = (variation.span[0], token.end_index)
@@ -966,7 +989,7 @@ class TolerantParser:
                 if self._is_backward_reference(active_list, token):
                     comment_value, index = self._collect_backward_reference_comment(tokens, index)
                     if active_list:
-                        self._append_comment(active_list[-1].comments_after, comment_value, "TEXT")
+                        self._append_comment(active_list[-1].comments_after, comment_value, "TEXT", comment_floor)
                     else:
                         self._append_comment(pending_comments, comment_value, "TEXT")
                     continue
@@ -992,8 +1015,7 @@ class TolerantParser:
                     if not active_list:
                         self._append_comment(pending_comments, value, token.type)
                     else:
-                        self._append_comment(active_list[-1].comments_after, value, token.type)
-                        self._append_comment(comments_since_last_move, value, token.type)
+                        self._append_comment(active_list[-1].comments_after, value, token.type, comment_floor)
 
             elif token.type == "NAG":
                 if active_list:
@@ -1008,12 +1030,12 @@ class TolerantParser:
                 if token.type == "MOVE_CANDIDATE" and (
                     not token.in_notation_context or token.value in self._ignored_tokens
                 ):
-                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comments_since_last_move)
+                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comment_floor)
                     index += 1
                     continue
 
                 if current_move_number_token is None and self._is_cited_move(tokens, index):
-                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comments_since_last_move)
+                    self._absorb_as_text(token.value.strip(), active_list, pending_comments, comment_floor)
                     self._add_issue(
                         "info",
                         CITED_MOVE,
@@ -1041,7 +1063,7 @@ class TolerantParser:
 
                 active_list.append(node)
                 current_move_number_token = None
-                comments_since_last_move = []
+                comment_floor = 0
 
             elif token.type == "NULL_MOVE":
                 node = self._build_null_move_node(token, current_move_number_token)
@@ -1050,13 +1072,22 @@ class TolerantParser:
                     pending_comments = []
                 active_list.append(node)
                 current_move_number_token = None
-                comments_since_last_move = []
+                comment_floor = 0
 
             index += 1
 
+        self._finish_comments(self.ast.moves)
         self._flag_invalid_characters(tokens)
         self.ast.issues = list(self.issues)
         return self.ast
+
+    def _finish_comments(self, moves: list[MoveNode]) -> None:
+        """Junta, uma vez so, a prosa acumulada em `_TextRun` (ver `_append_comment`)."""
+        for move in iter_moves(moves):
+            for comments in (move.comments_before, move.comments_after):
+                for position, comment in enumerate(comments):
+                    if isinstance(comment, _TextRun):
+                        comments[position] = comment.text()
 
     def _flag_invalid_characters(self, tokens: list[Token]) -> None:
         """U+FFFD no texto e um caractere que nao era texto ao entrar (R-107)."""
