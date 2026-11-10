@@ -97,9 +97,12 @@ crash simulado entre os passos 2 e 3 → reabrir encontra a versão anterior int
 - Cada arquivo lido tem um esquema declarativo: `campo → (tipo, coerção, padrão)`.
 - Leitura **campo a campo**: um campo inválido volta ao padrão *dele* e gera um
   `LoadWarning(campo, valor, motivo)`; os outros campos sobrevivem.
-- Estrutura impossível (raiz não é objeto, versão desconhecida maior que a atual)
-  → `ProjectFormatError(ValueError)`. **Nenhum** outro tipo de exceção atravessa a
-  fronteira de carga.
+- Só três coisas impedem abrir um `.plez`: não ser ZIP, faltar `raw.txt` (a fonte
+  da verdade) e `version` maior que a desta versão → `ProjectFormatError(ValueError)`.
+  `meta.json`/`state.json`/`headers.json` cuja raiz não é objeto **não** impedem: o
+  projeto abre com o texto, os padrões e um `LoadWarning` (decisão de 2026-11-10 —
+  recusar o arquivo esconderia o texto do usuário por causa de um dado secundário).
+  **Nenhum** outro tipo de exceção atravessa a fronteira de carga.
 - Migrações explícitas por `version`: `migrate_1_to_2(payload) -> payload`, puras e
   testadas com um arquivo fixo de cada versão em `tests/fixtures/plez/`.
 - Avisos de carga aparecem na barra de status e no log; nunca bloqueiam a abertura.

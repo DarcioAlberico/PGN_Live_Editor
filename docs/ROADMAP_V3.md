@@ -28,7 +28,7 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 | Fase | Tema | Itens | Situação |
 |---|---|---|---|
 | 14 | Rede de segurança e alavancas | 11 | ✅ 2026-11-09 (branch `fase-14`) |
-| 15 | Não perder trabalho — parte 2 | 9 | ⬜ |
+| 15 | Não perder trabalho — parte 2 | 9 | ✅ 2026-11-10 (branch `fase-15`) |
 | 16 | Parar a corrupção silenciosa — parte 2 | 13 | ⬜ |
 | 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ⬜ |
 | 18 | Escala de livro — desempenho | 5 | ⬜ |
@@ -77,6 +77,16 @@ outras dependem dela.
 **Objetivo:** nenhuma sequência de cliques, crash, antivírus ou arquivo malformado
 apaga trabalho. Ataca a premissa **P2** ("há um único estado de sessão") e **P3**
 ("gravar é renomear").
+
+> **Concluída em 2026-11-10**, no branch `fase-15`. R-101 → `907b58d`;
+> R-103 → `23ce6fa`; R-102 → `d0c0b93`; R-107 → `37650e7`; R-104 + R-105 →
+> `28850c2`; R-106 → `43045f1`; R-108 → `e03b8fd`; R-109 → `88b2758`.
+> Decisões tomadas na implementação: `meta.json`/`state.json` que não são objeto
+> **abrem** com o texto e um aviso (só não ser ZIP, faltar `raw.txt` ou formato
+> mais novo impedem); o alerta de caractere inválido é `INVALID_CHARACTER`,
+> emitido pelo parser onde houver U+FFFD; `_switch_to` cancela o OCR de diagrama
+> e o do PDF inteiro com os `cancel()` de hoje — o motor ainda não tem
+> cancelamento (R-303).
 
 | Item | Tam. | O quê | Achados | Aceite verificável |
 |---|---|---|---|---|

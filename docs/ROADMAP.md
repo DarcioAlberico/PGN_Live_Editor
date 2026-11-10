@@ -26,7 +26,7 @@ defeito que contradiz o aceite da fase; o item que o fecha está no
 |---|---|---|
 | Ganhos imediatos | ✅ concluída | `test_regressions`, `test_core` |
 | 0 · Fundação | ✅ concluída | `test_roundtrip`; CI. O trabalho de ago–out estava fora do git (Q-01), commitado em 2026-11-09 |
-| 1 · Não perder trabalho | ⚠️ reaberta | recuperar + salvar apaga cabeçalhos e dicionário (S-01); a rotação de `.bak` pode deixar o projeto sem arquivo (S-02) → R-101, R-102 |
+| 1 · Não perder trabalho | ✅ concluída de novo (2026-11-10) | `test_durable_io`, `test_recovery`, `test_schemas`, `test_session_switch` — S-01 e S-02 fechados na fase 15 do roadmap v3 |
 | 2 · Parar a corrupção silenciosa | ⚠️ reaberta | lances da linha principal viram comentário sem alerta (N-02); ponto final da prosa some (N-04); comentário perdido entre variantes (N-03) → Fase 16 |
 | 3 · Gestos de edição | ⚠️ reaberta | renumerar apaga comentário (N-05); promover variante leva o NAG da âncora (N-06) → R-202 |
 | 4 · Escala de livro | ⚠️ reaberta | N-01 (normalizador quadrático) corrigido em 2026-11-09 (`test_quick_wins`); falta N-16 (prosa longa quadrática) → R-203, R-401 |

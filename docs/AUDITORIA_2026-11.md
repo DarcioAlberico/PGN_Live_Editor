@@ -15,7 +15,12 @@
 > N-09, N-15, L-09, L-17, S-04, Q-01, Q-02, Q-03, Q-07 e Q-08; O-05 e O-10 resolvidos
 > por remoção (R-008); S-03 parcialmente (excepthook, R-005 — o `_in_flight` preso
 > espera o R-303). O item de §6.5 sobre o diretório corrente era falso positivo.
-> Os demais achados seguem abertos nas fases 15–22.
+> **Fase 15 (2026-11-10):** corrigidos e com teste S-01/U-02, S-02, S-05, S-06, S-07,
+> S-13, S-14, U-01, U-03, U-04 e U-08; S-10 (stdout nunca lido) e S-15 (escritas
+> silenciosas, OCR relatado como "sem camada de texto", PDF gravado só no fim)
+> parcialmente — falta o resto do S-10 (subprocesso congelado, R-304) e o escape de
+> `"`/`}` na cópia (R-806).
+> Os demais achados seguem abertos nas fases 16–22.
 
 ## 0. Resumo
 
