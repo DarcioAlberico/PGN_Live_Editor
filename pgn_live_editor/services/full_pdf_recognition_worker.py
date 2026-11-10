@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread
@@ -13,6 +14,9 @@ from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
 
 from .diagram_ocr import DiagramOcrUnavailable, _torch_error_message
+
+#: Quantas linhas do stderr do processo entram na mensagem de erro.
+STDERR_TAIL_LINES = 20
 
 
 class _FullPdfRunner(QObject):
@@ -26,7 +30,7 @@ class _FullPdfRunner(QObject):
         request_id, pdf_path, dpi, start_page, end_page = payload
         output_path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(prefix="pgn_full_pdf_", suffix=".json", delete=False) as output:
+            with tempfile.NamedTemporaryFile(prefix="pgn_full_pdf_", suffix=".jsonl", delete=False) as output:
                 output_path = Path(output.name)
             process = subprocess.Popen(
                 [
@@ -43,7 +47,9 @@ class _FullPdfRunner(QObject):
                     "--output",
                     str(output_path),
                 ],
-                stdout=subprocess.PIPE,
+                # Ninguem le o stdout: com PIPE, um filho que escrevesse ~400 KB
+                # ali travava para sempre e o timeout nunca chegava (S-10).
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
@@ -51,6 +57,7 @@ class _FullPdfRunner(QObject):
             )
             self._process = process
             assert process.stderr is not None
+            tail: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
             for line in process.stderr:
                 parts = line.strip().split()
                 if len(parts) == 5 and parts[0] == "PROGRESS":
@@ -58,16 +65,13 @@ class _FullPdfRunner(QObject):
                         self.progress_signal.emit(int(parts[1]), int(parts[2]), int(parts[4]))
                     except ValueError:
                         pass
+                elif line.strip():
+                    tail.append(line.rstrip())
             return_code = process.wait(timeout=3600)
-            if return_code != 0:
-                detail = "processo de reconhecimento terminou com erro"
-                raise DiagramOcrUnavailable(_torch_error_message(detail))
-            raw = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
-            if not raw.strip():
-                raise DiagramOcrUnavailable("O reconhecimento integral não produziu resultado JSON.")
-            self.finished_signal.emit((request_id, json.loads(raw)))
-        except (DiagramOcrUnavailable, OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
-            self.failed_signal.emit((request_id, str(exc)))
+            pages = collect_pages(output_path, return_code=return_code, stderr_tail="\n".join(tail))
+            self.finished_signal.emit((request_id, pages))
+        except (DiagramOcrUnavailable, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            self.failed_signal.emit((request_id, _torch_error_message(str(exc))))
         finally:
             self._process = None
             if output_path is not None:
@@ -75,6 +79,41 @@ class _FullPdfRunner(QObject):
                     output_path.unlink(missing_ok=True)
                 except OSError:
                     pass
+
+
+def collect_pages(output_path: Path, *, return_code: int, stderr_tail: str) -> list[dict[str, object]]:
+    """As paginas que o processo chegou a gravar (JSONL), mesmo que ele tenha morrido (R-109).
+
+    Uma linha cortada no fim (o processo morreu escrevendo) e descartada. Se o
+    processo falhou depois de ler alguma pagina, o resultado traz as paginas
+    lidas e uma pagina-marcador `interrupted` com o motivo; se falhou antes da
+    primeira, levanta ValueError com o fim do stderr -- antes a mensagem era so
+    "terminou com erro".
+    """
+    pages: list[dict[str, object]] = []
+    raw = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else ""
+    for line in raw.splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            pages.append(item)
+    reason = (
+        stderr_tail.strip().splitlines()[-1]
+        if stderr_tail.strip()
+        else "o processo de reconhecimento terminou com erro"
+    )
+    if return_code != 0 and not pages:
+        raise ValueError(f"O reconhecimento integral falhou antes da primeira página: {reason}")
+    if not pages:
+        raise ValueError("O reconhecimento integral não produziu resultado.")
+    if return_code != 0:
+        last_page = max(int(page.get("page", 0) or 0) for page in pages)
+        pages.append(
+            {"page": last_page + 1, "text": "", "text_method": "interrupted", "diagrams": [], "ocr_error": reason}
+        )
+    return pages
 
 
 class AsyncFullPdfRecognition(QObject):

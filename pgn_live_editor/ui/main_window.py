@@ -155,6 +155,11 @@ def _full_pdf_document(pages: list[dict[str, object]]) -> tuple[str, list[dict[s
             blocks.append(text)
         elif str(page.get("text_method", "")) == "no-text-layer":
             blocks.append("{ OCR de texto necessário nesta página: não há camada de texto no PDF. }")
+        elif str(page.get("text_method", "")) == "ocr-failed":
+            blocks.append(f"{{ OCR de texto falhou nesta página: {page.get('text_error', '')} }}")
+        elif str(page.get("text_method", "")) == "interrupted":
+            blocks.append(f"{{ Reconhecimento interrompido aqui: {page.get('ocr_error', '')} }}")
+            continue
         ocr_error = str(page.get("ocr_error", "")).strip()
         if ocr_error:
             blocks.append(f"{{ OCR de diagramas indisponível nesta página: {ocr_error} }}")
