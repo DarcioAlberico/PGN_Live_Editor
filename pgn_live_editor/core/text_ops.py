@@ -454,16 +454,14 @@ def promote_variation(text: str, ast: GameAST, owner: MoveNode, variation_index:
     `A ( V ) M` vira `V ( A M )` quando a variante e alternativa a `A`, e
     `( V ) M` vira `V ( M )` quando ela parte da posicao depois de `A`.
     """
-    if variation_index >= len(owner.variation_spans):
+    if not 0 <= variation_index < len(owner.variations):
         return OperationResult([], "Variante sem posição registrada no texto.")
 
-    open_index, close_index = owner.variation_spans[variation_index]
+    open_index, close_index = owner.variations[variation_index].span
     if close_index <= open_index:
         return OperationResult([], "Variante sem parentese de fechamento.")
 
-    anchor_after = (
-        owner.variation_anchor_after[variation_index] if variation_index < len(owner.variation_anchor_after) else True
-    )
+    anchor_after = owner.variations[variation_index].anchor_after
 
     variation_body = text[open_index + 1 : close_index - 1].strip()
     if not variation_body:
@@ -502,7 +500,7 @@ def move_variation(text: str, owner: MoveNode, variation_index: int, delta: int)
     dois trechos de texto -- e como não há aninhamento entre irmas, uma troca
     nunca invalida a posicao da outra.
     """
-    spans = owner.variation_spans
+    spans = [variation.span for variation in owner.variations]
     target_index = variation_index + delta
 
     if not 0 <= variation_index < len(spans):
@@ -537,10 +535,10 @@ def reanchor_variation(
     inteira -- parenteses incluidos -- para logo depois (ou logo antes) do lance
     escolhido, e o primeiro lance dela ganha o numero certo da posicao nova.
     """
-    if not 0 <= variation_index < len(owner.variation_spans):
+    if not 0 <= variation_index < len(owner.variations):
         return OperationResult([], "Variante sem posição registrada no texto.")
 
-    open_index, close_index = owner.variation_spans[variation_index]
+    open_index, close_index = owner.variations[variation_index].span
     if close_index <= open_index:
         return OperationResult([], "Variante sem parentese de fechamento.")
 

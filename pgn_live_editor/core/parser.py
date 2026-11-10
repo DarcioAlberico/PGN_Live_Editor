@@ -76,6 +76,30 @@ class ASTNode:
         self.is_valid = True
 
 
+class Variation(list):
+    """Uma variante: os lances (a propria lista), de onde ela parte e onde esta no texto.
+
+    Antes eram tres listas paralelas no `MoveNode` (`variations`,
+    `variation_anchor_after`, `variation_spans`), casadas pelo indice -- e
+    quatro lugares do programa supunham padroes diferentes para o
+    `anchor_after` ausente (R-213 do docs/ROADMAP_V3.md). Herdar de `list`
+    mantem os usos que so percorrem os lances.
+
+    `anchor_after`: a variante parte da posicao **depois** do lance dono (e
+    alternativa ao lance seguinte), e nao da posicao antes dele.
+    `span`: do `(` ao `)` inclusive, no texto bruto.
+    """
+
+    def __init__(self, moves=(), *, anchor_after: bool = False, span: tuple[int, int] = (0, 0)):
+        super().__init__(moves)
+        self.anchor_after = anchor_after
+        self.span = span
+
+    @property
+    def moves(self) -> list[MoveNode]:
+        return self
+
+
 class MoveNode(ASTNode):
     def __init__(self, san: Token, number: Token | None = None):
         super().__init__(san)
@@ -93,11 +117,9 @@ class MoveNode(ASTNode):
 
         self.comments_before: list[str] = []
         self.comments_after: list[str] = []
-        self.variations: list[list[MoveNode]] = []
-        self.variation_anchor_after: list[bool] = []
-        # Span bruto de cada variante, dos parenteses inclusive: e o que permite
-        # promover, rebaixar e copiar uma linha sem reescrever o documento.
-        self.variation_spans: list[tuple[int, int]] = []
+        # Cada variante carrega de onde parte e o span dos parenteses: e o que
+        # permite promover, rebaixar e copiar uma linha sem reescrever o texto.
+        self.variations: list[Variation] = []
         self.nags: list[str] = []
         self.corrected_san: str | None = None
         self.parent_fen: str | None = None
@@ -874,10 +896,8 @@ class TolerantParser:
                         active_list, tokens, index + 1
                     )
 
-                    var_line: list[MoveNode] = []
+                    var_line = Variation(anchor_after=anchor_after_current, span=(token.start_index, token.end_index))
                     anchor_move.variations.append(var_line)
-                    anchor_move.variation_anchor_after.append(anchor_after_current)
-                    anchor_move.variation_spans.append((token.start_index, token.end_index))
                     open_variation = (anchor_move, len(anchor_move.variations) - 1)
 
                     # Depois que a primeira variante irma abre, estes comentarios
@@ -930,8 +950,8 @@ class TolerantParser:
                         open_variation,
                     ) = stack.pop()
                     owner, variation_index = open_variation
-                    open_start = owner.variation_spans[variation_index][0]
-                    owner.variation_spans[variation_index] = (open_start, token.end_index)
+                    variation = owner.variations[variation_index]
+                    variation.span = (variation.span[0], token.end_index)
                     self.validator.set_board_fen(old_fen)
                     self._desynchronized = False
                 else:

@@ -157,7 +157,7 @@ class CorePipelineTests(unittest.TestCase):
 
         nf3 = ast.moves[2]
         self.assertEqual(nf3.san, "Nf3")
-        self.assertEqual(nf3.variation_anchor_after, [True])
+        self.assertEqual([variation.anchor_after for variation in nf3.variations], [True])
         self.assertTrue(nf3.variations[0][0].is_valid)
         self.assertTrue(nf3.variations[0][1].is_valid)
         self.assertEqual(ast.issues, [])
@@ -174,7 +174,7 @@ class CorePipelineTests(unittest.TestCase):
 
         bd3 = ast.moves[12]
         self.assertEqual(bd3.san, "Bd3")
-        self.assertEqual(bd3.variation_anchor_after, [True])
+        self.assertEqual([variation.anchor_after for variation in bd3.variations], [True])
 
         variation_moves = bd3.variations[0]
         self.assertEqual([move.display_san for move in variation_moves], ["O-O", "O-O", "d5", "exd5", "cxd5"])
@@ -236,7 +236,7 @@ class CorePipelineTests(unittest.TestCase):
         outer_variation = ast.moves[-1].variations[0]
         black_reply = outer_variation[1]
         self.assertEqual(black_reply.san, "Nxe4")
-        self.assertEqual(black_reply.variation_anchor_after, [True])
+        self.assertEqual([variation.anchor_after for variation in black_reply.variations], [True])
 
         subvariation = black_reply.variations[0]
         self.assertEqual([move.display_san for move in subvariation], ["Bxf7+", "Kxf7", "Nxd4", "d5"])

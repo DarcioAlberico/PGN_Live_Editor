@@ -61,10 +61,7 @@ def build_move_entries(ast: GameAST) -> list[MoveEntry]:
             )
 
             for variation_index, variation in enumerate(move.variations):
-                anchor_after = (
-                    variation_index < len(move.variation_anchor_after) and move.variation_anchor_after[variation_index]
-                )
-                variation_base = path if anchor_after else path[:-1]
+                variation_base = path if variation.anchor_after else path[:-1]
                 walk(variation, variation_base, depth + 1, node_path + (variation_index,))
 
     walk(ast.moves, tuple(), 0, tuple())
@@ -148,11 +145,8 @@ def render_game_movetext(ast: GameAST, result_override: str | None = None, canon
 
     def _variations_for_anchor(move: MoveNode, anchor_after: bool) -> list[list[MoveNode]]:
         variations: list[list[MoveNode]] = []
-        for variation_index, variation in enumerate(move.variations):
-            current_anchor_after = True
-            if variation_index < len(move.variation_anchor_after):
-                current_anchor_after = move.variation_anchor_after[variation_index]
-            if current_anchor_after == anchor_after:
+        for variation in move.variations:
+            if variation.anchor_after == anchor_after:
                 variations.append(variation)
         return variations
 

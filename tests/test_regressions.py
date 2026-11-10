@@ -351,7 +351,7 @@ class D17VariationAnchorInForeignNotationTests(unittest.TestCase):
         # `3...Cf6` e alternativa a `a6`, entao pendura em `Bb5`, depois dele.
         owner = ast.moves[4]
         self.assertEqual("Bb5", owner.display_san)
-        self.assertEqual([True], owner.variation_anchor_after)
+        self.assertEqual([True], [variation.anchor_after for variation in owner.variations])
         self.assertEqual(["Nf6", "O-O", "Nxe4"], [move.display_san for move in owner.variations[0]])
         self.assertEqual([], [move for move in ast.moves[5:] if move.variations])
         self.assertEqual([], [issue for issue in ast.issues if issue.severity != "info"])

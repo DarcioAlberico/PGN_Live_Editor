@@ -122,13 +122,12 @@ def _owner_of(move: MoveNode, variation_index: int, move_index: int, line_length
     """Sob qual lance a variante deve aparecer.
 
     A AST guarda a variante no lance **de onde a posicao parte**; o leitor a
-    procura no lance de que ela e **alternativa**. Quando `variation_anchor_after`
+    procura no lance de que ela e **alternativa**. Quando `Variation.anchor_after`
     e verdadeiro, os dois nao sao o mesmo: `7.Qd2 ( 7.Be2 ... )` fica guardada
     em `6...e6` -- a posicao de onde ela sai -- mas quem abre a arvore atras da
     alternativa a `7.Qd2` olha debaixo de `7.Qd2`. Aqui ela e mostrada la.
     """
-    anchor_after = variation_index < len(move.variation_anchor_after) and move.variation_anchor_after[variation_index]
-    if not anchor_after:
+    if not move.variations[variation_index].anchor_after:
         return move_index
     # No fim da linha nao ha lance seguinte: a variante continua a partir
     # dela mesma, e o dono e o proprio lance.
