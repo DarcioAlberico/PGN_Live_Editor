@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import chess
 
+from .delimiters import comment_spans, in_comment
 from .pgn_headers import extract_pgn_headers, upsert_headers
 from .text_ops import OperationResult, TextEdit
 
@@ -41,7 +42,18 @@ class DiagramMark:
 
 
 def find_diagram_marks(text: str) -> list[DiagramMark]:
-    return [DiagramMark(match.start(), match.end(), match.group(0)) for match in DIAGRAM_RE.finditer(text)]
+    """Marcas de diagrama **fora** de comentario (`{[#]}` e o proprio comentario, entao vale).
+
+    Um `[D]` dentro de um comentario e texto do autor; reescreve-lo como
+    `{[#]}` abria uma chave dentro de outra e quebrava o comentario (N-07).
+    """
+    spans = comment_spans(text)
+    marks = []
+    for match in DIAGRAM_RE.finditer(text):
+        if text[match.start()] != "{" and in_comment(spans, match.start()):
+            continue
+        marks.append(DiagramMark(match.start(), match.end(), match.group(0)))
+    return marks
 
 
 def normalize_diagram_marks(text: str) -> OperationResult:

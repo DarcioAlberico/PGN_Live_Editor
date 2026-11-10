@@ -16,11 +16,16 @@ from dataclasses import dataclass
 import chess
 
 from .annotations import VisualAnnotations, apply_annotations, format_annotations
+from .delimiters import (  # noqa: F401 - reexportados: e daqui que o resto do programa os importa
+    RESULT_TAIL_RE,
+    BalanceProblem,
+    check_balance,
+    find_enclosing_delimiter,
+    scope_end,
+)
 from .normalizer import comment_span_end
 from .parser import GameAST, MoveNode, iter_moves
 from .tokenizer import PGNTokenizer
-
-RESULT_TAIL_RE = re.compile(r"\s*(?:1-0|0-1|1/2-1/2|\*)\s*$")
 
 #: O que, depois do SAN, ainda **pertence** ao lance: os simbolos de avaliacao.
 #: Vem da mesma tabela que o tokenizador usa, e por isso `+-`, `⩲` e o `N` de
@@ -147,69 +152,6 @@ def moves_in_span(ast: GameAST, start: int, end: int) -> list[MoveNode]:
 def first_move_after(ast: GameAST, position: int) -> MoveNode | None:
     candidates = [move for move in iter_moves(ast.moves) if move.san_start_index >= position]
     return min(candidates, key=lambda move: move.san_start_index) if candidates else None
-
-
-def find_enclosing_delimiter(text: str, position: int) -> tuple[int, int, str] | None:
-    """Menor par `{}` ou `()` que contem `position`. Devolve (abre, fecha, tipo)."""
-    best: tuple[int, int, str] | None = None
-    stack: list[tuple[int, str]] = []
-    inside_comment = False
-
-    for index, char in enumerate(text):
-        if inside_comment:
-            if char == "}":
-                open_index, _kind = stack.pop()
-                inside_comment = False
-                if open_index <= position <= index:
-                    if best is None or (index - open_index) < (best[1] - best[0]):
-                        best = (open_index, index, "{}")
-            continue
-
-        if char == "{":
-            stack.append((index, "{}"))
-            inside_comment = True
-        elif char == "(":
-            stack.append((index, "()"))
-        elif char == ")":
-            while stack and stack[-1][1] != "()":
-                stack.pop()
-            if stack:
-                open_index, _kind = stack.pop()
-                if open_index <= position <= index:
-                    if best is None or (index - open_index) < (best[1] - best[0]):
-                        best = (open_index, index, "()")
-
-    return best
-
-
-def scope_end(text: str, position: int) -> int:
-    """Fim do escopo atual: o `)` que fecha a variante em volta, ou o fim do texto.
-
-    O resultado final (`1-0`, `*`) fica de fora -- ele pertence a partida, nao
-    a linha que esta sendo movida.
-    """
-    depth = 0
-    index = position
-    while index < len(text):
-        char = text[index]
-        if char == "{":
-            close = text.find("}", index)
-            line_end = text.find("\n", index)
-            if close == -1 or (line_end != -1 and line_end < close):
-                index = line_end if line_end != -1 else len(text)
-            else:
-                index = close + 1
-            continue
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            if depth == 0:
-                return index
-            depth -= 1
-        index += 1
-
-    tail = RESULT_TAIL_RE.search(text, position)
-    return tail.start() if tail else len(text)
 
 
 # ---------------------------------------------------------------------------
@@ -667,44 +609,3 @@ def set_move_annotations(text: str, move: MoveNode, annotations: VisualAnnotatio
         [TextEdit(insert_at, insert_at, " {" + commands + "}")],
         "Anotações gravadas.",
     )
-
-
-@dataclass
-class BalanceProblem:
-    position: int
-    message: str
-
-
-def check_balance(text: str) -> list[BalanceProblem]:
-    """Delimitadores abertos e nao fechados, ou fechados sem abrir."""
-    problems: list[BalanceProblem] = []
-    open_parens: list[int] = []
-    index = 0
-
-    while index < len(text):
-        char = text[index]
-
-        if char == "{":
-            close = text.find("}", index)
-            line_end = text.find("\n", index)
-            if close == -1 or (line_end != -1 and line_end < close):
-                problems.append(BalanceProblem(index, "Comentário aberto com '{' e nunca fechado."))
-                index = line_end if line_end != -1 else len(text)
-            else:
-                index = close + 1
-            continue
-
-        if char == "}":
-            problems.append(BalanceProblem(index, "'}' sem '{' correspondente."))
-        elif char == "(":
-            open_parens.append(index)
-        elif char == ")":
-            if open_parens:
-                open_parens.pop()
-            else:
-                problems.append(BalanceProblem(index, "')' sem '(' correspondente."))
-
-        index += 1
-
-    problems.extend(BalanceProblem(position, "'(' sem ')' correspondente.") for position in open_parens)
-    return sorted(problems, key=lambda problem: problem.position)

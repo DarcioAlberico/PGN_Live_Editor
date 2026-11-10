@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 
 from .fen_tools import DIAGRAM_MARK
 from .nag_table import SEARCHABLE_GLYPHS, map_book_symbols
+from .normalizer import comment_span_end
 
 # ----------------------------------------------------------------------
 # Reconhecimento de notacao
@@ -317,7 +318,12 @@ def _to_chunks(lines: list[str]) -> list[_Chunk]:
 
 
 def _brackets_to_parens(text: str, report: BookImportReport) -> str:
-    """`[A; B]` -> `( A ) ( B )`, sem tocar em `[Event "..."]` nem `[%cal]`."""
+    """`[A; B]` -> `( A ) ( B )`, sem tocar em `[Event "..."]`, `[%cal]` nem em comentario.
+
+    O colchete protegido e o comentario sao copiados **inteiros**: antes o `[`
+    de um `[%cal Ge4]` era poupado mas o `]` dele virava `)` e fechava a
+    variante no meio, e colchetes dentro de `{...}` viravam variante (L-16).
+    """
     out: list[str] = []
     depth = 0
     index = 0
@@ -325,7 +331,20 @@ def _brackets_to_parens(text: str, report: BookImportReport) -> str:
     while index < len(text):
         char = text[index]
 
-        if char == "[" and not _PROTECTED_BRACKET_RE.match(text[index:]):
+        if char == "{":
+            end = comment_span_end(text, index)
+            out.append(text[index:end])
+            index = end
+            continue
+
+        if char == "[" and _PROTECTED_BRACKET_RE.match(text[index:]):
+            close = text.find("]", index)
+            end = close + 1 if close != -1 else len(text)
+            out.append(text[index:end])
+            index = end
+            continue
+
+        if char == "[":
             depth += 1
             report.stats["brackets"] += 1
             out.append("(")
