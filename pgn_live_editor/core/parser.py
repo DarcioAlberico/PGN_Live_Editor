@@ -966,7 +966,9 @@ class TolerantParser:
         comment_floor = 0
 
         active_list = self.ast.moves
-        stack: list[tuple[list[MoveNode], str, list[str], Token | None, tuple[MoveNode, int]]] = []
+        # O tabuleiro guardado leva o historico junto (R-207): sair da variante
+        # devolve a linha principal com o `move_stack` intacto.
+        stack: list[tuple[list[MoveNode], chess.Board, list[str], Token | None, tuple[MoveNode, int]]] = []
 
         index = 0
         while index < len(tokens):
@@ -996,7 +998,7 @@ class TolerantParser:
                     stack.append(
                         (
                             active_list,
-                            self.validator.board.fen(),
+                            self.validator.board.copy(stack=True),
                             pending_comments,
                             current_move_number_token,
                             open_variation,
@@ -1008,7 +1010,7 @@ class TolerantParser:
                     current_move_number_token = None
 
                     if anchor_fen:
-                        self.validator.set_board_fen(anchor_fen)
+                        self.validator.set_board(self.validator.board_at(anchor_fen))
                         self._desynchronized = False
 
                     active_list = var_line
@@ -1024,7 +1026,7 @@ class TolerantParser:
                 if stack:
                     (
                         active_list,
-                        old_fen,
+                        saved_board,
                         pending_comments,
                         current_move_number_token,
                         open_variation,
@@ -1034,7 +1036,7 @@ class TolerantParser:
                     owner, variation_index = open_variation
                     variation = owner.variations[variation_index]
                     variation.span = (variation.span[0], token.end_index)
-                    self.validator.set_board_fen(old_fen)
+                    self.validator.set_board(saved_board)
                     self._desynchronized = False
                 else:
                     self._add_issue(

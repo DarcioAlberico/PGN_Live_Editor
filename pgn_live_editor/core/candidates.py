@@ -59,11 +59,17 @@ ENGLISH_PIECE_LETTERS = frozenset("KQRBN")
 MOVE_CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-+#=!?∞±∓⩱⩲□/×]{1,10}$")
 # Captura descritiva sem casa nenhuma: `PxP`, `AxC`, `NPxB`, `QBPxKNP`. Peca em
 # maiuscula sempre -- e isso que separa `CxA` de uma palavra como `caxa`.
-DESCRIPTIVE_CAPTURE_RE = re.compile(r"(?:KT|[PCBTDRNKQA]){1,3}[xX×:](?:KT|[PCBTDRNKQA]){1,3}(?:[+#]|CH)?")
+# `Kt` (cavalo no ingles antigo), `ch`/`dis.ch` (xeque) e `e.p.` vem em caixa
+# mista nos livros: o filtro os aceita assim, como a descritiva ja aceitava (L-01).
+_DESCRIPTIVE_PIECE = r"(?:K[Tt]|[PCBTDRNKQA])"
+_DESCRIPTIVE_TAIL = r"(?:[+#]|(?:(?:[Dd]is|[Dd]bl)\.?\s*)?(?:CH|[Cc]h)\.?|[Ee]\.?\s*[Pp]\.?)?"
+DESCRIPTIVE_CAPTURE_RE = re.compile(rf"{_DESCRIPTIVE_PIECE}{{1,3}}[xX×:]{_DESCRIPTIVE_PIECE}{{1,3}}{_DESCRIPTIVE_TAIL}")
 # Fileira ilegivel no OCR ingles: `P-KS` (K5), `K-Kl` (K1), `N-KBS` (KB3).
 # Mais que isso (`B-IH`, `P-K'`) nao tem conserto automatico, mas tambem nao pode
 # sumir como prosa: vira candidato, e o painel mostra o alerta.
-DESCRIPTIVE_OCR_RE = re.compile(r"(?:KT|[PNBRQK]){1,3}-(?:[KQ]?(?:KT|[RNB])?[SlIZ|]|[A-Z]{1,3}['’`]?)(?:[+#]|ch)?")
+DESCRIPTIVE_OCR_RE = re.compile(
+    r"(?:K[Tt]|[PNBRQK]){1,3}-(?:[KQ]?(?:K[Tt]|[RNB])?[SlIZ|]|[A-Z]{1,3}['’`]?)(?:[+#]|ch)?"
+)
 ANNOTATION_SUFFIX_RE = re.compile(r"(?:[!?]{1,2}|[∞±∓⩱⩲□])+$")
 
 # Limiares de aplicacao (SPEC 2.3).

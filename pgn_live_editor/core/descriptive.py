@@ -161,6 +161,8 @@ HOME_FILE = {
 _CHECK_SUFFIX_RE = re.compile(r"(?:\+{1,2}|#|CH|DIS\.?CH|DBL\.?CH|MATE|MAT|JAQUE|XEQUE)$")
 _EN_PASSANT_RE = re.compile(r"(?:E\.?P\.?|A\.?P\.?)$")
 _ANNOTATION_RE = re.compile(r"(?:[!?]{1,2}|[∞±∓⩱⩲□])+$")
+# Sufixos que o livro escreve em minusculas: xeque (`ch`, `dis.ch`) e en passant.
+_MIXED_CASE_TAIL_RE = re.compile(r"(?:(?:dis|dbl)\.?\s*ch|ch|e\.?\s*p)\.?\+?$", re.IGNORECASE)
 
 # Confusoes de OCR que so fazem sentido na posicao de fileira (`P-KS` = `P-K5`,
 # `K-Kl` = `K-K1`). Cada troca gera uma hipotese; a posicao decide.
@@ -497,7 +499,11 @@ def descriptive_candidates(token: str, board: chess.Board, locale: str) -> list[
     # Livros descritivos escrevem a peca em maiuscula. Manter essa exigencia
     # impede que `d4` (SAN) vire `D4` (dama em portugues). Minusculas toleradas:
     # o `x` de captura (`PxP`) e o `l`/`i` que o OCR poe no lugar do `1` (`K-Kl`).
-    if not stripped[:1].isupper() or re.search(r"[a-z]", re.sub(r"[xli]", "", stripped[1:])):
+    # A guarda olha o token **sem** os sufixos que sao minusculos por natureza
+    # (`ch`, `dis.ch`, `e.p.`) e com o `Kt` do ingles antigo -- antes ela recusava
+    # `Kt-KB3`, `Q-R5ch` e `PxPe.p.`, que o modulo entende (L-01).
+    guarded = _MIXED_CASE_TAIL_RE.sub("", stripped).replace("Kt", "KT")
+    if not guarded[:1].isupper() or re.search(r"[a-z]", re.sub(r"[xli]", "", guarded[1:])):
         return []
     if re.search(r"[li]", stripped[1:]) and not re.search(r"[A-Z]", stripped[1:]):
         # `Ali`, `Bil`: palavra, nao lance.
