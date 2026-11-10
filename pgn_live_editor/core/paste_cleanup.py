@@ -60,9 +60,18 @@ class CleanupReport:
         return " | ".join(parts) if parts else "Nada a limpar."
 
 
+# Resultado e movetext se repetem de verdade (tres partidas que terminam `1-0`):
+# nunca sao cabecalho/rodape de pagina. Antes eram apagados como tal (N-11).
+_NEVER_RUNNING_HEADER_RE = re.compile(r"^(?:1-0|0-1|1/2-1/2|½-½|\*)$|\d+\s*\.")
+
+
 def _repeated_lines(lines: list[str], minimum_occurrences: int = 3) -> set[str]:
     """Cabecalhos e rodapés correntes: a mesma linha curta repetida a cada pagina."""
-    counter = Counter(line.strip() for line in lines if 3 <= len(line.strip()) <= 80)
+    counter = Counter(
+        line.strip()
+        for line in lines
+        if 3 <= len(line.strip()) <= 80 and not _NEVER_RUNNING_HEADER_RE.search(line.strip())
+    )
     return {line for line, count in counter.items() if count >= minimum_occurrences}
 
 
@@ -106,6 +115,8 @@ def clean_pdf_text(text: str, options: CleanupOptions | None = None) -> CleanupR
 
     if options.join_wrapped_lines:
         # Quebra simples vira espaco; linha em branco (parágrafo) e preservada.
+        # Linha so com espacos tambem e linha em branco (N-11).
+        text = re.sub(r"(?m)^[ \t]+$", "", text)
         text, count = re.subn(r"(?<!\n)\n(?!\n)", " ", text)
         report.joined_lines = count
 

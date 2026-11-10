@@ -255,6 +255,21 @@ def _reaches_margin(line: str, width: int) -> bool:
     return length >= width - _OPEN_SENTENCE_SLACK and not _SENTENCE_END_RE.search(line)
 
 
+def _is_double_spaced(lines: list[str]) -> bool:
+    """Quase todo par de linhas com texto e separado por linha em branco?"""
+    gaps = blank_gaps = 0
+    seen_text = pending_blank = False
+    for line in lines:
+        if not line.strip():
+            pending_blank = seen_text
+            continue
+        if seen_text:
+            gaps += 1
+            blank_gaps += int(pending_blank)
+        seen_text, pending_blank = True, False
+    return gaps >= 3 and blank_gaps >= 0.8 * gaps
+
+
 def join_wrapped_lines(lines: list[str]) -> list[str]:
     """Remonta os paragrafos quebrados pela largura da coluna impressa."""
     meaningful = [line for line in lines if line.strip()]
@@ -270,7 +285,21 @@ def join_wrapped_lines(lines: list[str]) -> list[str]:
     # dobro da largura, e a partir dai tudo "bate na margem" e o documento
     # inteiro vira um paragrafo so.
     last_physical = ""
-    for line in meaningful:
+    # Linha em branco e fim de paragrafo: antes ela era jogada fora e so a
+    # margem decidia -- depois da linha mais larga do trecho, o paragrafo
+    # seguinte (uma regressao `8.f4 ...`) era colado nela (L-03). A excecao e
+    # o texto em espaco duplo (PDF que poe linha em branco entre **todas** as
+    # linhas, ate no meio da frase): ali uma linha em branco sozinha nao diz
+    # nada, e so duas ou mais seguidas separam paragrafos.
+    breaking_run = 2 if _is_double_spaced(lines) else 1
+    after_blank = False
+    blank_run = 0
+    for line in lines:
+        if not line.strip():
+            blank_run += 1
+            after_blank = after_blank or blank_run >= breaking_run
+            continue
+        blank_run = 0
         # Um rotulo ou um separador **sempre** abre paragrafo, por mais que a
         # linha anterior tenha batido na margem. Sem esta guarda, o `B)` que
         # vem depois de uma linha cheia era engolido por ela e o grupo inteiro
@@ -281,11 +310,12 @@ def join_wrapped_lines(lines: list[str]) -> list[str]:
         # sinais de fim de paragrafo -- mas a variante embutida continua na
         # linha de baixo, e o `]` dela ficaria orfao.
         open_bracket = joined and joined[-1].count("[") > joined[-1].count("]")
-        if joined and not starts_block and (open_bracket or _reaches_margin(last_physical, width)):
+        if joined and not after_blank and not starts_block and (open_bracket or _reaches_margin(last_physical, width)):
             joined[-1] = f"{joined[-1]} {line}"
         else:
             joined.append(line)
         last_physical = line
+        after_blank = False
     return joined
 
 
