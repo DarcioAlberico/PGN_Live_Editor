@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         for path in entries:
             action = QAction(path.name, self)
             action.setStatusTip(str(path))
-            action.triggered.connect(lambda _checked=False, target=path: self._load_project_path(target))
+            action.triggered.connect(lambda _checked=False, target=path: self.open_path(target))
             self.recent_menu.addAction(action)
 
     # ------------------------------------------------------------------
@@ -474,18 +474,28 @@ class MainWindow(QMainWindow):
     def new_project(self):
         if not self._confirm_discard():
             return
-        self.project = Project()
-        # O idioma em uso continua: quem abre um projeto novo no meio de um livro
-        # espanhol esta, quase sempre, no mesmo livro.
-        self.project.meta.notation_locale = self.editor_panel.locale
-        self.dictionary_service.set_project(self.project.dictionary)
-        self.editor_panel.set_dictionary(self.dictionary_service.merged())
-        self.editor_panel.load_document_text("")
+        self._switch_to(self._blank_project())
         self.recovery.clear()
-        self._last_autosaved_text = ""
-        self._state_dirty = False
-        self._update_window_title()
         self.statusBar().showMessage("Projeto novo.", 4000)
+
+    def _blank_project(self, title: str = "") -> Project:
+        """Projeto vazio. So os idiomas continuam: quem abre um projeto novo no meio
+        de um livro espanhol esta, quase sempre, no mesmo livro."""
+        project = Project()
+        project.meta.title = title
+        project.meta.notation_locale = self.editor_panel.locale
+        project.meta.dictionary_locale = self.dictionary_service.locale
+        return project
+
+    def open_path(self, path: Path) -> None:
+        """Abrir um projeto por caminho (recentes, linha de comando): pergunta antes (R-105)."""
+        if self._confirm_discard():
+            self._load_project_path(path)
+
+    def import_path(self, path: Path) -> None:
+        """Importar um PGN/texto por caminho: pergunta antes (R-105)."""
+        if self._confirm_discard():
+            self._import_path(path)
 
     def open_project(self):
         if not self._confirm_discard():
@@ -507,7 +517,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Abrir projeto", f"Não foi possível abrir o projeto.\n\n{exc}")
             return
 
-        self._install_project(project, cursor_position=project.state.cursor_position)
+        self._switch_to(project, cursor_position=project.state.cursor_position)
         remember_recent_file(path)
         self._rebuild_recent_menu()
         self._update_window_title()
@@ -535,8 +545,22 @@ class MainWindow(QMainWindow):
         box.show()
         self._load_warnings_box = box
 
-    def _install_project(self, project: Project, *, cursor_position: int = 0) -> None:
-        """Poe `project` na janela: dicionario, reconhecimento, partidas, PDF e texto."""
+    def _switch_to(self, project: Project, *, text: str | None = None, cursor_position: int = 0) -> None:
+        """O unico caminho para trocar de projeto (R-104, SPEC v3 §10.1).
+
+        Novo, abrir, recentes, importar e recuperar passam por aqui -- e o
+        portao de descarte (`_confirm_discard`) fica com quem chama. Nada da
+        sessao anterior sobrevive: trabalho em segundo plano, achados do motor,
+        dicionario e tokens ignorados, PDF e o cache de OCR dele. O texto novo
+        entra **depois** da configuracao nova e com uma analise so; antes, a
+        reconfiguracao reanalisava o texto antigo e reconciliava as decisoes do
+        projeto novo contra ele (U-01).
+
+        `text` e o que vai para o editor quando nao e `project.raw_text` -- o
+        texto importado, que ainda nao esta salvo em projeto nenhum.
+        """
+        self._cancel_background_work()
+        self._engine_findings = None
         self.project = project
         self.dictionary_service.set_locale(project.meta.dictionary_locale)
         self.dictionary_service.set_project(project.dictionary)
@@ -544,13 +568,20 @@ class MainWindow(QMainWindow):
             locale=project.meta.notation_locale,
             dictionary=self.dictionary_service.merged(),
             ignored_tokens=project.state.ignored_issue_tokens,
+            reparse=False,
         )
         self.games_panel.set_completed(project.state.completed_games)
         self._restore_pdf(project)
-        self.editor_panel.load_document_text(project.raw_text, cursor_position)
+        self.editor_panel.load_document_text(project.raw_text if text is None else text, cursor_position)
         self._last_autosaved_text = project.raw_text
         self._chars_since_autosave = 0
         self._state_dirty = False
+        self._update_window_title()
+
+    def _cancel_background_work(self) -> None:
+        """O que estava rodando para o projeto anterior nao tem onde cair no novo."""
+        self.diagram_ocr.cancel()
+        self.full_pdf_recognition.cancel()
 
     def _restore_pdf(self, project):
         """O PDF que acompanha o trabalho, na pagina em que se parou."""
@@ -632,24 +663,18 @@ class MainWindow(QMainWindow):
             str(Path.cwd()),
             "PGN e texto (*.pgn *.txt);;Todos os arquivos (*)",
         )
-        if not file_path:
-            return
+        if file_path:
+            self._import_path(Path(file_path))
 
-        path = Path(file_path)
+    def _import_path(self, path: Path) -> None:
         try:
             text = import_text_file(path)
         except OSError as exc:
             QMessageBox.critical(self, "Importar", f"Não foi possível ler o arquivo.\n\n{exc}")
             return
-
-        self.project = Project()
-        self.project.meta.title = path.stem
-        self.project.meta.notation_locale = self.editor_panel.locale
-        self.games_panel.set_completed([])
-        self.editor_panel.load_document_text(text)
-        self._last_autosaved_text = ""
-        self._state_dirty = False
-        self._update_window_title()
+        # O texto importado ainda nao esta em projeto nenhum: `raw_text` vazio
+        # deixa a janela suja ate o primeiro salvar.
+        self._switch_to(self._blank_project(title=path.stem), text=text)
         self.statusBar().showMessage(f"Importado: {path.name} ({len(text)} caracteres)", 5000)
 
     # ------------------------------------------------------------------
@@ -752,6 +777,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_document_analyzed(self, analysis):
+        if analysis.raw_text != self.editor_panel.document_text():
+            # Analise de um texto que ja saiu do editor (troca de projeto no meio
+            # dela): reconciliar contra ele rebaixava decisoes do projeto novo
+            # (U-01). A analise do texto atual vem logo atras.
+            return
         if len(analysis.raw_text) > self.MAX_AUTO_RECOGNITION_CHARS:
             # Registros antigos não podem ser associados silenciosamente ao
             # texto novo. Para livros grandes, a fonte de verdade continua
@@ -2146,7 +2176,7 @@ class MainWindow(QMainWindow):
 
     def _recover(self, snapshot) -> None:
         """Reabre o projeto inteiro do snapshot; ele passa a ser desta janela."""
-        self._install_project(restore_project(snapshot), cursor_position=snapshot.cursor_position)
+        self._switch_to(restore_project(snapshot), cursor_position=snapshot.cursor_position)
         # O texto recuperado ainda nao esta no `.plez`: salvar e o que consolida.
         self._state_dirty = True
         self._write_snapshot(self.editor_panel.document_text())

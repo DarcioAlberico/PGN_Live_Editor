@@ -605,7 +605,7 @@ class EditorPanel(QWidget):
     # Configuracao do reconhecimento
     # ------------------------------------------------------------------
 
-    def _reconfigure(self, **changes):
+    def _reconfigure(self, *, reparse: bool = True, **changes):
         config = self.async_parser.config
         self.async_parser.configure(
             ParseConfig.build(
@@ -615,13 +615,20 @@ class EditorPanel(QWidget):
                 separator_pattern=changes.get("separator_pattern", config.separator_pattern),
             )
         )
-        self.reparse_now()
+        if reparse:
+            self.reparse_now()
 
-    def configure_recognition(self, locale: str, dictionary: dict[str, str], ignored_tokens):
-        """Idioma, dicionario e silenciados de uma vez -- uma unica reanalise."""
+    def configure_recognition(self, locale: str, dictionary: dict[str, str], ignored_tokens, *, reparse: bool = True):
+        """Idioma, dicionario e silenciados de uma vez -- uma unica reanalise.
+
+        `reparse=False` quando o texto vai ser trocado logo em seguida: reanalisar
+        o texto **antigo** com a configuracao nova so produz um resultado que nao
+        vale para nada -- e que reconciliava as decisoes do projeto novo contra o
+        texto velho (U-01).
+        """
         self.locale = locale
         self._sync_locale_box()
-        self._reconfigure(locale=locale, dictionary=dictionary, ignored_tokens=ignored_tokens)
+        self._reconfigure(reparse=reparse, locale=locale, dictionary=dictionary, ignored_tokens=ignored_tokens)
 
     def set_locale(self, locale: str):
         if locale == self.locale and locale == self.async_parser.config.locale:
