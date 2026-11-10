@@ -26,11 +26,15 @@ from .issues import (
     AUTO_CORRECTED,
     CITATION_COLLECTED,
     CITED_MOVE,
+    DANGLING_NAG,
+    EMPTY_VARIATION,
     INVALID_CHARACTER,
     MOVE_NUMBER_MISMATCH,
     ORPHAN_VARIATION,
+    PROSE_WITHOUT_MOVES,
     UNBALANCED_PAREN,
     UNCLOSED_BRACE,
+    UNCLOSED_VARIATION,
     UNRECOGNIZED_MOVE,
     Candidate,
     Issue,
@@ -1024,6 +1028,7 @@ class TolerantParser:
 
             elif token.type == "VARIANT_CLOSE":
                 if stack:
+                    closing_pending = pending_comments
                     (
                         active_list,
                         saved_board,
@@ -1036,6 +1041,8 @@ class TolerantParser:
                     owner, variation_index = open_variation
                     variation = owner.variations[variation_index]
                     variation.span = (variation.span[0], token.end_index)
+                    if not variation:
+                        self._absorb_empty_variation(owner, variation, closing_pending, active_list, pending_comments)
                     self.validator.set_board(saved_board)
                     self._desynchronized = False
                 else:
@@ -1082,6 +1089,16 @@ class TolerantParser:
                 if active_list:
                     active_list[-1].nags.append(token.value)
                     active_list[-1].nag_end = max(active_list[-1].nag_end, token.end_index)
+                else:
+                    # Sem lance antes dele nao ha a quem o simbolo pertencer; antes
+                    # ele era descartado (N-12). Fica como comentario, e o painel avisa.
+                    self._append_comment(pending_comments, token.value, "COMMENT")
+                    self._add_issue(
+                        "warning",
+                        DANGLING_NAG,
+                        f"'{token.value}' não tem lance antes dele; ficou como comentário.",
+                        token,
+                    )
 
             elif token.type == "RESULT":
                 self.ast.result = token.value
@@ -1138,10 +1155,63 @@ class TolerantParser:
 
             index += 1
 
+        self._flag_unclosed_variations(stack)
+        self._flag_prose_without_moves(tokens)
         self._finish_comments(self.ast.moves)
         self._flag_invalid_characters(tokens)
         self.ast.issues = list(self.issues)
         return self.ast
+
+    def _absorb_empty_variation(
+        self,
+        owner: MoveNode,
+        variation: Variation,
+        inner_comments: list[str],
+        active_list: list[MoveNode],
+        pending_comments: list[str],
+    ) -> None:
+        """Parenteses sem lance: o texto de dentro vira comentario do lance de antes (R-209).
+
+        Antes `1. e4 (just a remark) e5` perdia o "(just a remark)" inteiro: a
+        variante vazia nao renderiza, e a prosa dela morria com ela.
+        """
+        owner.variations.remove(variation)
+        start, end = variation.span
+        body = " ".join(str(part) if not isinstance(part, _TextRun) else part.text() for part in inner_comments).strip()
+        if body:
+            target = active_list[-1].comments_after if active_list else pending_comments
+            target.append(f"({body})")
+        self._add_issue(
+            "info",
+            EMPTY_VARIATION,
+            "Parênteses sem lance nenhum: o texto deles ficou como comentário.",
+            Token(type="TEXT", value=f"({body})", start_index=start, end_index=end),
+        )
+
+    def _flag_unclosed_variations(self, stack) -> None:
+        """`(` sem `)` ate o fim do texto: a variante foi fechada aqui, e o painel diz onde abriu."""
+        for *_rest, (owner, variation_index) in stack:
+            start = owner.variations[variation_index].span[0]
+            self._add_issue(
+                "error",
+                UNCLOSED_VARIATION,
+                "Variante aberta com '(' e nunca fechada; foi fechada no fim do texto.",
+                Token(type="VARIANT_OPEN", value="(", start_index=start, end_index=start + 1),
+            )
+
+    def _flag_prose_without_moves(self, tokens: list[Token]) -> None:
+        """Trecho so de prosa: nada vai para o PGN, e isso precisa ser dito (R-209)."""
+        if self.ast.moves:
+            return
+        prose = [token for token in tokens if token.type in {"TEXT", "COMMENT"} and token.value.strip("{} ")]
+        if not prose:
+            return
+        self._add_issue(
+            "info",
+            PROSE_WITHOUT_MOVES,
+            "Trecho sem nenhum lance: o texto fica no editor, mas não há partida para exportar.",
+            Token(type="TEXT", value="", start_index=prose[0].start_index, end_index=prose[-1].end_index),
+        )
 
     def _finish_comments(self, moves: list[MoveNode]) -> None:
         """Junta, uma vez so, a prosa acumulada em `_TextRun` (ver `_append_comment`)."""

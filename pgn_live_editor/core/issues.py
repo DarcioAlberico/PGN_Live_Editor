@@ -110,3 +110,12 @@ INVALID_CHARACTER = "INVALID_CHARACTER"
 
 # Trecho com lances de outra linha ("Compare 1. d4 d5 ..."), guardado como comentario.
 CITATION_COLLECTED = "CITATION_COLLECTED"
+
+# NAG (`!`, `$1`, `±`) sem lance antes dele na linha: fica como comentario.
+DANGLING_NAG = "DANGLING_NAG"
+# `(` sem `)` ate o fim do texto.
+UNCLOSED_VARIATION = "UNCLOSED_VARIATION"
+# Parenteses sem lance nenhum dentro: o texto deles virou comentario.
+EMPTY_VARIATION = "EMPTY_VARIATION"
+# Trecho so de prosa: fica no texto bruto, mas nao ha lance para levar ao PGN.
+PROSE_WITHOUT_MOVES = "PROSE_WITHOUT_MOVES"
