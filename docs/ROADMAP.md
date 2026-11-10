@@ -27,12 +27,12 @@ defeito que contradiz o aceite da fase; o item que o fecha está no
 | Ganhos imediatos | ✅ concluída | `test_regressions`, `test_core` |
 | 0 · Fundação | ✅ concluída | `test_roundtrip`; CI. O trabalho de ago–out estava fora do git (Q-01), commitado em 2026-11-09 |
 | 1 · Não perder trabalho | ✅ concluída de novo (2026-11-10) | `test_durable_io`, `test_recovery`, `test_schemas`, `test_session_switch` — S-01 e S-02 fechados na fase 15 do roadmap v3 |
-| 2 · Parar a corrupção silenciosa | ⚠️ reaberta | lances da linha principal viram comentário sem alerta (N-02); ponto final da prosa some (N-04); comentário perdido entre variantes (N-03) → Fase 16 |
-| 3 · Gestos de edição | ⚠️ reaberta | renumerar apaga comentário (N-05); promover variante leva o NAG da âncora (N-06) → R-202 |
-| 4 · Escala de livro | ⚠️ reaberta | N-01 (normalizador quadrático) corrigido em 2026-11-09 (`test_quick_wins`); falta N-16 (prosa longa quadrática) → R-203, R-401 |
+| 2 · Parar a corrupção silenciosa | ✅ concluída de novo (2026-11-10) | `test_properties` (2.000 partidas sem lance perdido), `test_citations`, `test_parser_comments`, `test_silent_losses` — N-02, N-03 e N-04 fechados na fase 16 do roadmap v3 |
+| 3 · Gestos de edição | ✅ concluída de novo (2026-11-10) | `test_move_extent`, `test_delimiters` — N-05, N-06, N-07, N-08 fechados na fase 16 |
+| 4 · Escala de livro | ✅ concluída de novo (2026-11-10) | `test_quick_wins` (N-01), `test_parser_comments` (N-16: 400 mil palavras em 0,26 s no parser) |
 | 5 · Assistentes | ✅ concluída | `test_engine`, `test_stockfish_integration` (determinístico desde 2026-11-09, Q-03), `test_dictionary`, `test_pdf_panel` |
 | 6 · Polimento | ✅ concluída | `test_preferences`, `test_ui_smoke` |
-| 7 · Livro de repertório | ⚠️ reaberta | linha em branco ignorada junta a regressão ao parágrafo anterior (L-03) → R-208 |
+| 7 · Livro de repertório | ✅ concluída de novo (2026-11-10) | `test_blank_lines`, `test_book_regression` (o python-chess lê o texto convertido), `test_descriptive_context` — L-01, L-02, L-03, L-16, L-18 fechados |
 | 8 · Confiança e revisão | ⚠️ reaberta | decisões humanas trocam de token após reanálise (L-04); abrir `.plez` rebaixa decisões aceitas (U-01) → R-302a/b, R-104 |
 | 9 · Pipeline PDF profissional | ⚠️ reaberta | `□` lido como "brancas jogam" (O-01); lado chutado sai como aceito (O-02); colunas não separam (L-05) → R-504–R-506, R-801 |
 | 10 · Edição estrutural acelerada | ⚠️ reaberta | aceitar um alerta depois de digitar corrompe o lance (U-05) → R-302 |

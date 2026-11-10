@@ -20,7 +20,11 @@
 > silenciosas, OCR relatado como "sem camada de texto", PDF gravado só no fim)
 > parcialmente — falta o resto do S-10 (subprocesso congelado, R-304) e o escape de
 > `"`/`}` na cópia (R-806).
-> Os demais achados seguem abertos nas fases 16–22.
+> **Fase 16 (2026-11-10):** corrigidos e com teste N-02, N-03, N-04, N-05, N-06, N-07,
+> N-08, N-10, N-11, N-12, N-13, N-14, N-16, L-01, L-02, L-03, L-16 e L-18; mais quatro
+> achados novos do mesmo tipo (ver o roadmap v3, Fase 16). Com isso o núcleo de texto
+> (§1) está fechado.
+> Os demais achados seguem abertos nas fases 17–22.
 
 ## 0. Resumo
 

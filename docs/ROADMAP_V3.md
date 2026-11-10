@@ -29,7 +29,7 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 |---|---|---|---|
 | 14 | Rede de segurança e alavancas | 11 | ✅ 2026-11-09 (branch `fase-14`) |
 | 15 | Não perder trabalho — parte 2 | 9 | ✅ 2026-11-10 (branch `fase-15`) |
-| 16 | Parar a corrupção silenciosa — parte 2 | 13 | ⬜ |
+| 16 | Parar a corrupção silenciosa — parte 2 | 13 | ✅ 2026-11-10 (branch `fase-16`) |
 | 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ⬜ |
 | 18 | Escala de livro — desempenho | 5 | ⬜ |
 | 19 | Proveniência de diagramas e relatórios | 6 | ⬜ |
@@ -107,6 +107,31 @@ apaga trabalho. Ataca a premissa **P2** ("há um único estado de sessão") e **
 **Objetivo:** voltar a valer o aceite da Fase 2 — *nada some e nada muda de dono sem
 o usuário ver*. Ataca a premissa **P4**: primeiro o teste-guia, depois a forma dos
 dados, depois as três peças compartilhadas, e só então os casos individuais.
+
+> **Concluída em 2026-11-10**, no branch `fase-16`. R-212 → `2ddff96` (teste-guia;
+> as três marcas `@expectedFailure` saíram em `3f63b0a` e `d174e92`); R-213 → `3d0d2d4`;
+> R-203 → `f661d84`; R-205 → `3f63b0a`; R-204 → `d174e92`; R-201 → `3659b93`;
+> R-202 → `2c6650a`; R-206 → `1eb486c`; R-207 → `f69adf2`; R-208 → `4743d7a`;
+> R-209 → `a1d1544`; R-210 → `f76ac8e`; R-211 → `8133862` (+ `1b14696`).
+> Estresse final: 2.000 partidas aleatórias com prosa, zero lance perdido, zero prosa
+> alterada, normalizador idempotente.
+>
+> Decisões e correções de rumo na implementação:
+> - **R-208: a premissa "linha em branco é sempre quebra" estava errada.** O corpus do
+>   Najdorf vem de um PDF que põe linha em branco entre *todas* as linhas, até no meio
+>   de frase e de colchete. Ficou: linha em branco quebra; em texto de espaço duplo
+>   (≥ 80 % dos pares separados), só duas ou mais seguidas.
+> - `Variation` é uma lista com `anchor_after` e `span` (não um dataclass com `.moves`):
+>   os ~60 usos que só percorrem os lances ficaram iguais.
+> - `MoveExtent` virou duas funções sobre o `MoveNode` (`nag_end_of`, `move_end`), porque
+>   o comentário do lance só se acha no texto.
+> - R-207: o `set_board_fen` ainda existe uma vez, na posição inicial da partida; o que
+>   saiu foi o das variantes.
+> - Achados novos do mesmo tipo, fechados junto: parênteses só com prosa ou comentário
+>   sumiam (`EMPTY_VARIATION`), trecho só de prosa virava `*` (`PROSE_WITHOUT_MOVES`),
+>   `KtxBPch` era recusado já no filtro do tokenizador, re-ancorar tinha o mesmo defeito
+>   do N-06, e o L-16 era pior que o registrado (`[%cal Ge4]` saía `{[%cal Ge4}`).
+> - Medido: prosa longa no parser, 400 mil palavras, de 333 s para 0,26 s.
 
 ### 16a — O teste-guia, a forma dos dados e as peças compartilhadas (fazer primeiro)
 
