@@ -474,9 +474,16 @@ class MainWindow(QMainWindow):
             return
 
         for path in entries:
-            action = QAction(path.name, self)
-            action.setStatusTip(str(path))
-            action.triggered.connect(lambda _checked=False, target=path: self.open_path(target))
+            if path.is_file():
+                action = QAction(path.name, self)
+                action.setStatusTip(str(path))
+                action.triggered.connect(lambda _checked=False, target=path: self.open_path(target))
+            else:
+                # Cinza e com o motivo, mas na lista (R-108): o arquivo pode
+                # voltar quando a pasta de rede ou o OneDrive voltarem.
+                action = QAction(f"{path.name} (não encontrado)", self)
+                action.setStatusTip(f"{path} -- não encontrado agora; pasta de rede ou sincronização?")
+                action.setEnabled(False)
             self.recent_menu.addAction(action)
 
     # ------------------------------------------------------------------

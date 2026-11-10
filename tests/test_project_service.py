@@ -204,12 +204,36 @@ class RecentFilesTests(unittest.TestCase):
 
         self.assertEqual([first, second], load_recent_files())
 
-    def test_missing_files_are_dropped_from_the_recent_list(self):
+    def test_a_missing_file_stays_in_the_recent_list(self):
+        # R-108: sumir do disco costuma ser passageiro (pasta de rede, OneDrive
+        # ainda sincronizando, pendrive fora). Tirar da lista sem avisar fazia o
+        # usuario achar que tinha perdido o projeto.
         path = save_project(Project(raw_text="a"), self.tmp / "sumiu")
+        other = save_project(Project(raw_text="b"), self.tmp / "outro")
         remember_recent_file(path)
         path.unlink()
 
-        self.assertEqual([], load_recent_files())
+        remember_recent_file(other)
+
+        self.assertEqual([other, path], load_recent_files())
+
+    def test_the_window_shows_a_missing_recent_file_greyed_out(self):
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+
+        from pgn_live_editor.ui.main_window import MainWindow
+
+        self.app = QApplication.instance() or QApplication([])
+        path = save_project(Project(raw_text="a"), self.tmp / "na_rede")
+        remember_recent_file(path)
+        path.unlink()
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            window = MainWindow()
+        self.addCleanup(window.deleteLater)
+
+        (action,) = [a for a in window.recent_menu.actions() if str(path) in a.statusTip()]
+
+        self.assertFalse(action.isEnabled())
+        self.assertIn("não encontrado", action.text())
 
 
 if __name__ == "__main__":

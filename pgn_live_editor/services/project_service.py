@@ -298,7 +298,10 @@ def load_recent_files() -> list[Path]:
         return []
     if not isinstance(payload, list):
         return []
-    return [Path(entry) for entry in payload if isinstance(entry, str) and Path(entry).is_file()]
+    # Arquivo que sumiu **fica** na lista (R-108): quase sempre e passageiro --
+    # pasta de rede, OneDrive sincronizando, pendrive fora. Quem mostra decide
+    # como avisar; so `MAX_RECENT_FILES` limita o tamanho.
+    return [Path(entry) for entry in payload if isinstance(entry, str) and entry]
 
 
 def remember_recent_file(path: Path) -> list[Path]:
