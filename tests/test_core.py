@@ -216,7 +216,9 @@ class CorePipelineTests(unittest.TestCase):
         tokens = PGNTokenizer().tokenize(LiveTextNormalizer(locale="pt").normalize_with_mapping(text))
         ast = TolerantParser().parse(tokens)
 
-        self.assertEqual(ast.issues, [])
+        # A citacao vira comentario e aparece como `info` para conferir (R-204).
+        self.assertEqual(["CITATION_COLLECTED"], [issue.code for issue in ast.issues])
+        self.assertEqual("info", ast.issues[0].severity)
         variation_tail = ast.moves[12].variations[0][-1]
         self.assertEqual(variation_tail.display_san, "cxd5")
         self.assertEqual(variation_tail.comments_after, ["em geral 8... Re8 seguido por ...d6"])

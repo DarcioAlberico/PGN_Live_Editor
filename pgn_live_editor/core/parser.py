@@ -24,6 +24,7 @@ from .issues import (
     ACTION_TO_COMMENT,
     AMBIGUOUS_MOVE,
     AUTO_CORRECTED,
+    CITATION_COLLECTED,
     CITED_MOVE,
     INVALID_CHARACTER,
     MOVE_NUMBER_MISMATCH,
@@ -444,7 +445,18 @@ class TolerantParser:
             return True
         return False
 
-    def _collect_backward_reference_comment(self, tokens: list[Token], start_index: int) -> tuple[str, int]:
+    def _collect_backward_reference_comment(
+        self, tokens: list[Token], start_index: int, active_list: list[MoveNode]
+    ) -> tuple[str, int]:
+        """O trecho citado ("Compare 1. d4 d5 ...") como comentario, e onde ele termina (R-204).
+
+        A citacao termina no primeiro destes: `)`, resultado, ou um numero de
+        lance que **retoma a partida** -- vem depois do ultimo lance jogado e o
+        lance seguinte a ele e legal na posicao atual. Antes ela so parava no
+        `)` ou no resultado e engolia os lances de verdade que viessem depois
+        (N-02). Chaves no trecho viram parenteses: dentro do comentario elas o
+        quebrariam. O trecho sai num alerta `info` para o usuario conferir.
+        """
         parts: list[str] = []
         index = start_index
 
@@ -452,13 +464,54 @@ class TolerantParser:
             token = tokens[index]
             if token.type in {"VARIANT_CLOSE", "RESULT"}:
                 break
+            if index > start_index and token.type == "MOVE_NUMBER" and self._resumes_game(active_list, tokens, index):
+                break
 
             part = token.value.strip("{}").strip() if token.type == "COMMENT" else token.value
             if part:
-                parts.append(part)
+                parts.append(part.replace("{", "(").replace("}", ")"))
             index += 1
 
-        return (" ".join(parts).strip(), index)
+        comment = " ".join(parts).strip()
+        if comment and index > start_index:
+            first, last = tokens[start_index], tokens[index - 1]
+            self._add_issue(
+                "info",
+                CITATION_COLLECTED,
+                "Trecho com lances de outra linha guardado como comentário; confira se não é a partida.",
+                Token(
+                    type="TEXT",
+                    value=comment,
+                    start_index=first.start_index,
+                    end_index=last.end_index,
+                    normalized_start_index=first.normalized_start_index,
+                    normalized_end_index=last.normalized_end_index,
+                ),
+            )
+        return (comment, index)
+
+    def _resumes_game(self, active_list: list[MoveNode], tokens: list[Token], index: int) -> bool:
+        """O numero em `tokens[index]` e a partida voltando depois de uma citacao?
+
+        So se for o **proximo meio-lance** da partida (`2...` depois de `2.`;
+        `3.` depois de `2...`) e o lance seguinte a ele for legal agora. Um
+        `2. c4` da linha citada depois de `2...Nc6` vem depois no texto, mas e
+        anterior na partida.
+        """
+        if not active_list:
+            return False
+        identity = self._parse_move_number_value(tokens[index].value)
+        last = self._move_identity(active_list[-1])
+        if not identity or not last:
+            return False
+        token_ply = 2 * (identity[0] - 1) + int(identity[1])
+        last_ply = 2 * (last[0] - 1) + int(last[1])
+        if token_ply != last_ply + 1:
+            return False
+        following = next((t for t in tokens[index + 1 :] if t.type in MOVE_TOKEN_TYPES), None)
+        if following is None:
+            return False
+        return self.validator.is_legal(following.value)
 
     # ------------------------------------------------------------------
     # Resolucao de um token de lance
@@ -987,7 +1040,7 @@ class TolerantParser:
 
             elif token.type == "MOVE_NUMBER":
                 if self._is_backward_reference(active_list, token):
-                    comment_value, index = self._collect_backward_reference_comment(tokens, index)
+                    comment_value, index = self._collect_backward_reference_comment(tokens, index, active_list)
                     if active_list:
                         self._append_comment(active_list[-1].comments_after, comment_value, "TEXT", comment_floor)
                     else:

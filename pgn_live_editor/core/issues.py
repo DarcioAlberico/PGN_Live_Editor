@@ -107,3 +107,6 @@ def count_by_severity(issues: list[Issue]) -> dict[str, int]:
 
 # Caractere que nao era texto (surrogate solitario) e virou U+FFFD na entrada.
 INVALID_CHARACTER = "INVALID_CHARACTER"
+
+# Trecho com lances de outra linha ("Compare 1. d4 d5 ..."), guardado como comentario.
+CITATION_COLLECTED = "CITATION_COLLECTED"

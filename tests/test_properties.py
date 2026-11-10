@@ -126,7 +126,6 @@ class BookPageProperties(unittest.TestCase):
 class AuditExamples(unittest.TestCase):
     """Os achados da auditoria que motivaram a fase, como exemplos fixos."""
 
-    @unittest.expectedFailure  # N-02: a citacao engole a linha principal (R-204)
     def test_n02_a_reference_to_an_earlier_move_does_not_swallow_the_mainline(self):
         ast = parse("1. e4 e5 2. Nf3 Nc6 Compare 1. d4 d5 in another game. 3. Bb5 a6 4. Ba4 Nf6 1-0")
 
