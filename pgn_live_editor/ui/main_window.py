@@ -41,6 +41,7 @@ from ..services.diagnostics import build_diagnostic_report
 from ..services.diagram_generator import render_diagram_svg, write_png, write_svg
 from ..services.diagram_ocr_worker import AsyncDiagramOcr
 from ..services.dictionary_service import DictionaryService
+from ..services.durable_io import write_durable_text
 from ..services.engine_service import (
     ENGINE_ENV_VAR,
     EngineScanner,
@@ -1121,7 +1122,7 @@ class MainWindow(QMainWindow):
         if not output_path.suffix:
             output_path = output_path.with_suffix(".txt")
         try:
-            output_path.write_text(format_quality_report(findings) + "\n", encoding="utf-8")
+            write_durable_text(output_path, format_quality_report(findings) + "\n")
         except OSError as exc:
             QMessageBox.critical(self, "Relatório de qualidade", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
@@ -1171,7 +1172,7 @@ class MainWindow(QMainWindow):
         if not output_path.suffix:
             output_path = output_path.with_suffix(".txt")
         try:
-            output_path.write_text(format_project_diff(diff) + "\n", encoding="utf-8")
+            write_durable_text(output_path, format_project_diff(diff) + "\n")
         except OSError as exc:
             QMessageBox.critical(self, "Comparar projetos", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
@@ -1194,7 +1195,7 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
         try:
-            Path(file_path).write_text(self._diagnostic_text(), encoding="utf-8")
+            write_durable_text(Path(file_path), self._diagnostic_text())
         except OSError as exc:
             QMessageBox.critical(self, "Diagnóstico", f"Não foi possível salvar o diagnóstico.\n\n{exc}")
             return
@@ -1842,13 +1843,13 @@ class MainWindow(QMainWindow):
             pending_diagrams = sum(
                 str(record.get("review", "pending")) == "pending" for record in self.project.state.diagram_records
             )
-            output_path.with_suffix(output_path.suffix + ".report.txt").write_text(
+            write_durable_text(
+                output_path.with_suffix(output_path.suffix + ".report.txt"),
                 export_audit_text(
                     report,
                     pending_diagrams=pending_diagrams,
                     policy="exportado após confirmação" if pending_diagrams else "sem pendências",
                 ),
-                encoding="utf-8",
             )
         except OSError as exc:
             QMessageBox.critical(self, "Exportar PGN", f"Não foi possível gravar o arquivo.\n\n{exc}")
@@ -1905,7 +1906,7 @@ class MainWindow(QMainWindow):
             output_path = output_path.with_suffix(suffix)
 
         try:
-            output_path.write_text(builder(games), encoding="utf-8")
+            write_durable_text(output_path, builder(games))
         except OSError as exc:
             QMessageBox.critical(self, title, f"Não foi possível gravar o arquivo.\n\n{exc}")
             return
@@ -1945,7 +1946,7 @@ class MainWindow(QMainWindow):
         if not output_path.suffix:
             output_path = output_path.with_suffix(".html")
         try:
-            output_path.write_text(build_html(build_games_for_export(analyses)), encoding="utf-8")
+            write_durable_text(output_path, build_html(build_games_for_export(analyses)))
         except OSError as exc:
             QMessageBox.critical(self, "Exportar HTML", f"Não foi possível gravar o arquivo.\n\n{exc}")
             return

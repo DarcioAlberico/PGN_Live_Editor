@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 import zipfile
@@ -124,6 +125,26 @@ class ProjectRoundTripTests(unittest.TestCase):
         self.assertEqual("versão 3", load_project(path.with_suffix(".plez.bak")).raw_text)
         self.assertEqual("versão 2", load_project(path.with_suffix(".plez.bak.1")).raw_text)
         self.assertEqual("versão 1", load_project(path.with_suffix(".plez.bak.2")).raw_text)
+
+    def test_a_save_that_fails_at_the_last_step_keeps_the_project_on_disk(self):
+        # S-02: antes, o projeto ia para `.bak` antes da troca final; se ela
+        # falhasse (antivirus, OneDrive), nao sobrava projeto no caminho.
+        path = save_project(Project(raw_text="versão 1"), self.tmp / "frágil")
+        save_project(Project(raw_text="versão 2"), path)
+        real_replace = os.replace
+
+        def failing_final_swap(source, target):
+            # `Path.replace` tambem passa por aqui; so a troca que poe o
+            # arquivo novo no lugar do projeto falha.
+            if Path(target) == path:
+                raise OSError("disco cheio")
+            return real_replace(source, target)
+
+        with mock.patch("os.replace", failing_final_swap), self.assertRaises(OSError):
+            save_project(Project(raw_text="versão 3"), path)
+
+        self.assertEqual("versão 2", load_project(path).raw_text)
+        self.assertEqual("versão 1", load_project(path.with_suffix(".plez.bak")).raw_text)
 
     def test_opening_a_file_that_is_not_a_project_fails_clearly(self):
         stray = self.tmp / "qualquer.plez"

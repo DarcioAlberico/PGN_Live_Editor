@@ -15,14 +15,17 @@ Formato `.plez` (ZIP):
 from __future__ import annotations
 
 import json
+import logging
 import os
-import tempfile
 import time
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ..core.substitutions import LAYER_PROJECT, Dictionary
+from .durable_io import write_durable_text, write_durable_with
+
+logger = logging.getLogger(__name__)
 
 PROJECT_SUFFIX = ".plez"
 FORMAT_VERSION = 3
@@ -143,19 +146,14 @@ def validate_project_archive(path: Path) -> list[str]:
 
 
 def save_project(project: Project, path: Path) -> Path:
-    """Grava o projeto de forma atomica (escreve ao lado e so entao troca)."""
+    """Grava o projeto pelo `durable_io`: falhar no meio nunca tira o projeto do disco."""
     path = path.with_suffix(PROJECT_SUFFIX) if not path.suffix else path
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     project.meta.version = FORMAT_VERSION
     project.meta.saved_at = time.time()
 
-    handle, temp_name = tempfile.mkstemp(suffix=PROJECT_SUFFIX, dir=str(path.parent))
-    os.close(handle)
-    temp_path = Path(temp_name)
-
-    try:
-        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    def write_archive(stream) -> None:
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("meta.json", json.dumps(asdict(project.meta), ensure_ascii=False, indent=2))
             archive.writestr("raw.txt", project.raw_text)
             archive.writestr("headers.json", json.dumps(project.header_template, ensure_ascii=False, indent=2))
@@ -164,21 +162,8 @@ def save_project(project: Project, path: Path) -> Path:
                 json.dumps({"entries": project.dictionary.to_list()}, ensure_ascii=False, indent=2),
             )
             archive.writestr("state.json", json.dumps(asdict(project.state), ensure_ascii=False, indent=2))
-        if path.exists():
-            # Keep a short, deterministic rotation.  The destination is
-            # moved only after the new archive is complete, so an interrupted
-            # write cannot destroy the last valid project.
-            for index in range(MAX_PROJECT_BACKUPS - 1, 0, -1):
-                older = path.with_suffix(path.suffix + f".bak.{index - 1}" if index > 1 else path.suffix + ".bak")
-                newer = path.with_suffix(path.suffix + f".bak.{index}")
-                if older.exists():
-                    older.replace(newer)
-            path.replace(path.with_suffix(path.suffix + ".bak"))
-        temp_path.replace(path)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
 
+    write_durable_with(path, write_archive, backups=MAX_PROJECT_BACKUPS)
     project.path = path
     return path
 
@@ -285,15 +270,7 @@ def write_recovery_snapshot(raw_text: str, origin_path: Path | None) -> Path:
         "saved_at": time.time(),
     }
 
-    handle, temp_name = tempfile.mkstemp(suffix=".json", dir=str(target.parent))
-    os.close(handle)
-    temp_path = Path(temp_name)
-    try:
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temp_path.replace(target)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
+    write_durable_text(target, json.dumps(payload, ensure_ascii=False))
     return target
 
 
@@ -351,10 +328,8 @@ def remember_recent_file(path: Path) -> list[Path]:
     entries.insert(0, path)
     entries = entries[:MAX_RECENT_FILES]
     try:
-        _recent_file().write_text(
-            json.dumps([str(entry) for entry in entries], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_durable_text(_recent_file(), json.dumps([str(entry) for entry in entries], ensure_ascii=False, indent=2))
     except OSError:
-        pass
+        # A lista de recentes e conveniencia: perde-la nao custa trabalho.
+        logger.warning("Lista de recentes nao gravada", exc_info=True)
     return entries

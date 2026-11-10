@@ -30,6 +30,7 @@ da +900 para o outro lado, e a soma da os 900 de queda direto.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -52,7 +53,10 @@ from ..core.issues import (
     Issue,
 )
 from ..core.parser import GameAST, MoveNode
+from .durable_io import write_durable_text
 from .project_service import app_data_dir
+
+logger = logging.getLogger(__name__)
 
 # Mate vira um numero grande, mas finito: um mate a favor nao pode dominar a
 # aritmetica de queda a ponto de todo lance seguinte virar alerta.
@@ -196,13 +200,10 @@ def load_engine_settings() -> EngineSettings:
 
 def save_engine_settings(settings: EngineSettings) -> None:
     try:
-        _settings_file().write_text(
-            json.dumps(settings.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        write_durable_text(_settings_file(), json.dumps(settings.to_dict(), ensure_ascii=False, indent=2))
     except OSError:
-        # Preferencia de motor nao vale travar o programa.
-        pass
+        # Preferencia de motor nao vale travar o programa, mas fica no log.
+        logger.warning("Configuracao do motor nao gravada", exc_info=True)
 
 
 def engine_is_available(settings: EngineSettings | None = None) -> bool:

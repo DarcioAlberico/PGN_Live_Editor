@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import re
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from html import escape
@@ -23,6 +21,7 @@ import chess.pgn
 
 from ..core.move_tree import build_move_entries, render_game_html, render_game_pgn
 from ..core.parser import GameAST, MoveNode
+from .durable_io import write_durable_text
 from .observability import measure
 
 ExportPolicy = Literal["block_pending", "confirm_pending", "quarantine"]
@@ -181,32 +180,15 @@ def build_pgn(ast: GameAST, start_fen: str = chess.STARTING_FEN) -> tuple[str, R
         return pgn_text, report
 
 
-def _rotate_backups(path: Path, limit: int = 3) -> None:
-    for index in range(limit - 1, 0, -1):
-        older = path.with_suffix(path.suffix + (".bak" if index == 1 else f".bak.{index - 1}"))
-        newer = path.with_suffix(path.suffix + f".bak.{index}")
-        if older.exists():
-            older.replace(newer)
-    path.replace(path.with_suffix(path.suffix + ".bak"))
+PGN_BACKUPS = 3
 
 
 def write_pgn(path: Path, pgn_text: str) -> None:
-    """Grava PGN preservando uma cópia recuperável da versão anterior."""
+    """Grava PGN preservando as versões anteriores (`.bak`, `.bak.1`, `.bak.2`)."""
     with measure("write_pgn", characters=len(pgn_text)):
         if not pgn_text.endswith("\n"):
             pgn_text += "\n"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temporary = tempfile.mkstemp(suffix=path.suffix, dir=str(path.parent))
-        os.close(handle)
-        temp_path = Path(temporary)
-        try:
-            temp_path.write_text(pgn_text, encoding="utf-8")
-            if path.exists():
-                _rotate_backups(path)
-            temp_path.replace(path)
-        except BaseException:
-            temp_path.unlink(missing_ok=True)
-            raise
+        write_durable_text(Path(path), pgn_text, backups=PGN_BACKUPS)
 
 
 # ---------------------------------------------------------------------------

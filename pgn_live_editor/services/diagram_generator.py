@@ -9,6 +9,7 @@ import chess
 import chess.svg
 
 from ..core.annotations import Arrow, SquareMark
+from .durable_io import write_durable_text
 
 
 def render_diagram_svg(
@@ -46,7 +47,7 @@ def render_diagram_svg(
 
 
 def write_svg(path: Path, svg: str) -> None:
-    path.write_text(svg, encoding="utf-8")
+    write_durable_text(path, svg)
 
 
 def write_png(path: Path, svg: str, size: int = 900) -> None:

@@ -17,6 +17,7 @@ e o scanner fazendo sempre a mesma coisa.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,7 +32,10 @@ from ..core.substitutions import (
     merge_layers,
 )
 from ..core.tokenizer import PGNTokenizer
+from .durable_io import write_durable_text
 from .project_service import app_data_dir
+
+logger = logging.getLogger(__name__)
 
 GLOBAL_DICTIONARY_FILE = "dictionary.json"
 
@@ -56,13 +60,13 @@ def load_global_dictionary() -> Dictionary:
 
 def save_global_dictionary(dictionary: Dictionary) -> None:
     try:
-        global_dictionary_path().write_text(
-            json.dumps({"entries": dictionary.to_list()}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        write_durable_text(
+            global_dictionary_path(), json.dumps({"entries": dictionary.to_list()}, ensure_ascii=False, indent=2)
         )
     except OSError:
-        # Preferencia de dicionario nao vale travar o programa.
-        pass
+        # Nao trava o programa, mas fica no log: antes a falha sumia e um
+        # arquivo pela metade voltava como dicionario vazio (S-15).
+        logger.warning("Dicionario global nao gravado", exc_info=True)
 
 
 @dataclass
