@@ -101,7 +101,6 @@ class BookPageProperties(unittest.TestCase):
 
         self.assertEqual(sans, [move.san for move in ast.moves], text)
 
-    @unittest.expectedFailure  # N-04: o tokenizador tira o ponto final da prosa (R-205)
     @SETTINGS
     @given(seed=st.integers(0, 10_000), plies=st.integers(4, 40))
     def test_the_author_prose_reaches_the_comments_unchanged(self, seed, plies):
@@ -134,7 +133,6 @@ class AuditExamples(unittest.TestCase):
         self.assertEqual(["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"], [m.san for m in ast.moves])
         self.assertIn("Compare 1. d4 d5 in another game.", squeeze(all_comments(ast)))
 
-    @unittest.expectedFailure  # N-04 (R-205)
     def test_n04_sentence_punctuation_survives(self):
         ast = parse("1. e4 e5 This is good. Black is fine. 2. Nf3")
 

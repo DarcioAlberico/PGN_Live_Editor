@@ -119,8 +119,11 @@ class PGNTokenizer:
 
                 # O regex de candidato e amplo de proposito; o filtro semantico
                 # ("tem cara de lance?") decide se ele vira candidato ou prosa.
+                # Prosa volta com a pontuacao que tinha: o ponto so sai de quem
+                # continua lance (N-04; antes "good." chegava ao PGN como "good").
                 if token_type == "MOVE_CANDIDATE" and not looks_like_move(cleaned):
                     token_type = "TEXT"
+                    cleaned = value.strip()
 
                 normalized_start = match.start(name)
                 normalized_end = match.end(name)
