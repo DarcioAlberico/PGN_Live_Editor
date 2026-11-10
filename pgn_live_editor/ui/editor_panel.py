@@ -519,8 +519,16 @@ class EditorPanel(QWidget):
         position = self.text_edit.textCursor().position()
 
         # Ao entrar noutra partida do livro, o tabuleiro e o preview passam a
-        # segui-la. Vem do cache, entao não há custo de analise aqui.
-        if self.analysis.segments and self.analysis.active_index != self._segment_index_at(position):
+        # segui-la. Vem do cache, entao não há custo de analise aqui. So vale
+        # com a analise do texto **atual**: com o texto mudado e a analise ainda
+        # a caminho, os offsets das partidas estao velhos e cada passo do cursor
+        # disparava uma analise sincrona completa (U-09); a que esta a caminho
+        # ja traz a partida certa.
+        if (
+            self.analysis.segments
+            and self.analysis.raw_text == self.document_text()
+            and self.analysis.active_index != self._segment_index_at(position)
+        ):
             self._do_reparse()
 
         # A arvore segue o cursor mesmo quando a sincronia com o tabuleiro

@@ -14,6 +14,7 @@ Pedidos pendentes colapsam: existe no maximo um em voo, e o mais recente vence.
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -38,6 +39,8 @@ from ..core.pgn_headers import validate_headers
 from ..core.substitutions import Dictionary
 from ..core.tokenizer import PGNTokenizer
 from .observability import measure
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,9 @@ class DocumentAnalysis:
     active: SegmentAnalysis | None = None
     # Resumos ja ajustados a posicao atual de cada partida no documento.
     digests: dict[int, SegmentDigest] = field(default_factory=dict)
+    # Geracao do `AsyncParser` que produziu esta analise (R-301): so vale se
+    # ainda for a geracao corrente quando chega.
+    generation: int = 0
 
     @property
     def game_count(self) -> int:
@@ -366,9 +372,16 @@ class _ParseRunner(QObject):
         self._pipeline.configure(config)
 
     @Slot(str, int, int)
-    def run_request(self, raw_text: str, cursor_position: int, request_id: int):
-        analysis = self._pipeline.analyze(raw_text, cursor_position)
-        self.finished_signal.emit((request_id, analysis))
+    def run_request(self, raw_text: str, cursor_position: int, generation: int):
+        # Uma excecao aqui chegava ao PyQt (qFatal, processo morto) ou, com o
+        # excepthook, deixava `_in_flight` preso e a analise ao vivo parada para
+        # sempre (S-03). O resultado `None` libera a fila; o defeito vai ao log.
+        try:
+            analysis: DocumentAnalysis | None = self._pipeline.analyze(raw_text, cursor_position)
+        except Exception:  # noqa: BLE001 - registrado e devolvido como "sem resultado"
+            logger.exception("Analise em segundo plano falhou")
+            analysis = None
+        self.finished_signal.emit((generation, analysis))
 
 
 class AsyncParser(QObject):
@@ -397,7 +410,11 @@ class AsyncParser(QObject):
         self._runner: _ParseRunner | None = None
         self._pending: tuple[str, int] | None = None
         self._in_flight = False
-        self._request_id = 0
+        # Geracao do documento (R-301): sobe a cada pedido novo, reconfiguracao
+        # e analise sincrona. Resultado de geracao antiga e descartado -- antes
+        # so um `request_id` que nem `parse_now` nem `configure` mudavam, e um
+        # resultado com a configuracao velha ainda era entregue (S-12/U-06).
+        self._generation = 0
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -409,9 +426,14 @@ class AsyncParser(QObject):
     def config(self) -> ParseConfig:
         return self._config
 
+    @property
+    def generation(self) -> int:
+        return self._generation
+
     def configure(self, config: ParseConfig) -> None:
         if config == self._config:
             return
+        self._generation += 1
         self._config = config
         self.pipeline.configure(config)
         if self._runner is not None:
@@ -426,10 +448,14 @@ class AsyncParser(QObject):
         """Analise sincrona, na thread de quem chamou."""
         self._timer.stop()
         self._pending = None
-        return self.pipeline.analyze(raw_text, cursor_position)
+        self._generation += 1
+        analysis = self.pipeline.analyze(raw_text, cursor_position)
+        analysis.generation = self._generation
+        return analysis
 
     def schedule(self, raw_text: str, cursor_position: int = 0) -> None:
         """Pede uma analise em segundo plano, colapsando o pedido anterior."""
+        self._generation += 1
         self._pending = (raw_text, cursor_position)
         self._timer.start(self.debounce_interval(raw_text))
 
@@ -465,19 +491,19 @@ class AsyncParser(QObject):
         raw_text, cursor_position = self._pending
         self._pending = None
         self._in_flight = True
-        self._request_id += 1
 
         self._ensure_thread()
-        self._request_signal.emit(raw_text, cursor_position, self._request_id)
+        self._request_signal.emit(raw_text, cursor_position, self._generation)
 
     @Slot(object)
     def _on_result(self, payload) -> None:
-        request_id, analysis = payload
+        generation, analysis = payload
         self._in_flight = False
 
-        # Resultado de um pedido ja substituido: descartar em silencio -- o mais
-        # novo ja esta na fila.
-        if request_id == self._request_id:
+        # De uma geracao ja passada (o texto, a configuracao ou uma analise
+        # sincrona veio depois): descartar -- o que vale ja esta na tela ou na fila.
+        if analysis is not None and generation == self._generation:
+            analysis.generation = generation
             self.analysis_ready_signal.emit(analysis)
 
         if self._pending is not None:
