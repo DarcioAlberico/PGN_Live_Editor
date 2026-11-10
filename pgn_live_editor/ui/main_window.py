@@ -142,6 +142,43 @@ def _diagram_header_block(record: dict[str, object]) -> str:
     )
 
 
+def _full_pdf_document(pages: list[dict[str, object]]) -> tuple[str, list[dict[str, object]], str]:
+    """O texto, os registros de diagrama e o resumo do reconhecimento do PDF inteiro."""
+    blocks: list[str] = []
+    records: list[dict[str, object]] = []
+    pending = 0
+    for page in pages:
+        page_number = int(page.get("page", 0))
+        blocks.append(f"{{ PDF página {page_number} }}")
+        text = str(page.get("text", "")).strip()
+        if text:
+            blocks.append(text)
+        elif str(page.get("text_method", "")) == "no-text-layer":
+            blocks.append("{ OCR de texto necessário nesta página: não há camada de texto no PDF. }")
+        ocr_error = str(page.get("ocr_error", "")).strip()
+        if ocr_error:
+            blocks.append(f"{{ OCR de diagramas indisponível nesta página: {ocr_error} }}")
+        for record in page.get("diagrams", []):
+            if not isinstance(record, dict):
+                continue
+            records.append(record)
+            needs_review = str(record.get("review", "pending")) == "pending"
+            pending += int(needs_review)
+            review = " revisão necessária" if needs_review else ""
+            blocks.append(
+                "{ Diagrama OCR "
+                f"{record.get('diagram', '')}: confiança {float(record.get('min_confidence', 0)):.1%}"
+                f"{review} | origem: página {page_number} }}"
+            )
+            blocks.append(_diagram_header_block(record))
+        blocks.append("")
+    failed_pages = sum(bool(str(page.get("ocr_error", "")).strip()) for page in pages)
+    suffix = f", {pending} pendente(s) de revisão" if pending else ""
+    failure_suffix = f", {failed_pages} página(s) com falha de OCR" if failed_pages else ""
+    summary = f"PDF inteiro carregado: {len(pages)} página(s), {len(records)} diagrama(s){suffix}{failure_suffix}."
+    return "\n".join(blocks).strip(), records, summary
+
+
 class MainWindow(QMainWindow):
     # O inventário é auxiliar para auditoria e cria um dicionário por token.
     # Fazer isso automaticamente em um livro de milhões de caracteres trava a
@@ -925,53 +962,63 @@ class MainWindow(QMainWindow):
         self._report("Reconhecimento integral cancelado. O resultado parcial não foi aplicado.")
 
     def _on_full_pdf_recognized(self, pages: list[dict[str, object]]):
-        try:
-            blocks: list[str] = []
-            total_diagrams = 0
-            pending = 0
-            pdf_path = self.pdf_panel.path
-            for page in pages:
-                page_number = int(page.get("page", 0))
-                blocks.append(f"{{ PDF página {page_number} }}")
-                text = str(page.get("text", "")).strip()
-                if text:
-                    blocks.append(text)
-                elif str(page.get("text_method", "")) == "no-text-layer":
-                    blocks.append("{ OCR de texto necessário nesta página: não há camada de texto no PDF. }")
-                ocr_error = str(page.get("ocr_error", "")).strip()
-                if ocr_error:
-                    blocks.append(f"{{ OCR de diagramas indisponível nesta página: {ocr_error} }}")
-                for record in page.get("diagrams", []):
-                    if not isinstance(record, dict):
-                        continue
-                    upsert_record(self.project.state.diagram_records, record)
-                    total_diagrams += 1
-                    needs_review = str(record.get("review", "pending")) == "pending"
-                    pending += int(needs_review)
-                    review = " revisão necessária" if needs_review else ""
-                    blocks.append(
-                        "{ Diagrama OCR "
-                        f"{record.get('diagram', '')}: confiança {float(record.get('min_confidence', 0)):.1%}"
-                        f"{review} | origem: página {page_number} }}"
-                    )
-                    blocks.append(_diagram_header_block(record))
-                blocks.append("")
+        """Resultado do PDF inteiro: pergunta o destino antes de mexer no texto (R-106).
 
-            self.editor_panel.load_document_text("\n".join(blocks).strip())
+        Antes trocava o documento por `setPlainText`, sem perguntar e apagando o
+        Ctrl+Z, mesmo com o usuario editando enquanto o reconhecimento corria
+        (U-04). Os registros de diagrama vao para o projeto que receber o texto.
+        """
+        try:
+            text, records, summary = _full_pdf_document(pages)
+            pdf_path = self.pdf_panel.path
+            choice = "replace"
+            if self.editor_panel.document_text().strip():
+                choice = self._ask_full_pdf_destination(len(pages), len(records))
+            if choice == "cancel":
+                self._report("Resultado do PDF inteiro descartado; o texto não foi alterado.")
+                return
+            if choice == "new":
+                if not self._confirm_discard():
+                    return
+                project = self._blank_project(title=pdf_path.stem if pdf_path else "")
+                self._switch_to(project, text=text)
+                if pdf_path is not None:
+                    self.pdf_panel.open_pdf(pdf_path)
+            else:
+                self.editor_panel.replace_all_text(text)
+            for record in records:
+                upsert_record(self.project.state.diagram_records, record)
             if pdf_path is not None:
                 self.project.state.pdf_path = str(pdf_path)
             self._state_dirty = True
-            suffix = f", {pending} pendente(s) de revisão" if pending else ""
-            failed_pages = sum(bool(str(page.get("ocr_error", "")).strip()) for page in pages)
-            failure_suffix = f", {failed_pages} página(s) com falha de OCR" if failed_pages else ""
-            self._report(
-                f"PDF inteiro carregado: {len(pages)} página(s), {total_diagrams} diagrama(s){suffix}{failure_suffix}."
-            )
+            self._update_window_title()
+            self._report(summary)
         finally:
             self.pdf_panel.btn_full_recognition.setEnabled(self.pdf_panel.has_document())
             self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
             self.pdf_panel.btn_cancel_full_recognition.setVisible(False)
             self.pdf_panel.clear_full_progress()
+
+    def _ask_full_pdf_destination(self, page_count: int, diagram_count: int) -> str:
+        """'replace' (desfazivel), 'new' (projeto novo) ou 'cancel'."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Reconhecimento do PDF concluído")
+        box.setText(
+            f"O reconhecimento terminou: {page_count} página(s), {diagram_count} diagrama(s).\n\n"
+            "O editor já tem texto. Onde colocar o resultado?"
+        )
+        replace = box.addButton("Substituir o texto (Ctrl+Z desfaz)", QMessageBox.ButtonRole.AcceptRole)
+        new = box.addButton("Abrir num projeto novo", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Descartar o resultado", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(new)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is replace:
+            return "replace"
+        if clicked is new:
+            return "new"
+        return "cancel"
 
     def _on_full_pdf_progress(self, page: int, total: int, diagrams: int):
         self.pdf_panel.set_full_progress(page, total, diagrams)
