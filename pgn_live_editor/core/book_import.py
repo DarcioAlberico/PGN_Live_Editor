@@ -806,9 +806,9 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
     def close_level() -> None:
         open_levels.pop()
         pieces.append(")")
-        tail = tails.pop().strip()
-        if tail:
-            pieces.append(tail)
+        rest = tails.pop().strip()
+        if rest:
+            pieces.append(rest)
 
     index = 0
     while index < len(chunks):
@@ -844,12 +844,12 @@ def _assemble(chunks: list[_Chunk], options: BookImportOptions, report: BookImpo
                 # entendia (L-18). Sem achar o lance ali, fica como era.
                 number, is_white = candidate
                 split = _split_after_ply(pieces[-1], number, is_black=not is_white) if pieces else None
-                tail = ""
+                rest = ""
                 if split is not None:
-                    pieces[-1], tail = split
+                    pieces[-1], rest = split
                 pieces.append("(")
                 open_levels.append(None)
-                tails.append(tail)
+                tails.append(rest)
                 report.stats["regressions"] += 1
                 excerpt = chunk.text[:38].strip()
                 report.notes.append(
