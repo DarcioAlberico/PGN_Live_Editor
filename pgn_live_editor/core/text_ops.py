@@ -526,6 +526,15 @@ def reanchor_variation(
     if not body:
         return OperationResult([], "Variante vazia.")
 
+    if anchor_after and not new_owner.is_valid:
+        # A variante partiria da posicao **depois** de um lance que nao foi
+        # reconhecido -- posicao que nao existe. Antes isto levantava
+        # InvalidMoveError no meio do gesto (N-13).
+        return OperationResult(
+            [],
+            f"'{new_owner.raw_text}' não foi reconhecido: corrija o lance antes de pendurar uma variante depois dele.",
+        )
+
     # O numero de lance de dentro da variante fala da posicao **antiga**: sem
     # trocar, `(12... Be6)` continuaria dizendo 12 depois de mudar de lugar.
     number = move_number_for(new_owner) if anchor_after else move_number_for(new_owner, force=False)

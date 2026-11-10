@@ -87,6 +87,18 @@ class ReanchorTests(unittest.TestCase):
         self.assertIn("e5! {solid}", moved)
         self.assertNotIn("e5 (", moved)
 
+    def test_hanging_a_variation_after_an_unrecognized_move_is_refused_not_a_crash(self):
+        # N-13: a posicao depois de `Xq9` nao existe; antes levantava InvalidMoveError.
+        from pgn_live_editor.core.text_ops import reanchor_variation
+
+        text = "1. e4 e5 2. Xq9 Nc6 (2... d6) 3. Bb5"
+        ast = parse(text)
+
+        result = reanchor_variation(text, move(ast, "Nc6"), 0, move(ast, "Xq9"), anchor_after=True)
+
+        self.assertEqual([], result.edits)
+        self.assertIn("Xq9", result.message)
+
 
 class N08NagTests(unittest.TestCase):
     def test_paragraph_to_comment_leaves_the_nag_on_the_move(self):
