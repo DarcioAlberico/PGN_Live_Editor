@@ -8,7 +8,7 @@ from pgn_live_editor.core.recognition_record import (
     ReviewAction,
     build_recognition_records,
     pending_records,
-    reconcile_records,
+    reconcile_with_orphans,
 )
 from pgn_live_editor.core.review_queue import apply_batch_action
 
@@ -23,7 +23,7 @@ class RecognitionRecordTests(unittest.TestCase):
         target = next(record for record in original if record.raw_text == "Xf6")
 
         shifted = build_recognition_records("{nota nova} 1.e4 Xf6")
-        reconciled = reconcile_records(shifted, original)
+        reconciled = reconcile_with_orphans(shifted, original)[0]
         current = next(record for record in reconciled if record.raw_text == "Xf6")
 
         self.assertEqual(ReviewAction.IGNORED, current.action)
@@ -34,14 +34,14 @@ class RecognitionRecordTests(unittest.TestCase):
         previous = decide(build_recognition_records("1.e4 Xf6"), "Xf6", ReviewAction.REJECTED)
         next_records = build_recognition_records("1.e4 Xg6")
 
-        current = reconcile_records(next_records, previous)
+        current = reconcile_with_orphans(next_records, previous)[0]
 
         self.assertEqual(ReviewAction.PENDING, current[-1].action)
 
     def test_decision_survives_change_of_neighbouring_token(self):
         previous = decide(build_recognition_records("1.e4 Xf6"), "Xf6", ReviewAction.IGNORED)
 
-        current = reconcile_records(build_recognition_records("1.e4 Xg6 Xf6"), previous)
+        current = reconcile_with_orphans(build_recognition_records("1.e4 Xg6 Xf6"), previous)[0]
         self.assertEqual(ReviewAction.IGNORED, current[-1].action)
 
     def test_context_is_evidence_not_identity(self):

@@ -29,7 +29,7 @@ from ..core.recognition_record import (
     RecognitionRecord,
     ReviewAction,
     build_recognition_records,
-    reconcile_records,
+    reconcile_with_orphans,
 )
 from ..core.review_queue import accept_identical, apply_batch_action, reject_rule
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
@@ -829,10 +829,14 @@ class MainWindow(QMainWindow):
             # explícita para gerá-lo.
             self.project.state.recognition_records = []
         else:
-            fresh_records = build_recognition_records(analysis.raw_text)
-            self.project.state.recognition_records = self._enrich_recognition_records(
-                reconcile_records(fresh_records, self.project.state.recognition_records), analysis
+            records, orphans = reconcile_with_orphans(
+                build_recognition_records(analysis.raw_text), self.project.state.recognition_records
             )
+            self.project.state.recognition_records = self._enrich_recognition_records(records, analysis)
+            if orphans:
+                # O token decidido sumiu do texto: dizer, em vez de perder calado.
+                listed = ", ".join(sorted({orphan.raw_text for orphan in orphans}))
+                self._report(f"{len(orphans)} decisão(ões) de revisão sem o trecho no texto: {listed}")
         self.review_panel.set_records(self.project.state.recognition_records)
         self.games_panel.set_completed(self.project.state.completed_games)
         self.games_panel.set_summaries(analysis.summaries(), analysis.active_index)

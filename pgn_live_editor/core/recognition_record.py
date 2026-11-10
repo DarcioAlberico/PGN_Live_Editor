@@ -11,8 +11,11 @@ de recusar o projeto.
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_left
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Any
 
@@ -73,6 +76,15 @@ class RecognitionRecord:
     def proposal(self) -> str:
         """O que entra no texto se o registro for aceito."""
         return self.decision if self.decision is not None else self.normalized_text
+
+    @property
+    def is_human_decision(self) -> bool:
+        """Se alguem decidiu algo sobre este token (e nao so o reconhecimento automatico)."""
+        return (
+            self.decided_at is not None
+            or self.decision is not None
+            or self.action in (ReviewAction.REJECTED, ReviewAction.COMMENTED, ReviewAction.IGNORED)
+        )
 
     @property
     def altered(self) -> bool:
@@ -249,42 +261,113 @@ def build_recognition_records(
     return records
 
 
-def reconcile_records(
+def reconcile_with_orphans(
     fresh: Iterable[RecognitionRecord],
     previous: Iterable[RecognitionRecord],
-) -> list[RecognitionRecord]:
-    """Os registros novos com as decisoes humanas dos antigos.
+) -> tuple[list[RecognitionRecord], list[RecognitionRecord]]:
+    """Leva as decisoes dos registros antigos para os novos, por alinhamento (SPEC_V3 §6.2).
 
-    A chave e (tipo, grafia bruta, ocorrencia) -- a mesma que forma o
-    `source_id`, entao tambem casa registros gravados por versoes antigas do
-    esquema, cujos ids eram calculados de outro jeito.
+    As duas sequencias de (tipo, grafia bruta) sao alinhadas como um diff:
+    so tokens que casam num trecho igual herdam a decisao, um para um. Antes a
+    chave era (tipo, grafia, ocorrencia), e inserir um `Qz9` antes de outro
+    passava a decisao de cada `Qz9` para o vizinho (L-04). Um token que mudou
+    de grafia nao herda nada -- a decisao era sobre o texto antigo.
+
+    Devolve os registros novos e os **orfaos**: decisoes humanas cujo token
+    sumiu, para a interface mostrar em vez de perder em silencio.
     """
-    decided = {key: record for key, record in _keyed(previous)}
-    result: list[RecognitionRecord] = []
-    for key, item in _keyed(fresh):
-        old = decided.get(key)
-        if old is None:
-            result.append(item)
+    new = list(fresh)
+    old = list(previous)
+    pairs = _aligned_pairs([_alignment_key(r) for r in old], [_alignment_key(r) for r in new])
+    result = list(new)
+    for old_index, new_index in pairs:
+        decided = old[old_index]
+        if not decided.is_human_decision and decided.action is new[new_index].action:
             continue
-        result.append(
-            replace(
-                item,
-                action=old.action,
-                decision=old.decision if old.decision is not None else item.decision,
-                comment_text=old.comment_text,
-                decided_at=old.decided_at,
-            )
+        result[new_index] = replace(
+            new[new_index],
+            action=decided.action,
+            decision=decided.decision if decided.decision is not None else new[new_index].decision,
+            comment_text=decided.comment_text,
+            decided_at=decided.decided_at,
         )
-    return result
+    matched = {old_index for old_index, _ in pairs}
+    orphans = [record for index, record in enumerate(old) if index not in matched and record.is_human_decision]
+    return result, orphans
 
 
-def _keyed(records: Iterable[RecognitionRecord]) -> Iterable[tuple[tuple[str, str, int], RecognitionRecord]]:
-    occurrences: dict[tuple[str, str], int] = {}
-    for record in records:
-        fingerprint = (record.interpretation, record.raw_text)
-        occurrence = occurrences.get(fingerprint, 0)
-        occurrences[fingerprint] = occurrence + 1
-        yield (*fingerprint, occurrence), record
+def _alignment_key(record: RecognitionRecord) -> tuple[str, str]:
+    return record.interpretation, record.raw_text
+
+
+# Acima disto (produto dos tamanhos de uma lacuna sem ancora), o
+# `SequenceMatcher` -- quadratico -- trava a interface num livro inteiro.
+_SMALL_GAP = 40_000
+
+
+def _aligned_pairs(old: list[tuple[str, str]], new: list[tuple[str, str]]) -> list[tuple[int, int]]:
+    """Pares (indice antigo, indice novo) dos tokens que casam, em ordem nos dois lados.
+
+    Diff em estilo *patience*: corta prefixo e sufixo iguais; no meio, ancora
+    nos tokens que aparecem uma vez so em cada lado (numeros de lance, quase
+    sempre), na maior sequencia crescente; e repete em cada lacuna. So lacunas
+    pequenas e sem ancora vao ao `SequenceMatcher`. Lacuna grande sem ancora nao
+    casa nada: melhor uma decisao orfa, visivel, que uma decisao no token errado.
+    """
+    pairs: list[tuple[int, int]] = []
+    ranges = [(0, len(old), 0, len(new))]
+    while ranges:
+        alo, ahi, blo, bhi = ranges.pop()
+        while alo < ahi and blo < bhi and old[alo] == new[blo]:
+            pairs.append((alo, blo))
+            alo, blo = alo + 1, blo + 1
+        while alo < ahi and blo < bhi and old[ahi - 1] == new[bhi - 1]:
+            ahi, bhi = ahi - 1, bhi - 1
+            pairs.append((ahi, bhi))
+        if alo == ahi or blo == bhi:
+            continue
+        anchors = _unique_anchors(old, alo, ahi, new, blo, bhi)
+        if anchors:
+            for a, b in anchors:
+                pairs.append((a, b))
+                ranges.append((alo, a, blo, b))
+                alo, blo = a + 1, b + 1
+            ranges.append((alo, ahi, blo, bhi))
+        elif (ahi - alo) * (bhi - blo) <= _SMALL_GAP:
+            matcher = SequenceMatcher(None, old[alo:ahi], new[blo:bhi], autojunk=False)
+            for block in matcher.get_matching_blocks():
+                pairs.extend((alo + block.a + step, blo + block.b + step) for step in range(block.size))
+    return pairs
+
+
+def _unique_anchors(
+    old: list[tuple[str, str]], alo: int, ahi: int, new: list[tuple[str, str]], blo: int, bhi: int
+) -> list[tuple[int, int]]:
+    """Tokens unicos nos dois trechos, na maior sequencia crescente nos dois lados."""
+    old_count = Counter(old[alo:ahi])
+    new_count = Counter(new[blo:bhi])
+    where_old = {old[i]: i for i in range(alo, ahi) if old_count[old[i]] == 1}
+    candidates = [(where_old[new[j]], j) for j in range(blo, bhi) if new_count[new[j]] == 1 and new[j] in where_old]
+    # Maior subsequencia crescente no indice antigo (os candidatos ja vem em
+    # ordem no novo): O(k log k), com os predecessores para reconstruir.
+    tails: list[int] = []
+    tail_index: list[int] = []
+    parent = [-1] * len(candidates)
+    for position, (a, _) in enumerate(candidates):
+        slot = bisect_left(tails, a)
+        if slot == len(tails):
+            tails.append(a)
+            tail_index.append(position)
+        else:
+            tails[slot] = a
+            tail_index[slot] = position
+        parent[position] = tail_index[slot - 1] if slot else -1
+    chain: list[tuple[int, int]] = []
+    position = tail_index[-1] if tail_index else -1
+    while position != -1:
+        chain.append(candidates[position])
+        position = parent[position]
+    return chain[::-1]
 
 
 def pending_records(records: Iterable[RecognitionRecord]) -> list[RecognitionRecord]:

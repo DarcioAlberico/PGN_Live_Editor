@@ -393,13 +393,17 @@ Construtores validam as combinações; dicionários crus só em `to_json/from_js
 
 ### 6.2 Reconciliação por alinhamento — R-302b
 
-- Entrada: sequência antiga de `(token_id, tipo, raw_text)` e a nova.
-- `SequenceMatcher(None, antigos, novos, autojunk=False)` sobre `(tipo, raw_text)`;
-  blocos `equal` transferem a decisão um a um; `replace` de tamanho igual transfere
-  por posição **só** se o tipo coincide; o resto vira órfão (`ORPHAN_DECISION`).
-- Uma decisão vai para no máximo um token; um token recebe no máximo uma decisão.
-- Complexidade aceitável: O(n·m) só no trecho alterado (os prefixos e sufixos
-  idênticos são cortados antes).
+- Entrada: sequência antiga de registros e a nova; a chave de alinhamento é `(tipo, raw_text)`.
+- Diff em estilo *patience*: corta prefixo e sufixo iguais; no meio, ancora nos tokens
+  únicos nos dois lados (maior subsequência crescente) e repete em cada lacuna; só
+  lacunas pequenas (produto dos tamanhos ≤ 40 000) e sem âncora vão ao
+  `SequenceMatcher(autojunk=False)`. Lacuna grande sem âncora não casa nada.
+  *(Implementado assim, e não com `SequenceMatcher` no trecho inteiro: num livro de
+  8 000 lances, "substituir todos" levava 20 s na thread da UI; agora 0,14 s.)*
+- Só tokens que casam herdam a decisão, um para um. Token que mudou de grafia não
+  herda (a decisão era sobre o texto antigo) — o `replace` de tamanho igual **não**
+  transfere.
+- Decisão humana cujo token não casou vira órfã e é mostrada na barra de status.
 
 ### 6.3 `DiagramProvenance` — R-504
 
