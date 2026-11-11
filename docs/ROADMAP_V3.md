@@ -30,7 +30,7 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 | 14 | Rede de segurança e alavancas | 11 | ✅ 2026-11-09 (branch `fase-14`) |
 | 15 | Não perder trabalho — parte 2 | 9 | ✅ 2026-11-10 (branch `fase-15`) |
 | 16 | Parar a corrupção silenciosa — parte 2 | 13 | ✅ 2026-11-10 (branch `fase-16`) |
-| 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ⬜ |
+| 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ✅ 2026-11-11 (branch `fase-17`) |
 | 18 | Escala de livro — desempenho | 5 | ⬜ |
 | 19 | Proveniência de diagramas e relatórios | 6 | ⬜ |
 | 20 | Make it Right — estrutura | 8 | ⬜ |
@@ -163,6 +163,36 @@ dados, depois as três peças compartilhadas, e só então os casos individuais.
 **Objetivo:** nenhum resultado é aplicado sem provar que pertence ao estado atual.
 Ataca a premissa **P1**. As peças centrais (revisão do documento, registro tipado,
 reconciliação) vêm antes dos casos.
+
+> **Concluída em 2026-11-11**, no branch `fase-17`. R-301 → `a967881`; R-302a → `f6b14d3`;
+> R-302b → `915e405`; R-302 → `6237d0f`; R-303 → `ea66b08`; R-304 → `364d0b1`;
+> R-305 → `6c23fd2`; R-306 → `b1b78fc`; R-307 → `65eb4d4`; R-308 → `7ee1c38`.
+> Cada commit traz o teste que falhava antes; suíte final 815 testes.
+>
+> Decisões e correções de rumo na implementação:
+> - **R-301:** a `DocumentRevision` ficou só como `generation` no `AsyncParser` (sobe em
+>   `schedule`, `configure` e `parse_now`) e carimbada na `DocumentAnalysis`; o hash de
+>   configuração não fez falta, porque `configure` já invalida a geração. No editor, a
+>   guarda do cursor (U-09) compara `analysis.raw_text` com o texto da tela: o
+>   `document().revision()` do Qt **também sobe com o realce**, e não serve de carimbo.
+> - **R-302b: `SequenceMatcher` no trecho inteiro travava a UI** — 20 s num "substituir
+>   todos" de um livro de 8 000 lances. Ficou um diff estilo *patience* (âncoras nos
+>   tokens únicos, `SequenceMatcher` só em lacunas pequenas): 0,14 s. E o `replace` de
+>   tamanho igual **não** transfere a decisão (um `Xg6` não herda a decisão sobre `Xf6`).
+>   SPEC_V3 §6.2 atualizada.
+> - **R-302:** o `SpanRef` guarda o texto de origem (a análise já o tem, sem cópia) e
+>   relocaliza pelo maior prefixo/sufixo comuns; edição encostada ou dentro do trecho
+>   é recusada com aviso. Os gestos estruturais reanalisam antes de ler a árvore
+>   (`ensure_current_analysis`). O mesmo defeito do U-15 (seleção por linha) estava
+>   também na **fila de revisão**, e foi fechado junto.
+> - **R-303:** um pedido novo pede ao que está rodando que pare (`CancelToken`), em vez
+>   de só esperar; o OCR de texto do PDF ganhou **dois** hosts (página da tela e
+>   intervalo), no lugar de uma thread multiplexada por ids negativos.
+> - **R-304:** verificado pelo ponto de entrada do pacote (o filho não carrega
+>   `PyQt6.QtWidgets`); o executável do PyInstaller **não** foi gerado nesta rodada.
+> - **R-306:** se o ponto do cursor do pedido foi editado, o lote entra no cursor atual.
+> - **R-307:** em vez de guarda por revisão, um `edited_signal` do editor que só sai por
+>   edição de verdade; a janela escuta ele no lugar do `textChanged`.
 
 | Item | Tam. | O quê | Achados | Aceite verificável |
 |---|---|---|---|---|

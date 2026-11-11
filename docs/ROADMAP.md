@@ -33,11 +33,11 @@ defeito que contradiz o aceite da fase; o item que o fecha está no
 | 5 · Assistentes | ✅ concluída | `test_engine`, `test_stockfish_integration` (determinístico desde 2026-11-09, Q-03), `test_dictionary`, `test_pdf_panel` |
 | 6 · Polimento | ✅ concluída | `test_preferences`, `test_ui_smoke` |
 | 7 · Livro de repertório | ✅ concluída de novo (2026-11-10) | `test_blank_lines`, `test_book_regression` (o python-chess lê o texto convertido), `test_descriptive_context` — L-01, L-02, L-03, L-16, L-18 fechados |
-| 8 · Confiança e revisão | ⚠️ reaberta | decisões humanas trocam de token após reanálise (L-04); abrir `.plez` rebaixa decisões aceitas (U-01) → R-302a/b, R-104 |
+| 8 · Confiança e revisão | ✅ concluída de novo (2026-11-11) | `test_typed_recognition_record`, `test_record_alignment` (L-04), `test_session_switch` (U-01) — fechados nas fases 15 e 17 do roadmap v3 |
 | 9 · Pipeline PDF profissional | ⚠️ reaberta | `□` lido como "brancas jogam" (O-01); lado chutado sai como aceito (O-02); colunas não separam (L-05) → R-504–R-506, R-801 |
-| 10 · Edição estrutural acelerada | ⚠️ reaberta | aceitar um alerta depois de digitar corrompe o lance (U-05) → R-302 |
+| 10 · Edição estrutural acelerada | ✅ concluída de novo (2026-11-11) | `test_span_ref` — U-05 e U-15 fechados na fase 17 |
 | 11 · Qualidade chess-first | ✅ concluída | `test_quality_and_diff`, `test_search_and_html` (contagem dupla L-12 fica para R-503) |
-| 12 · Escala e observabilidade | ⚠️ reaberta | S-04 (métrica reescrevendo o arquivo) corrigido em 2026-11-09; falta resultado assíncrono velho reaplicado (S-12) → R-301 |
+| 12 · Escala e observabilidade | ✅ concluída de novo (2026-11-11) | `test_document_revision` (S-12), `test_worker_host` (S-08, S-09), `test_editor_hygiene` (U-07, U-10) |
 | 13 · Operação e suporte pós-produção | ✅ núcleo concluído | `test_diagnostics`, `test_crash_safety` (excepthook desde 2026-11-09) |
 
 Lint, formatação e tipos limpos; cobertura de `core/` acima de 90 %. O CI roda os

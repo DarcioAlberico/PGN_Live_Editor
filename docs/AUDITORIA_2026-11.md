@@ -24,7 +24,12 @@
 > N-08, N-10, N-11, N-12, N-13, N-14, N-16, L-01, L-02, L-03, L-16 e L-18; mais quatro
 > achados novos do mesmo tipo (ver o roadmap v3, Fase 16). Com isso o núcleo de texto
 > (§1) está fechado.
-> Os demais achados seguem abertos nas fases 17–22.
+> **Fase 17 (2026-11-11):** corrigidos e com teste S-03 (resto), S-08, S-09, S-10 (resto),
+> S-11, S-12/U-06, U-05, U-07, U-09, U-10, U-11, U-12, U-13, U-14, U-15, L-04, L-10 e
+> L-15 — a premissa **P1** ("o resultado que chegou ainda vale") passa a ser conferida
+> em todos os workers, no editor, no painel de alertas e na fila de revisão. Fica para
+> verificar no executável empacotado o S-11 (o teste cobre o ponto de entrada).
+> Os demais achados seguem abertos nas fases 18–22.
 
 ## 0. Resumo
 
