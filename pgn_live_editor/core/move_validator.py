@@ -1,5 +1,11 @@
 import chess
 
+from .positions import position_snapshot
+
+#: Lances guardados por posicao numa analise. Passou disto, recomeca: e um
+#: cache, nao uma memoria.
+PARSED_MOVES_LIMIT = 50_000
+
 
 class MoveValidator:
     """Valida tokens contra o tabuleiro corrente.
@@ -8,8 +14,16 @@ class MoveValidator:
     com confianca e explicacao, e responsabilidade de `candidates.py`.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.board = chess.Board()
+        # (posicao, SAN) -> o lance legal, ou None. O parser confere um lance
+        # (`is_legal`), o joga (`push_san`) e, antes, ja o tinha conferido como
+        # continuacao do lance anterior: era o mesmo SAN interpretado ate quatro
+        # vezes, a ~20 us cada (R-401).
+        self._parsed: dict[tuple, chess.Move | None] = {}
+
+    def forget_parsed_moves(self) -> None:
+        self._parsed.clear()
 
     def set_board_fen(self, fen: str):
         """Reset the internal board state to a given FEN (sem historico de lances)."""
@@ -28,24 +42,50 @@ class MoveValidator:
         ultimo lance. Montar a posicao so pelo FEN zerava esse historico (L-02).
         Se a posicao nao estiver na linha (texto dessincronizado), vale o FEN.
         """
+        fields = fen.split()
+        turn = fields[1] == "w"
+        fullmove = int(fields[5])
         board = self.board.copy(stack=True)
         while True:
-            if board.fen() == fen:
+            # Vez e numero do lance antes do `fen()`, que custa ~33 us por lance desfeito.
+            if board.turn == turn and board.fullmove_number == fullmove and board.fen() == fen:
                 return board
             if not board.move_stack:
                 return chess.Board(fen)
             board.pop()
 
+    def legal_move_on(self, board: chess.Board, san_move: str) -> chess.Move | None:
+        """O lance que o SAN e na posicao de `board`, se for legal (com cache por posicao)."""
+        key = (position_snapshot(board), san_move)
+        if key in self._parsed:
+            return self._parsed[key]
+        try:
+            move: chess.Move | None = board.parse_san(san_move)
+        except ValueError:
+            move = None
+        # `parse_san` so devolve lance legal -- menos o nulo (`--`), que nao e.
+        if move is not None and not move:
+            move = None
+        if len(self._parsed) >= PARSED_MOVES_LIMIT:
+            self._parsed.clear()
+        self._parsed[key] = move
+        return move
+
+    def legal_move(self, san_move: str) -> chess.Move | None:
+        """O lance que o SAN e na posicao corrente, se for legal."""
+        return self.legal_move_on(self.board, san_move)
+
     def is_legal(self, san_move: str) -> bool:
         """Strict check if python-chess considers the SAN valid right now."""
-        try:
-            return self.board.parse_san(san_move) in self.board.legal_moves
-        except ValueError:
-            return False
+        return self.legal_move(san_move) is not None
 
     def push_san(self, san_move: str) -> chess.Move:
         """Push a known valid move onto the board."""
-        return self.board.push_san(san_move)
+        move = self.legal_move(san_move)
+        if move is None:
+            return self.board.push_san(san_move)  # levanta o erro de sempre
+        self.board.push(move)
+        return move
 
     def pop(self):
         """Pop the last move."""

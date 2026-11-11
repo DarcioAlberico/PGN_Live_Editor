@@ -7,6 +7,7 @@ visivel com o grau de confianca que a motivou.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable
 
 import chess
@@ -41,6 +42,7 @@ from .issues import (
     Severity,
 )
 from .move_validator import MoveValidator
+from .positions import board_from_snapshot, position_snapshot
 from .text_hygiene import REPLACEMENT_CHARACTER
 from .tokenizer import Token, comment_is_unclosed
 
@@ -140,7 +142,11 @@ class MoveNode(ASTNode):
         self.variations: list[Variation] = []
         self.nags: list[str] = []
         self.corrected_san: str | None = None
-        self.parent_fen: str | None = None
+        # A posicao antes do lance. Guardada como instantaneo e virada FEN so
+        # quando alguem pede: a analise quase nunca le, e um `fen()` por lance
+        # era o maior custo de abrir um livro (R-401).
+        self._parent_fen: str | None = None
+        self._parent_snapshot: tuple | None = None
 
         # Fase 2: rastreio de confianca.
         self.confidence: float = 1.0
@@ -151,6 +157,36 @@ class MoveNode(ASTNode):
     @property
     def display_san(self) -> str:
         return self.corrected_san or self.san
+
+    @property
+    def parent_fen(self) -> str | None:
+        if self._parent_fen is None and self._parent_snapshot is not None:
+            self._parent_fen = board_from_snapshot(self._parent_snapshot).fen()
+        return self._parent_fen
+
+    @parent_fen.setter
+    def parent_fen(self, value: str | None) -> None:
+        self._parent_fen = value
+        self._parent_snapshot = None
+
+    def remember_parent(self, board: chess.Board) -> None:
+        self._parent_snapshot = position_snapshot(board)
+        self._parent_fen = None
+
+    def parent_board(self) -> chess.Board | None:
+        """Um tabuleiro novo na posicao antes do lance (sem historico), ou `None`."""
+        if self._parent_snapshot is not None:
+            return board_from_snapshot(self._parent_snapshot)
+        return chess.Board(self._parent_fen) if self._parent_fen else None
+
+    def parent_move_identity(self) -> tuple[int, bool] | None:
+        """(numero do lance, vez das pretas?) antes do lance, sem montar tabuleiro."""
+        if self._parent_snapshot is not None:
+            return (self._parent_snapshot[14], self._parent_snapshot[10] == chess.BLACK)
+        if not self._parent_fen:
+            return None
+        fields = self._parent_fen.split()
+        return (int(fields[5]), fields[1] == "b")
 
     def __repr__(self):
         return f"{self.number or ''} {self.display_san}".strip()
@@ -272,16 +308,16 @@ class TolerantParser:
         # (tabuleiro novo + push + fen): ~7 ms por variante num jogo de 40
         # lances (N-16, R-403). A resposta so muda se o lance mudar -- a chave
         # leva o que ela le, e o cache vive uma analise.
-        key = (id(move), move.parent_fen, move.display_san, move.is_valid, move.is_null_move)
+        key = (id(move), move._parent_snapshot or move._parent_fen, move.display_san, move.is_valid, move.is_null_move)
         if key not in self._fen_after_cache:
             self._fen_after_cache[key] = self._compute_fen_after_move(move)
         return self._fen_after_cache[key]
 
     def _compute_fen_after_move(self, move: MoveNode) -> str | None:
-        if not move.parent_fen or not move.is_valid:
+        board = move.parent_board() if move.is_valid else None
+        if board is None:
             return None
 
-        board = chess.Board(move.parent_fen)
         if move.is_null_move:
             board.push(chess.Move.null())
             return board.fen()
@@ -407,50 +443,67 @@ class TolerantParser:
             last_move = active_list[-1]
             return (last_move, True, self._fen_after_move(last_move))
 
-        candidates: list[tuple[MoveNode, bool, str | None, int]] = []
-
+        # (lance, ancora depois dele?, posicao na linha). O FEN de cada um so e
+        # calculado se ele chegar a ser pontuado (R-401).
+        candidates: list[tuple[MoveNode, bool, int]] = []
         first_move = active_list[0]
-        if first_move.parent_fen:
-            candidates.append((first_move, False, first_move.parent_fen, 0))
-
+        if first_move.parent_move_identity() is not None:
+            candidates.append((first_move, False, 0))
         for position_index, move in enumerate(active_list, start=1):
-            candidates.append((move, True, self._fen_after_move(move), position_index))
+            candidates.append((move, True, position_index))
+
+        def fen_of(candidate: tuple[MoveNode, bool, int]) -> str | None:
+            move, anchor_after, _position = candidate
+            return self._fen_after_move(move) if anchor_after else move.parent_fen
 
         best_candidate = candidates[-1]
         best_key = (-10_000, -1, -1)
 
-        # Poda: o teto da pontuacao de cada candidato sai do FEN sem montar
-        # tabuleiro. Do maior teto para o menor, para no primeiro que nao pode
-        # mais vencer -- o resultado e o mesmo de pontuar todos (R-403).
+        # Poda: o teto da pontuacao de cada candidato sai da vez e do numero do
+        # lance, sem montar tabuleiro. Do maior teto para o menor, para no
+        # primeiro que nao pode mais vencer -- o resultado e o mesmo de pontuar
+        # todos (R-403).
         ceilings = sorted(
-            ((*self._score_ceiling(candidate[2], preview_tokens), candidate[3]), candidate) for candidate in candidates
+            (
+                (*self._score_ceiling(self._candidate_identity(move, anchor_after), preview_tokens), position),
+                (move, anchor_after, position),
+            )
+            for move, anchor_after, position in candidates
         )
         for ceiling, candidate in reversed(ceilings):
             if ceiling <= best_key:
                 break
-            move, anchor_after, fen, position_index = candidate
-            score, legal_san_count = self._score_variant_candidate(fen, preview_tokens)
-            key = (score, legal_san_count, position_index)
+            score, legal_san_count = self._score_variant_candidate(fen_of(candidate), preview_tokens)
+            key = (score, legal_san_count, candidate[2])
             if key > best_key:
                 best_key = key
                 best_candidate = candidate
 
-        return (best_candidate[0], best_candidate[1], best_candidate[2])
+        return (best_candidate[0], best_candidate[1], fen_of(best_candidate))
 
-    def _score_ceiling(self, fen: str | None, preview_tokens: list[Token]) -> tuple[int, int]:
-        """Um teto de `_score_variant_candidate`: nunca menor que ela, lido so do FEN.
+    @staticmethod
+    def _candidate_identity(move: MoveNode, anchor_after: bool) -> tuple[int, bool] | None:
+        """(numero do lance, vez das pretas?) da posicao de onde a variante sairia."""
+        identity = move.parent_move_identity()
+        if not anchor_after or identity is None:
+            return identity
+        if not move.is_valid:
+            return None
+        number, is_black = identity
+        return (number + 1, False) if is_black else (number, True)
+
+    def _score_ceiling(self, identity: tuple[int, bool] | None, preview_tokens: list[Token]) -> tuple[int, int]:
+        """Um teto de `_score_variant_candidate`: nunca menor que ela.
 
         Os numeros de lance antes do primeiro lance da previa sao pontuados de
-        verdade (a posicao ainda e a do FEN); depois, cada numero vale o maximo
-        (+30) e cada lance tambem (+10), como se todos fossem legais.
+        verdade (a posicao ainda e a do candidato); depois, cada numero vale o
+        maximo (+30) e cada lance tambem (+10), como se todos fossem legais.
         """
-        if not fen:
+        if identity is None:
             return (-10_000, 0)
         if not any(token.type == "MOVE_NUMBER" or token.type in MOVE_TOKEN_TYPES for token in preview_tokens):
             return (-10_000, 0)
-        fields = fen.split()
-        is_black_to_move = fields[1] == "b"
-        fullmove_number = int(fields[5])
+        fullmove_number, is_black_to_move = identity
         score = 0
         moves = 0
         for token in preview_tokens:
@@ -488,13 +541,9 @@ class TolerantParser:
         if parsed_number:
             return parsed_number
 
-        if not move.parent_fen:
-            return None
-
-        # Do proprio FEN: montar um tabuleiro so para ler dois campos custava
-        # um `set_fen` por numero de lance visto numa citacao.
-        fields = move.parent_fen.split()
-        return (int(fields[5]), fields[1] == "b")
+        # Sem montar tabuleiro: era um `set_fen` por numero de lance visto
+        # numa citacao.
+        return move.parent_move_identity()
 
     def _is_backward_reference(self, active_list: list[MoveNode], token: Token) -> bool:
         token_identity = self._parse_move_number_value(token.value)
@@ -577,7 +626,7 @@ class TolerantParser:
         last_ply = 2 * (last[0] - 1) + int(last[1])
         if token_ply != last_ply + 1:
             return False
-        following = next((t for t in tokens[index + 1 :] if t.type in MOVE_TOKEN_TYPES), None)
+        following = next((t for t in itertools.islice(tokens, index + 1, None) if t.type in MOVE_TOKEN_TYPES), None)
         if following is None:
             return False
         return self.validator.is_legal(following.value)
@@ -603,7 +652,7 @@ class TolerantParser:
         lookahead: tuple[list[Token], int] | None = None,
     ) -> MoveNode:
         node = MoveNode(san=token, number=number_token)
-        node.parent_fen = self.validator.board.fen()
+        node.remember_parent(self.validator.board)
 
         if contextual_san is not None:
             node.corrected_san = contextual_san
@@ -916,7 +965,7 @@ class TolerantParser:
             return None
 
         continuation: list[str] = []
-        for following in tokens[index + 1 :]:
+        for following in itertools.islice(tokens, index + 1, None):
             if following.type in {"VARIANT_OPEN", "VARIANT_CLOSE", "RESULT", "COMMENT", "TEXT"}:
                 break
             if following.type in {"MOVE_NUMBER", "NAG"}:
@@ -928,8 +977,10 @@ class TolerantParser:
         if len(continuation) < 2:
             return None
 
-        board = self.validator.board.copy()
-        original_move = board.parse_san(token.value)
+        board = self.validator.board.copy(stack=False)
+        original_move = self.validator.legal_move(token.value)
+        if original_move is None:
+            return None
         moving_piece = board.piece_at(original_move.from_square)
         if moving_piece is None:
             return None
@@ -939,11 +990,10 @@ class TolerantParser:
             matched = 0
             try:
                 for san in continuation:
-                    try:
-                        move = board.parse_san(san)
-                    except ValueError:
-                        break
-                    if move not in board.legal_moves:
+                    # Pelo cache do validador: estes dois lances sao os
+                    # proximos da partida, e logo serao conferidos de novo.
+                    move = self.validator.legal_move_on(board, san)
+                    if move is None:
                         break
                     board.push(move)
                     matched += 1
@@ -970,7 +1020,7 @@ class TolerantParser:
 
     def _build_null_move_node(self, token: Token, number_token: Token | None) -> MoveNode:
         node = MoveNode(san=token, number=number_token)
-        node.parent_fen = self.validator.board.fen()
+        node.remember_parent(self.validator.board)
         node.is_null_move = True
         node.corrected_san = "--"
         self.validator.push_null()
@@ -1015,6 +1065,7 @@ class TolerantParser:
 
     def parse(self, tokens: list[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
         self._fen_after_cache = {}
+        self.validator.forget_parsed_moves()
         self.validator.set_board_fen(start_fen)
         self.ast = GameAST()
         self.issues = []
