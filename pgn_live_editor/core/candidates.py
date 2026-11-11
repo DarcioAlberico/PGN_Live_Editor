@@ -119,6 +119,7 @@ class CandidateResolver:
         self.locale = locale
         self.base = load_base_dictionary()
         self.dictionary = as_dictionary(dictionary)
+        self._active_layers: tuple[Dictionary, Dictionary] | None = None
         # O documento provou estar escrito na notacao do idioma? Ver
         # `notation_is_confirmed` e `_expand`.
         self.notation_confirmed = False
@@ -128,8 +129,31 @@ class CandidateResolver:
 
     @property
     def active(self) -> Dictionary:
-        """Base embutida + o que o usuario acrescentou; o usuario vence."""
-        return merge_layers(self.base, self.dictionary)
+        """Base embutida + o que o usuario acrescentou; o usuario vence.
+
+        Guardado enquanto as duas camadas forem os mesmos objetos (um
+        `Dictionary` nao muda: `with_entry` devolve outro). Juntar as camadas
+        e montar os mapas por idioma, tres vezes por lance, era ~10 % da
+        analise de um livro em descritiva (R-401).
+        """
+        layers = self._active_layers
+        if layers is None or layers[0] is not self.base or layers[1] is not self.dictionary:
+            self._active_layers = (self.base, self.dictionary)
+            self._active = merge_layers(self.base, self.dictionary)
+            self._by_locale: dict[tuple[str, str], object] = {}
+        return self._active
+
+    def _for_locale(self, kind: str):
+        active = self.active
+        key = (kind, self.locale)
+        if key not in self._by_locale:
+            if kind == "token":
+                self._by_locale[key] = active.token_map(self.locale)
+            elif kind == "prefix":
+                self._by_locale[key] = sorted(active.prefix_map(self.locale).items(), key=lambda item: -len(item[0]))
+            else:
+                self._by_locale[key] = active.free_list(self.locale)
+        return self._by_locale[key]
 
     def set_notation_confirmed(self, confirmed: bool) -> None:
         self.notation_confirmed = confirmed
@@ -179,7 +203,7 @@ class CandidateResolver:
 
         # 1. Dicionario do usuario, escopo de token: casamento exato e inteiro.
         #    E o mais especifico que existe, e por isso o mais confiavel.
-        token_map = self.active.token_map(self.locale)
+        token_map = self._for_locale("token")
         if token in token_map:
             push(token_map[token], 0.99, "dicionário", f"{token} -> {token_map[token]} (dicionário)")
 
@@ -231,8 +255,7 @@ class CandidateResolver:
         return None
 
     def _ocr_prefix(self, token: str):
-        prefixes = self.active.prefix_map(self.locale)
-        for bad, good in sorted(prefixes.items(), key=lambda item: -len(item[0])):
+        for bad, good in self._for_locale("prefix"):
             if token.startswith(bad) and len(token) > len(bad):
                 converted = good + token[len(bad) :]
                 return (converted, 0.92, "ocr", f"ruido de OCR: {token} -> {converted}")
@@ -246,7 +269,7 @@ class CandidateResolver:
         escopo que mais produz lance legal **errado**, e por isso vale menos
         que os demais e a interface o marca como arriscado.
         """
-        for pattern, replacement in self.active.free_list(self.locale):
+        for pattern, replacement in self._for_locale("free"):
             if pattern and pattern in token:
                 converted = token.replace(pattern, replacement)
                 if converted and converted != token:
