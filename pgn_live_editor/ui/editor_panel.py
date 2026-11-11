@@ -380,10 +380,11 @@ class EditorPanel(QWidget):
         self.text_edit.document().setModified(False)
         self._dismissed_suggestion = None
         self._update_locale_hint(text)
-        # Uma vez, ao abrir: e o que faz o livro inteiro nascer realcado e com a
-        # lista de partidas preenchida. Depois disso so a partida editada e
-        # reanalisada.
-        self.analyze_whole_book()
+        # Ao abrir, so a partida sob o cursor e analisada aqui; as outras vao
+        # sendo resumidas em segundo plano e a lista e o realce se completam
+        # sozinhos (R-401). Antes o livro inteiro era analisado nesta thread:
+        # 10 s para abrir um projeto de 1 MB.
+        self._apply_analysis(self.async_parser.parse_now(text, self.cursor_position()))
 
     def replace_all_text(self, new_text: str):
         """Substitui todo o texto **preservando o historico de desfazer**.

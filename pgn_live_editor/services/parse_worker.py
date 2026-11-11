@@ -15,7 +15,7 @@ Pedidos pendentes colapsam: existe no maximo um em voo, e o mais recente vence.
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import chess
@@ -244,6 +244,10 @@ class ParsePipeline:
     """Texto bruto -> segmentos -> AST. **Nao** e seguro entre threads."""
 
     CACHE_LIMIT = 64
+    # Resumos sao leves (contagens e spans de realce) e tem de cobrir o livro
+    # inteiro: com o limite das arvores (64), um livro maior perdia a lista de
+    # partidas e o realce de quase todas logo depois de analisado.
+    DIGEST_LIMIT = 50_000
 
     def __init__(self, config: ParseConfig | None = None):
         self.config = config or ParseConfig()
@@ -293,12 +297,30 @@ class ParsePipeline:
             self._cache.popitem(last=False)
 
         digest_key = self._digest_key(analysis.segment)
-        self._digests[digest_key] = SegmentDigest.of(analysis)
+        self._remember_digest(digest_key, SegmentDigest.of(analysis))
+        return analysis
+
+    def _remember_digest(self, digest_key: tuple, digest: SegmentDigest) -> None:
+        self._digests[digest_key] = digest
         self._digests.move_to_end(digest_key)
-        while len(self._digests) > self.CACHE_LIMIT:
+        while len(self._digests) > self.DIGEST_LIMIT:
             self._digests.popitem(last=False)
 
-        return analysis
+    def adopt(self, analysis: DocumentAnalysis) -> None:
+        """Guarda os resumos de uma analise feita por outra pipeline (a da thread de trabalho)."""
+        for segment in analysis.segments:
+            digest = analysis.digests.get(segment.index)
+            if digest is not None:
+                self._remember_digest(self._digest_key(segment), digest)
+
+    def fill(self, raw_text: str, cancelled: Callable[[], bool]) -> bool:
+        """Analisa as partidas ainda sem resumo, uma a uma. `False` se foi interrompida."""
+        for segment in split_games(raw_text, self.config.separator_pattern):
+            if cancelled():
+                return False
+            if self.digest_for(segment) is None:
+                self.analyze_segment(raw_text, segment)
+        return True
 
     def analyze_segment(self, raw_text: str, segment: GameSegment) -> SegmentAnalysis:
         key = self._cache_key(segment)
@@ -367,12 +389,19 @@ class _ParseJob:
     def __init__(self) -> None:
         self._pipeline: ParsePipeline | None = None
 
-    def __call__(self, payload: tuple[str, int, int, ParseConfig], context: JobContext) -> tuple[int, DocumentAnalysis]:
-        raw_text, cursor_position, generation, config = payload
+    def __call__(
+        self, payload: tuple[str, int, int, ParseConfig, bool], context: JobContext
+    ) -> tuple[int, DocumentAnalysis | None]:
+        raw_text, cursor_position, generation, config, fill = payload
         if self._pipeline is None:
             self._pipeline = ParsePipeline(config)
         else:
             self._pipeline.configure(config)
+        # Preencher o livro para entre uma partida e outra se chegar pedido
+        # novo: digitar nunca espera o livro inteiro. O que ja foi analisado
+        # fica no cache e a proxima volta continua dali.
+        if fill and not self._pipeline.fill(raw_text, lambda: context.cancelled):
+            return generation, None
         return generation, self._pipeline.analyze(raw_text, cursor_position)
 
 
@@ -445,7 +474,13 @@ class AsyncParser(QObject):
         self._generation += 1
         analysis = self.pipeline.analyze(raw_text, cursor_position)
         analysis.generation = self._generation
+        self._fill_if_incomplete(analysis, cursor_position)
         return analysis
+
+    def _fill_if_incomplete(self, analysis: DocumentAnalysis, cursor_position: int) -> None:
+        """Partidas sem resumo sao analisadas em segundo plano, sem bloquear a interface (R-401)."""
+        if len(analysis.digests) < analysis.game_count and self._pending is None:
+            self._host.submit((analysis.raw_text, cursor_position, self._generation, self._config, True))
 
     def schedule(self, raw_text: str, cursor_position: int = 0) -> None:
         """Pede uma analise em segundo plano, colapsando o pedido anterior."""
@@ -464,16 +499,21 @@ class AsyncParser(QObject):
             return
         raw_text, cursor_position = self._pending
         self._pending = None
-        self._host.submit((raw_text, cursor_position, self._generation, self._config))
+        self._host.submit((raw_text, cursor_position, self._generation, self._config, False))
 
     @Slot(int, object)
-    def _on_result(self, _request_id: int, payload: tuple[int, DocumentAnalysis]) -> None:
+    def _on_result(self, _request_id: int, payload: tuple[int, DocumentAnalysis | None]) -> None:
         generation, analysis = payload
         # De uma geracao ja passada (o texto, a configuracao ou uma analise
         # sincrona veio depois): descartar -- o que vale ja esta na tela ou na fila.
-        if generation == self._generation:
-            analysis.generation = generation
-            self.analysis_ready_signal.emit(analysis)
+        if analysis is None or generation != self._generation:
+            return
+        analysis.generation = generation
+        # A analise sincrona seguinte ja sabe das partidas resumidas la.
+        self.pipeline.adopt(analysis)
+        self.analysis_ready_signal.emit(analysis)
+        cursor = analysis.segments[analysis.active_index].raw_offset if analysis.segments else 0
+        self._fill_if_incomplete(analysis, cursor)
 
     def shutdown(self) -> None:
         """Encerra a thread. Chamar ao fechar a janela."""

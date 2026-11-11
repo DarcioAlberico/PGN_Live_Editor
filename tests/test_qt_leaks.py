@@ -52,10 +52,9 @@ class LeakTests(unittest.TestCase):
 
     def test_context_menus_do_not_pile_up(self):
         tree = self.window.editor_panel.pgn_tree
-        first = tree.tree.topLevelItem(0)
         with (
             mock.patch.object(QMenu, "exec", return_value=None),
-            mock.patch.object(tree.tree, "itemAt", return_value=first),
+            mock.patch.object(tree.tree, "itemAt", side_effect=lambda *_: tree.tree.topLevelItem(0)),
         ):
             for gesture in (
                 lambda: self.window.chess_panel._show_copy_menu(QPoint(1, 1)),
