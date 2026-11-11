@@ -107,6 +107,10 @@ analysis = Analysis(
         "PyQt6.QtPdfWidgets",
         "PyQt6.QtSvg",
         "PyQt6.QtSvgWidgets",
+        # Os subcomandos `--worker` (R-304) sao importados por nome.
+        "pgn_live_editor.services.worker_commands",
+        "pgn_live_editor.services.diagram_ocr_process",
+        "pgn_live_editor.services.full_pdf_recognition_process",
         *diagram_ocr_modules,
         *text_ocr_modules,
     ],

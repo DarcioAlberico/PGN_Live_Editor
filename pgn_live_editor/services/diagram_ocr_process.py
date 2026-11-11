@@ -13,13 +13,13 @@ from pathlib import Path
 from .diagram_ocr import DiagramOcrAdapter
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf_path", type=Path)
     parser.add_argument("page_index", type=int)
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     results = DiagramOcrAdapter().recognize_pdf_page(args.pdf_path, args.page_index, dpi=args.dpi)
     payload = json.dumps(

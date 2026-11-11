@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtCore import pyqtSignal as Signal
 
 from .diagram_ocr import DiagramOcrUnavailable, DiagramRecognition, _torch_error_message
+from .worker_commands import worker_command
 from .worker_host import JobContext, WorkerFailed, WorkerHost, run_process
 
 OCR_TIMEOUT_S = 300
@@ -23,17 +23,9 @@ def read_diagrams(payload: tuple[Path, int, int], context: JobContext) -> tuple[
     with tempfile.NamedTemporaryFile(prefix="pgn_diagram_", suffix=".json", delete=False) as output:
         output_path = Path(output.name)
     try:
-        command = [
-            sys.executable,
-            "-m",
-            "pgn_live_editor.services.diagram_ocr_process",
-            str(pdf_path),
-            str(page_index),
-            "--dpi",
-            str(dpi),
-            "--output",
-            str(output_path),
-        ]
+        command = worker_command(
+            "diagram-ocr", str(pdf_path), str(page_index), "--dpi", str(dpi), "--output", str(output_path)
+        )
         try:
             run_process(command, context, timeout=OCR_TIMEOUT_S)
         except subprocess.CalledProcessError as exc:

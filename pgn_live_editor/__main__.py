@@ -3,6 +3,13 @@ from pathlib import Path
 
 
 def main() -> None:
+    # Processo filho de OCR (R-304): despachado antes de qualquer import de Qt,
+    # para nao abrir janela nem carregar DLLs do Qt junto com as do Torch.
+    if len(sys.argv) > 1 and sys.argv[1] == "--worker":
+        from .services.worker_commands import run_worker
+
+        raise SystemExit(run_worker(sys.argv[2:]))
+
     # `--diagnostico ARQUIVO` grava o diagnostico e sai, sem abrir janela: e o
     # jeito de conferir um executavel empacotado (que nao tem console) e de
     # mandar o relatorio para suporte.

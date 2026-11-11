@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtCore import pyqtSignal as Signal
 
 from .diagram_ocr import DiagramOcrUnavailable, _torch_error_message
+from .worker_commands import worker_command
 from .worker_host import JobContext, WorkerHost, run_process
 
 FULL_PDF_TIMEOUT_S = 3600
@@ -31,10 +31,8 @@ def recognize_full_pdf(payload: tuple[Path, int, int, int], context: JobContext)
             except ValueError:
                 pass
 
-    command = [
-        sys.executable,
-        "-m",
-        "pgn_live_editor.services.full_pdf_recognition_process",
+    command = worker_command(
+        "full-pdf",
         str(pdf_path),
         "--dpi",
         str(dpi),
@@ -44,7 +42,7 @@ def recognize_full_pdf(payload: tuple[Path, int, int, int], context: JobContext)
         str(end_page + 1),
         "--output",
         str(output_path),
-    ]
+    )
     try:
         try:
             completed = run_process(command, context, timeout=FULL_PDF_TIMEOUT_S, on_stderr_line=on_stderr_line)

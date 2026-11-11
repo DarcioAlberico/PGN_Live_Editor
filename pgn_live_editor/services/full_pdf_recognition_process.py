@@ -35,14 +35,14 @@ def _ocr_page_text(page) -> tuple[str, str, str]:
         return "", "ocr-failed", f"{type(exc).__name__}: {exc}"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("pdf_path", type=Path)
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--start-page", type=int, default=1)
     parser.add_argument("--end-page", type=int)
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     import fitz  # extra `diagram-ocr`; importado aqui para o modulo carregar sem ele
 
