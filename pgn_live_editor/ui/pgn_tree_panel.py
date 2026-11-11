@@ -361,3 +361,4 @@ class PgnTreePanel(QWidget):
             action = menu.addAction(text)
             action.triggered.connect(lambda _checked=False, side=before: self._request_comment(before=side, item=item))
         menu.exec(self.tree.viewport().mapToGlobal(position))
+        menu.deleteLater()  # um menu por clique ficava na memoria (U-13)

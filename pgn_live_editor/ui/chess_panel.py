@@ -462,6 +462,8 @@ class ChessPanel(QWidget):
             action.triggered.connect(lambda _checked=False, key=copy_format.key: self.copy_excerpt(key))
 
         menu.exec(self.pgn_view.mapToGlobal(point))
+        # Filho do painel: sem isto, um menu a mais na memoria por clique (U-13).
+        menu.deleteLater()
 
     def copy_excerpt(self, key: str) -> str:
         text = copy_text(

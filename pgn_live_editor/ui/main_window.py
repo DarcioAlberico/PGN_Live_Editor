@@ -495,20 +495,22 @@ class MainWindow(QMainWindow):
         self.recent_menu.clear()
         entries = load_recent_files()
         if not entries:
-            empty = QAction("(nenhum)", self)
+            # Filhas do menu: o `clear()` as apaga. Filhas da janela, cada
+            # reconstrucao deixava as anteriores na memoria (U-13).
+            empty = QAction("(nenhum)", self.recent_menu)
             empty.setEnabled(False)
             self.recent_menu.addAction(empty)
             return
 
         for path in entries:
             if path.is_file():
-                action = QAction(path.name, self)
+                action = QAction(path.name, self.recent_menu)
                 action.setStatusTip(str(path))
                 action.triggered.connect(lambda _checked=False, target=path: self.open_path(target))
             else:
                 # Cinza e com o motivo, mas na lista (R-108): o arquivo pode
                 # voltar quando a pasta de rede ou o OneDrive voltarem.
-                action = QAction(f"{path.name} (não encontrado)", self)
+                action = QAction(f"{path.name} (não encontrado)", self.recent_menu)
                 action.setStatusTip(f"{path} -- não encontrado agora; pasta de rede ou sincronização?")
                 action.setEnabled(False)
             self.recent_menu.addAction(action)

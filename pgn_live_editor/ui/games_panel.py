@@ -8,7 +8,7 @@ dela -- e um clique leva o cursor para la.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
@@ -37,6 +37,8 @@ class GamesPanel(QWidget):
         self.completed: set[int] = set()
         self.active_index = 0
         self._updating = False
+        self._in_row_change = False
+        self._rebuild_scheduled = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 6, 0)
@@ -90,6 +92,14 @@ class GamesPanel(QWidget):
         return "  ·  ".join(parts)
 
     def _rebuild(self) -> None:
+        if self._in_row_change:
+            # A navegacao que este clique dispara reanalisa e reconstroi a
+            # lista -- dentro do `currentRowChanged` da propria lista. `clear()`
+            # ali e reentrante (U-15): reconstruir logo depois, fora do sinal.
+            if not self._rebuild_scheduled:
+                self._rebuild_scheduled = True
+                QTimer.singleShot(0, self._deferred_rebuild)
+            return
         self._updating = True
         try:
             self.list_widget.clear()
@@ -133,10 +143,18 @@ class GamesPanel(QWidget):
 
     # ------------------------------------------------------------------
 
+    def _deferred_rebuild(self) -> None:
+        self._rebuild_scheduled = False
+        self._rebuild()
+
     def _on_row_changed(self, row: int) -> None:
         if self._updating or row < 0 or row >= len(self.summaries):
             return
-        self.game_selected_signal.emit(self.summaries[row].index)
+        self._in_row_change = True
+        try:
+            self.game_selected_signal.emit(self.summaries[row].index)
+        finally:
+            self._in_row_change = False
 
     def _on_item_changed(self, item: QListWidgetItem) -> None:
         if self._updating:
