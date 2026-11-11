@@ -30,7 +30,21 @@ def main() -> None:
     crash_safety.add_emergency_action(window.emergency_snapshot)
     crash_safety.add_error_listener(window.show_unexpected_error)
     window.show()
-    raise SystemExit(app.exec())
+    code = app.exec()
+
+    from .services.worker_host import WorkerHost
+
+    if not WorkerHost.drain_abandoned(timeout_ms=5000):
+        # Uma thread de trabalho ainda roda (o trabalho nao atendeu ao
+        # cancelamento). Destruir o QThread vivo e qFatal no fim do
+        # interpretador; sair direto e o unico fim limpo (S-08).
+        import logging
+        import os
+
+        logging.getLogger(__name__).warning("Saindo com thread de trabalho ainda ativa")
+        logging.shutdown()
+        os._exit(code)
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

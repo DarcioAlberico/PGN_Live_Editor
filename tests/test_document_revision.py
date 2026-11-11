@@ -58,7 +58,7 @@ class AsyncParserRevisionTests(unittest.TestCase):
             # O usuario ignora o alerta de `Xq9`: nova configuracao e analise na hora.
             self.parser.configure(ParseConfig.build(locale="en", ignored_tokens=["Xq9"]))
             fresh = self.parser.parse_now(TEXT)
-            wait_until(self.app, lambda: not self.parser._in_flight)
+            wait_until(self.app, lambda: not self.parser.busy)
 
         self.assertNotIn("Xq9", [issue.raw_text for issue in fresh.issues])
         self.assertEqual([], self.delivered, "a analise velha nao pode ser entregue")
@@ -83,7 +83,7 @@ class AsyncParserRevisionTests(unittest.TestCase):
         with mock.patch.object(ParsePipeline, "analyze", flaky):
             self.parser.schedule(TEXT)
             self.parser._dispatch()
-            self.assertTrue(wait_until(self.app, lambda: not self.parser._in_flight), "ficou preso")
+            self.assertTrue(wait_until(self.app, lambda: not self.parser.busy), "ficou preso")
             self.parser.schedule(TEXT + " 3. Bb5")
             self.parser._dispatch()
             self.assertTrue(wait_until(self.app, lambda: bool(self.delivered)))

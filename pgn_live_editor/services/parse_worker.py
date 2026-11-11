@@ -14,13 +14,12 @@ Pedidos pendentes colapsam: existe no maximo um em voo, e o mais recente vence.
 
 from __future__ import annotations
 
-import logging
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import chess
-from PyQt6.QtCore import QObject, QThread, QTimer
+from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
 
@@ -39,8 +38,7 @@ from ..core.pgn_headers import validate_headers
 from ..core.substitutions import Dictionary
 from ..core.tokenizer import PGNTokenizer
 from .observability import measure
-
-logger = logging.getLogger(__name__)
+from .worker_host import JobContext, WorkerHost
 
 
 @dataclass(frozen=True)
@@ -358,30 +356,24 @@ class ParsePipeline:
         return [self.analyze_segment(raw_text, segment) for segment in segments]
 
 
-class _ParseRunner(QObject):
-    """Vive na thread de trabalho. Nunca toca em widget nem em objeto da UI."""
+class _ParseJob:
+    """O trabalho da analise em segundo plano, com a `ParsePipeline` da thread de trabalho.
 
-    finished_signal = Signal(object)
+    So a thread de trabalho chama este objeto -- a pipeline dele nunca e vista
+    pela thread da interface. A configuracao vai junto de cada pedido, entao
+    nao ha sinal separado de reconfiguracao para chegar fora de ordem.
+    """
 
-    def __init__(self, config: ParseConfig):
-        super().__init__()
-        self._pipeline = ParsePipeline(config)
+    def __init__(self) -> None:
+        self._pipeline: ParsePipeline | None = None
 
-    @Slot(object)
-    def configure(self, config: ParseConfig):
-        self._pipeline.configure(config)
-
-    @Slot(str, int, int)
-    def run_request(self, raw_text: str, cursor_position: int, generation: int):
-        # Uma excecao aqui chegava ao PyQt (qFatal, processo morto) ou, com o
-        # excepthook, deixava `_in_flight` preso e a analise ao vivo parada para
-        # sempre (S-03). O resultado `None` libera a fila; o defeito vai ao log.
-        try:
-            analysis: DocumentAnalysis | None = self._pipeline.analyze(raw_text, cursor_position)
-        except Exception:  # noqa: BLE001 - registrado e devolvido como "sem resultado"
-            logger.exception("Analise em segundo plano falhou")
-            analysis = None
-        self.finished_signal.emit((generation, analysis))
+    def __call__(self, payload: tuple[str, int, int, ParseConfig], context: JobContext) -> tuple[int, DocumentAnalysis]:
+        raw_text, cursor_position, generation, config = payload
+        if self._pipeline is None:
+            self._pipeline = ParsePipeline(config)
+        else:
+            self._pipeline.configure(config)
+        return generation, self._pipeline.analyze(raw_text, cursor_position)
 
 
 class AsyncParser(QObject):
@@ -398,18 +390,17 @@ class AsyncParser(QObject):
     FAST_DEBOUNCE_MS = 150
     SLOW_DEBOUNCE_MS = 400
 
-    _request_signal = Signal(str, int, int)
-    _configure_signal = Signal(object)
-
     def __init__(self, config: ParseConfig | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._config = config or ParseConfig()
         self.pipeline = ParsePipeline(self._config)
 
-        self._thread: QThread | None = None
-        self._runner: _ParseRunner | None = None
+        # Fila de 1, excecao que nao trava a fila, thread que nunca e apagada
+        # rodando: tudo isso e do `WorkerHost` (R-303).
+        self._host = WorkerHost(_ParseJob(), self)
+        self._host.finished_signal.connect(self._on_result)
+        # O excesso de digitacao a espera do debounce.
         self._pending: tuple[str, int] | None = None
-        self._in_flight = False
         # Geracao do documento (R-301): sobe a cada pedido novo, reconfiguracao
         # e analise sincrona. Resultado de geracao antiga e descartado -- antes
         # so um `request_id` que nem `parse_now` nem `configure` mudavam, e um
@@ -430,14 +421,17 @@ class AsyncParser(QObject):
     def generation(self) -> int:
         return self._generation
 
+    @property
+    def busy(self) -> bool:
+        """Se ha analise em segundo plano rodando ou na fila."""
+        return self._host.busy
+
     def configure(self, config: ParseConfig) -> None:
         if config == self._config:
             return
         self._generation += 1
         self._config = config
         self.pipeline.configure(config)
-        if self._runner is not None:
-            self._configure_signal.emit(config)
 
     def debounce_interval(self, raw_text: str) -> int:
         return self.FAST_DEBOUNCE_MS if len(raw_text) < self.SMALL_DOCUMENT_BYTES else self.SLOW_DEBOUNCE_MS
@@ -465,66 +459,26 @@ class AsyncParser(QObject):
 
     # ------------------------------------------------------------------
 
-    def _ensure_thread(self) -> None:
-        if self._thread is not None:
-            return
-
-        self._thread = QThread()
-        self._runner = _ParseRunner(self._config)
-        self._runner.moveToThread(self._thread)
-        self._request_signal.connect(self._runner.run_request)
-        self._configure_signal.connect(self._runner.configure)
-        self._runner.finished_signal.connect(self._on_result)
-        # O trabalhador tem de morrer **na thread dele**, e o unico momento em
-        # que isso ainda e possivel e quando o laco de eventos dali esta
-        # terminando: o Qt entrega os `DeferredDelete` pendentes daquela thread
-        # antes de emitir `finished`. Ligar isto na hora de encerrar seria
-        # tarde -- o laco ja parou, o evento nunca chega, e o objeto acaba
-        # destruido pela thread errada, que e corrupcao de memoria.
-        self._thread.finished.connect(self._runner.deleteLater)
-        self._thread.start()
-
     def _dispatch(self) -> None:
-        if self._pending is None or self._in_flight:
+        if self._pending is None:
             return
-
         raw_text, cursor_position = self._pending
         self._pending = None
-        self._in_flight = True
+        self._host.submit((raw_text, cursor_position, self._generation, self._config))
 
-        self._ensure_thread()
-        self._request_signal.emit(raw_text, cursor_position, self._generation)
-
-    @Slot(object)
-    def _on_result(self, payload) -> None:
+    @Slot(int, object)
+    def _on_result(self, _request_id: int, payload: tuple[int, DocumentAnalysis]) -> None:
         generation, analysis = payload
-        self._in_flight = False
-
         # De uma geracao ja passada (o texto, a configuracao ou uma analise
         # sincrona veio depois): descartar -- o que vale ja esta na tela ou na fila.
-        if analysis is not None and generation == self._generation:
+        if generation == self._generation:
             analysis.generation = generation
             self.analysis_ready_signal.emit(analysis)
-
-        if self._pending is not None:
-            self._dispatch()
 
     def shutdown(self) -> None:
         """Encerra a thread. Chamar ao fechar a janela."""
         self.cancel_pending()
-        if self._thread is None:
-            return
-
-        thread = self._thread
-        self._thread, self._runner = None, None
-        self._in_flight = False
-
-        # `quit` + `wait` deixam o laco terminar, e e nesse fim que o
-        # trabalhador e destruido (ver `_ensure_thread`). So depois de a thread
-        # ter parado de verdade e que o objeto `QThread` pode ir embora.
-        thread.quit()
-        thread.wait(3000)
-        thread.deleteLater()
+        self._host.shutdown()
 
 
 def build_games_for_export(analyses: Sequence[SegmentAnalysis]) -> list[tuple[GameAST, str]]:

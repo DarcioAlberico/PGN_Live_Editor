@@ -40,9 +40,8 @@ from pathlib import Path
 
 import chess
 import Levenshtein
-from PyQt6.QtCore import QObject, QThread
+from PyQt6.QtCore import QObject
 from PyQt6.QtCore import pyqtSignal as Signal
-from PyQt6.QtCore import pyqtSlot as Slot
 
 from ..core.issues import (
     ACTION_ACCEPT,
@@ -56,6 +55,7 @@ from ..core.parser import GameAST, MoveNode
 from .durable_io import write_durable_text
 from .project_service import app_data_dir
 from .schemas import from_payload
+from .worker_host import JobContext, WorkerHost
 
 logger = logging.getLogger(__name__)
 
@@ -793,90 +793,53 @@ def scan_game(
 # ----------------------------------------------------------------------
 
 
-class _ScanRunner(QObject):
-    """Vive na thread de trabalho. Nunca toca em widget."""
+class ScanCancelled(Exception):
+    """A varredura foi substituida ou cancelada; o resultado nao interessa mais."""
 
-    finished_signal = Signal(object)
 
-    @Slot(object)
-    def run_scan(self, payload) -> None:
-        request_id, ast, start_fen, settings = payload
-        try:
-            with EngineSession(settings) as session:
-                report = scan_game(ast, start_fen, session.evaluate, settings)
-        except EngineUnavailable as exc:
-            self.finished_signal.emit((request_id, None, str(exc)))
-            return
-        except Exception as exc:  # noqa: BLE001 - o motor e externo; nao pode derrubar a janela
-            self.finished_signal.emit((request_id, None, f"Falha do motor: {exc}"))
-            return
+def run_scan(payload: tuple[GameAST, str, EngineSettings], context: JobContext) -> ScanReport:
+    """Varredura na thread de trabalho; para entre uma avaliacao e outra se cancelada (S-08)."""
+    ast, start_fen, settings = payload
+    try:
+        with EngineSession(settings) as session:
 
-        self.finished_signal.emit((request_id, report, ""))
+            def evaluate(*args, **kwargs):
+                if context.cancelled:
+                    raise ScanCancelled
+                return session.evaluate(*args, **kwargs)
+
+            return scan_game(ast, start_fen, evaluate, settings)
+    except (EngineUnavailable, ScanCancelled):
+        raise
+    except Exception as exc:  # o motor e externo: a mensagem diz de onde veio
+        raise RuntimeError(f"Falha do motor: {exc}") from exc
 
 
 class EngineScanner(QObject):
     """Fachada da varredura: dispara na thread de trabalho, responde por sinal.
 
     A thread so nasce na primeira varredura -- quem nunca usa o motor nao paga
-    thread nenhuma. Pedidos antigos que chegarem atrasados sao descartados.
+    thread nenhuma. Um pedido novo interrompe o anterior (`WorkerHost`).
     """
 
     finished_signal = Signal(object)  # ScanReport
     failed_signal = Signal(str)
 
-    _request_signal = Signal(object)
-
-    def __init__(self, parent: QObject | None = None):
+    def __init__(self, parent: QObject | None = None, *, job=run_scan):
         super().__init__(parent)
-        self._thread: QThread | None = None
-        self._runner: _ScanRunner | None = None
-        self._request_id = 0
-        self._running = False
+        self._host = WorkerHost(job, self)
+        self._host.finished_signal.connect(lambda _request, report: self.finished_signal.emit(report))
+        self._host.failed_signal.connect(lambda failure: self.failed_signal.emit(failure.message))
 
     @property
     def is_running(self) -> bool:
-        return self._running
-
-    def _ensure_thread(self) -> None:
-        if self._thread is not None:
-            return
-
-        self._thread = QThread()
-        self._runner = _ScanRunner()
-        self._runner.moveToThread(self._thread)
-        self._request_signal.connect(self._runner.run_scan)
-        self._runner.finished_signal.connect(self._on_finished)
-        self._thread.start()
+        return self._host.busy
 
     def scan(self, ast: GameAST, start_fen: str, settings: EngineSettings) -> None:
-        self._request_id += 1
-        self._running = True
-        self._ensure_thread()
-        self._request_signal.emit((self._request_id, ast, start_fen, settings))
+        self._host.submit((ast, start_fen, settings))
 
-    @Slot(object)
-    def _on_finished(self, payload) -> None:
-        request_id, report, error = payload
-        if request_id != self._request_id:
-            # Pedido ja substituido por outro: descartar em silencio.
-            return
-
-        self._running = False
-        if report is None:
-            self.failed_signal.emit(error)
-        else:
-            self.finished_signal.emit(report)
+    def cancel(self) -> None:
+        self._host.cancel()
 
     def shutdown(self) -> None:
-        if self._thread is None:
-            return
-
-        thread, runner = self._thread, self._runner
-        self._thread, self._runner = None, None
-        self._running = False
-
-        thread.quit()
-        thread.wait(5000)
-        if runner is not None:
-            runner.deleteLater()
-        thread.deleteLater()
+        self._host.shutdown()

@@ -24,9 +24,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QBuffer, QByteArray, QEvent, QObject, QPointF, QSize, Qt, QThread
+from PyQt6.QtCore import QBuffer, QByteArray, QEvent, QPointF, QSize, Qt
 from PyQt6.QtCore import pyqtSignal as Signal
-from PyQt6.QtCore import pyqtSlot as Slot
 from PyQt6.QtGui import QColor, QImage, QKeySequence, QMouseEvent, QPainter, QShortcut
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
@@ -44,26 +43,17 @@ from PyQt6.QtWidgets import (
 )
 
 from ..services.text_ocr import OCR_DPI, OCR_DPIS, recognize_renders, text_ocr_available
+from ..services.worker_host import JobContext, WorkerFailed, WorkerHost
 
 PDF_FILTER = "Documentos PDF (*.pdf);;Todos os arquivos (*)"
 
 SCANNED_PAGE_HINT = "Página sem camada de texto (escaneada)."
 
 
-class _TextOcrWorker(QObject):
-    """Vive na thread de OCR. Recebe bytes, nunca toca em widget."""
-
-    finished_signal = Signal(int, int, str, str)  # pedido, pagina, texto, erro
-
-    @Slot(object)
-    def run(self, payload) -> None:
-        request, page, renders = payload
-        try:
-            result = recognize_renders(renders)
-        except Exception as exc:  # noqa: BLE001 - OCR externo nao pode derrubar a janela
-            self.finished_signal.emit(request, page, "", str(exc))
-            return
-        self.finished_signal.emit(request, page, result.text, "")
+def read_page_text(payload: tuple[int, list], context: JobContext) -> tuple[int, str]:
+    """OCR de uma pagina ja desenhada (bytes); roda na thread do host, nunca toca em widget."""
+    page, renders = payload
+    return page, recognize_renders(renders).text
 
 
 class PdfPageView(QPdfView):
@@ -93,7 +83,6 @@ class PdfPanel(QWidget):
     diagram_ocr_cancel_requested_signal = Signal()
     diagram_review_queue_requested_signal = Signal()
     diagram_clicked_signal = Signal(int, float, float)
-    _ocr_request_signal = Signal(object)
     #: Mensagem da leitura de intervalo para a barra de status.
     range_status_signal = Signal(str)
 
@@ -107,18 +96,21 @@ class PdfPanel(QWidget):
         # OCR de texto: pagina -> texto lido, e o pedido em andamento.
         self._text_ocr_available = text_ocr_available()
         self._ocr_cache: dict[int, str] = {}
-        self._ocr_thread: QThread | None = None
-        self._ocr_worker: _TextOcrWorker | None = None
-        self._ocr_request = 0
+        # Dois hosts (R-303): a pagina da tela e o intervalo nao disputam a
+        # mesma fila -- antes dividiam uma thread com ids negativos para um deles.
+        self._page_ocr = WorkerHost(read_page_text, self)
+        self._page_ocr.finished_signal.connect(self._on_page_ocr_finished)
+        self._page_ocr.failed_signal.connect(self._on_page_ocr_failed)
+        self._range_ocr = WorkerHost(read_page_text, self)
+        self._range_ocr.finished_signal.connect(self._on_range_ocr_finished)
+        self._range_ocr.failed_signal.connect(self._on_range_ocr_failed)
         self._ocr_pending_page: int | None = None
+        self._range_page: int | None = None
         self._append_when_read: int | None = None
-        # Leitura de um intervalo de paginas: fila, texto ja lido e o pedido
-        # em andamento. Os pedidos do intervalo tem numero negativo, para nao
-        # se confundirem com a leitura da pagina que esta na tela.
+        # Leitura de um intervalo de paginas: fila e texto ja lido.
         self._range_queue: list[int] = []
         self._range_blocks: list[str] = []
         self._range_total = 0
-        self._range_request = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -359,6 +351,8 @@ class PdfPanel(QWidget):
             self._buffer = None
         self._path = None
         self._ocr_cache.clear()
+        # O OCR em andamento era da pagina de outro documento.
+        self._page_ocr.cancel()
         self._ocr_pending_page = None
         self._append_when_read = None
         self._stop_range_reading()
@@ -501,8 +495,6 @@ class PdfPanel(QWidget):
             return
         if not force and page in self._ocr_cache:
             return
-        self._ensure_ocr_thread()
-        self._ocr_request += 1
         self._ocr_pending_page = page
         self.txt_page.clear()
         self.txt_page.setPlaceholderText(f"{SCANNED_PAGE_HINT} Lendo a página {page + 1} com OCR...")
@@ -510,17 +502,7 @@ class PdfPanel(QWidget):
         # O QPdfDocument so desenha na thread da interface; o OCR, que e o caro,
         # roda na outra. Mais de uma resolucao: ver `services/text_ocr.py`.
         renders = [(*self.render_page_bgra(page, dpi), dpi) for dpi in OCR_DPIS]
-        self._ocr_request_signal.emit((self._ocr_request, page, renders))
-
-    def _ensure_ocr_thread(self) -> None:
-        if self._ocr_thread is not None:
-            return
-        self._ocr_thread = QThread()
-        self._ocr_worker = _TextOcrWorker()
-        self._ocr_worker.moveToThread(self._ocr_thread)
-        self._ocr_request_signal.connect(self._ocr_worker.run)
-        self._ocr_worker.finished_signal.connect(self._on_ocr_finished)
-        self._ocr_thread.start()
+        self._page_ocr.submit((page, renders))
 
     # -- intervalo de paginas -------------------------------------------
 
@@ -556,10 +538,9 @@ class PdfPanel(QWidget):
             if text:
                 self._range_blocks.append(self._range_block(page, text))
                 continue
-            self._ensure_ocr_thread()
-            self._range_request -= 1
+            self._range_page = page
             renders = [(*self.render_page_bgra(page, dpi), dpi) for dpi in OCR_DPIS]
-            self._ocr_request_signal.emit((self._range_request, page, renders))
+            self._range_ocr.submit((page, renders))
             return
         self._finish_range_reading()
 
@@ -567,9 +548,17 @@ class PdfPanel(QWidget):
     def _range_block(page: int, text: str) -> str:
         return f"{{ PDF página {page + 1} }}\n{text}"
 
-    def _on_range_page_read(self, request: int, page: int, text: str, error: str) -> None:
-        if request != self._range_request or not self.is_reading_range:
-            return  # leitura cancelada, ou pedido de uma leitura anterior
+    def _on_range_ocr_finished(self, _request: int, result: tuple[int, str]) -> None:
+        page, text = result
+        self._on_range_page_read(page, text, "")
+
+    def _on_range_ocr_failed(self, failure: WorkerFailed) -> None:
+        if self._range_page is not None:
+            self._on_range_page_read(self._range_page, "", failure.message)
+
+    def _on_range_page_read(self, page: int, text: str, error: str) -> None:
+        if not self.is_reading_range:
+            return  # leitura cancelada
         if error:
             self._range_blocks.append(f"{{ PDF página {page + 1}: o OCR falhou ({error}) }}")
         else:
@@ -589,7 +578,8 @@ class PdfPanel(QWidget):
         self._range_queue = []
         self._range_blocks = []
         self._range_total = 0
-        self._range_request -= 1  # o que ainda estiver no OCR chega e e descartado
+        self._range_page = None
+        self._range_ocr.cancel()  # o que ainda estiver no OCR nao chega
         if hasattr(self, "btn_range_ocr"):
             self.btn_range_ocr.setText("Ler intervalo (OCR)")
         self.clear_full_progress()
@@ -599,18 +589,15 @@ class PdfPanel(QWidget):
         self.full_progress.setValue(min(100, (page - 1) * 100 // max(1, total)))
         self.full_progress.setFormat(f"Lendo página {page}/{total} — %p%")
 
-    @Slot(int, int, str, str)
-    def _on_ocr_finished(self, request: int, page: int, text: str, error: str) -> None:
-        if request < 0:
-            self._on_range_page_read(request, page, text, error)
-            return
-        if request != self._ocr_request:
-            return  # pagina ja trocada por outra
+    def _on_page_ocr_failed(self, failure: WorkerFailed) -> None:
         self._ocr_pending_page = None
         self.btn_text_ocr.setEnabled(self.has_document())
-        if error:
-            self.txt_page.setPlaceholderText(f"{SCANNED_PAGE_HINT} O OCR falhou: {error}")
-            return
+        self.txt_page.setPlaceholderText(f"{SCANNED_PAGE_HINT} O OCR falhou: {failure.message}")
+
+    def _on_page_ocr_finished(self, _request: int, result: tuple[int, str]) -> None:
+        page, text = result
+        self._ocr_pending_page = None
+        self.btn_text_ocr.setEnabled(self.has_document())
         self._ocr_cache[page] = text
         if page == self.current_page():
             self.txt_page.setPlainText(text)
@@ -620,16 +607,9 @@ class PdfPanel(QWidget):
                 self.text_requested_signal.emit(text.strip())
 
     def shutdown(self) -> None:
-        """Encerra a thread de OCR. A janela chama isto ao fechar."""
-        if self._ocr_thread is None:
-            return
-        thread, worker = self._ocr_thread, self._ocr_worker
-        self._ocr_thread, self._ocr_worker = None, None
-        thread.quit()
-        thread.wait(10000)
-        if worker is not None:
-            worker.deleteLater()
-        thread.deleteLater()
+        """Encerra as threads de OCR. A janela chama isto ao fechar."""
+        self._page_ocr.shutdown(timeout_ms=10000)
+        self._range_ocr.shutdown(timeout_ms=10000)
 
     # ------------------------------------------------------------------
 
