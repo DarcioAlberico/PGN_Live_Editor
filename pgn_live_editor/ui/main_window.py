@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
         self.engine_scanner.finished_signal.connect(self._on_engine_scan_finished)
         self.engine_scanner.failed_signal.connect(self._on_engine_scan_failed)
 
-        self.editor_panel.text_edit.textChanged.connect(self._on_text_changed)
+        self.editor_panel.edited_signal.connect(self._on_text_changed)
 
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)

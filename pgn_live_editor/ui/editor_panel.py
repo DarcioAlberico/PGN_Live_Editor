@@ -1,4 +1,5 @@
 import re
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from functools import lru_cache
 
@@ -199,6 +200,9 @@ class EditorPanel(QWidget):
     LAZY_DELIMITER_TEXT_CHARS = 500_000
 
     text_parsed_signal = Signal(object)
+    #: O usuario (ou um gesto) mudou o texto. Recolorir e carregar um
+    #: documento nao contam -- ao contrario do `textChanged` do Qt (U-07).
+    edited_signal = Signal()
     document_analyzed_signal = Signal(object)
     cursor_position_changed_signal = Signal(int)
     #: Recado de um gesto que partiu **de dentro** do painel -- da arvore, por
@@ -226,7 +230,8 @@ class EditorPanel(QWidget):
         self._suspend_cursor_sync = False
         self._symbol_palette_dialog: SymbolPaletteDialog | None = None
         self._delimiter_pairs: dict[int, int] = {}
-        self._delimiter_cache: dict[tuple[str, str], tuple[list[tuple[int, int, int]], dict[int, int]]] = {}
+        self._delimiter_cache: OrderedDict[tuple[str, str], tuple[list, dict[int, int]]] = OrderedDict()
+        self._loading_document = False
         self._parse_schedule_timer = QTimer(self)
         self._parse_schedule_timer.setSingleShot(True)
         self._parse_schedule_timer.timeout.connect(self._dispatch_scheduled_parse)
@@ -360,8 +365,15 @@ class EditorPanel(QWidget):
     def load_document_text(self, text: str, cursor_position: int = 0):
         """Carrega um documento novo (abrir/importar). Zera o historico de desfazer."""
         text = self._clean(text)
+        # Carregar nao e editar: sem isto o `textChanged` do `setPlainText`
+        # armava o timer, e a abertura fazia uma segunda analise completa (U-10).
+        self._loading_document = True
+        try:
+            self.text_edit.setPlainText(text)
+        finally:
+            self._loading_document = False
         self._parse_schedule_timer.stop()
-        self.text_edit.setPlainText(text)
+        self.async_parser.cancel_pending()
         cursor = self.text_edit.textCursor()
         cursor.setPosition(max(0, min(cursor_position, len(text))))
         self.text_edit.setTextCursor(cursor)
@@ -507,6 +519,9 @@ class EditorPanel(QWidget):
         self._apply_current_selection()
 
     def _on_text_changed(self):
+        if self.highlighter.applying or self._loading_document:
+            return
+        self.edited_signal.emit()
         # A analise sai da thread de UI enquanto se digita; o resultado so e
         # aplicado se ainda corresponder ao texto que esta na tela. Nao copie o
         # documento aqui: `toPlainText()` seria O(tamanho do livro) por tecla.
@@ -1118,7 +1133,7 @@ class EditorPanel(QWidget):
         return None
 
 
-def _delimiter_highlight_data(raw_text: str, segments: Sequence, theme: str, cache: dict):
+def _delimiter_highlight_data(raw_text: str, segments: Sequence, theme: str, cache: OrderedDict):
     """Retorna realce e pares de `{}`, `()` apenas no movetext das partidas."""
     ranges: list[tuple[int, int, QTextCharFormat]] = []
     pairs: dict[int, int] = {}
@@ -1127,6 +1142,7 @@ def _delimiter_highlight_data(raw_text: str, segments: Sequence, theme: str, cac
         cache_key = (segment.body, theme)
         cached = cache.get(cache_key)
         if cached is not None:
+            cache.move_to_end(cache_key)
             cached_ranges, cached_pairs = cached
             offset = segment.raw_offset
             ranges.extend((start + offset, end + offset, text_format) for start, end, text_format in cached_ranges)
@@ -1174,6 +1190,8 @@ def _delimiter_highlight_data(raw_text: str, segments: Sequence, theme: str, cac
                     segment_pairs[position - start] = opening_position - start
 
         cache[cache_key] = (segment_ranges, segment_pairs)
+        while len(cache) > DELIMITER_CACHE_LIMIT:
+            cache.popitem(last=False)
         ranges.extend(
             (relative_start + start, relative_end + start, text_format)
             for relative_start, relative_end, text_format in segment_ranges
@@ -1193,6 +1211,11 @@ def _delimiter_format(theme: str, depth: int) -> QTextCharFormat:
     return text_format
 
 
+#: Partidas com o realce de delimitadores guardado. Sem limite, cada tecla
+#: deixava uma entrada nova (o corpo da partida muda) e o cache so crescia (U-10).
+DELIMITER_CACHE_LIMIT = 256
+
+
 class MoveHighlighter(QSyntaxHighlighter):
     """Realce sintatico com os ranges pre-indexados por bloco.
 
@@ -1203,8 +1226,18 @@ class MoveHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
         self._ranges_by_block: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
+        # Ligado enquanto o realce e reaplicado: o Qt avisa `textChanged` por
+        # isso, e quem escuta precisa saber que nao foi edicao (U-07).
+        self.applying = False
 
     def set_ranges(self, ranges):
+        self.applying = True
+        try:
+            self._set_ranges(ranges)
+        finally:
+            self.applying = False
+
+    def _set_ranges(self, ranges):
         document = self.document()
         indexed: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
 
