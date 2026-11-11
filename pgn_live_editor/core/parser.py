@@ -977,29 +977,28 @@ class TolerantParser:
         if len(continuation) < 2:
             return None
 
-        board = self.validator.board.copy(stack=False)
+        board = self.validator.board  # so leitura: a continuacao anda pelo cache de posicoes
         original_move = self.validator.legal_move(token.value)
         if original_move is None:
             return None
         moving_piece = board.piece_at(original_move.from_square)
         if moving_piece is None:
             return None
+        start = position_snapshot(board)
 
         def legal_continuation(first_move: chess.Move) -> int:
-            board.push(first_move)
+            # Pelo cache de posicoes do validador: a checagem do lance seguinte
+            # anda pelas mesmas posicoes, entao cada lance e interpretado e
+            # jogado uma vez so -- antes eram tres copias e seis push/pop por
+            # lance da partida (R-401).
+            position = self.validator.position_after(start, first_move)
             matched = 0
-            try:
-                for san in continuation:
-                    # Pelo cache do validador: estes dois lances sao os
-                    # proximos da partida, e logo serao conferidos de novo.
-                    move = self.validator.legal_move_on(board, san)
-                    if move is None:
-                        break
-                    board.push(move)
-                    matched += 1
-            finally:
-                for _ in range(matched + 1):
-                    board.pop()
+            for san in continuation:
+                move = self.validator.legal_move_from(position, san)
+                if move is None:
+                    break
+                position = self.validator.position_after(position, move)
+                matched += 1
             return matched
 
         original_score = legal_continuation(original_move)

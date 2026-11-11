@@ -34,7 +34,11 @@ def position_snapshot(board: chess.Board) -> Snapshot:
 
 def board_from_snapshot(snapshot: Snapshot) -> chess.Board:
     """Um tabuleiro novo na posicao (sem historico de lances)."""
-    board = chess.Board(None)
+    return restore_snapshot(chess.Board(None), snapshot)
+
+
+def restore_snapshot(board: chess.Board, snapshot: Snapshot) -> chess.Board:
+    """Poe `board` na posicao, sem tocar no historico. Construir um `Board` custa ~10 us; isto, ~1 us."""
     (
         board.pawns,
         board.knights,

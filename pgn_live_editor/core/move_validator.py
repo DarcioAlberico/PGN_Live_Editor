@@ -1,6 +1,6 @@
 import chess
 
-from .positions import position_snapshot
+from .positions import Snapshot, position_snapshot, restore_snapshot
 
 #: Lances guardados por posicao numa analise. Passou disto, recomeca: e um
 #: cache, nao uma memoria.
@@ -21,9 +21,36 @@ class MoveValidator:
         # continuacao do lance anterior: era o mesmo SAN interpretado ate quatro
         # vezes, a ~20 us cada (R-401).
         self._parsed: dict[tuple, chess.Move | None] = {}
+        # (posicao, lance) -> posicao seguinte: andar pela continuacao sem
+        # copiar tabuleiro nem jogar e desfazer lances.
+        self._after: dict[tuple, Snapshot] = {}
+        # Tabuleiro de rascunho para as consultas por posicao guardada.
+        self._scratch = chess.Board(None)
 
     def forget_parsed_moves(self) -> None:
         self._parsed.clear()
+        self._after.clear()
+
+    def legal_move_from(self, snapshot: Snapshot, san_move: str) -> chess.Move | None:
+        """Como `legal_move_on`, a partir de uma posicao guardada."""
+        key = (snapshot, san_move)
+        if key in self._parsed:
+            return self._parsed[key]
+        return self.legal_move_on(restore_snapshot(self._scratch, snapshot), san_move)
+
+    def position_after(self, snapshot: Snapshot, move: chess.Move) -> Snapshot:
+        """A posicao depois de `move` (que tem de ser legal em `snapshot`)."""
+        key = (snapshot, move)
+        after = self._after.get(key)
+        if after is None:
+            board = restore_snapshot(self._scratch, snapshot)
+            board.push(move)
+            after = position_snapshot(board)
+            board.pop()  # o rascunho nao acumula historico
+            if len(self._after) >= PARSED_MOVES_LIMIT:
+                self._after.clear()
+            self._after[key] = after
+        return after
 
     def set_board_fen(self, fen: str):
         """Reset the internal board state to a given FEN (sem historico de lances)."""
