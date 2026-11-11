@@ -32,6 +32,7 @@ from ..core.recognition_record import (
     reconcile_with_orphans,
 )
 from ..core.review_queue import accept_identical, apply_batch_action, reject_rule
+from ..core.revision import SpanRef
 from ..core.substitutions import LAYER_PROJECT, SCOPE_TOKEN
 from ..core.text_ops import (
     OperationResult,
@@ -1342,6 +1343,7 @@ class MainWindow(QMainWindow):
 
     def _edit_current_comment(self):
         """Edita o comentário do lance selecionado, preservando NAGs e setas."""
+        self.editor_panel.ensure_current_analysis()
         entry = self.chess_panel.current_entry()
         if entry is None:
             self._report("Selecione um lance no tabuleiro ou na árvore primeiro.")
@@ -1395,6 +1397,7 @@ class MainWindow(QMainWindow):
         um Ctrl+Z para desfazer, reanalise em seguida. Nao existe anotacao que
         viva fora do texto.
         """
+        self.editor_panel.ensure_current_analysis()
         entry = self.chess_panel.entry_by_node_id.get(node_id)
         if entry is None:
             return
@@ -1404,6 +1407,7 @@ class MainWindow(QMainWindow):
             self._report(self.editor_panel.apply_operation(result) or result.message)
 
     def _promote_variation(self):
+        self.editor_panel.ensure_current_analysis()
         entry = self.chess_panel.current_entry()
         if entry is None or len(entry.path) < 2:
             self._report("Selecione um lance de variante para promove-la.")
@@ -1421,6 +1425,7 @@ class MainWindow(QMainWindow):
 
     def _variation_target(self):
         """`(dono, indice)` da variante sob o cursor, ou `(None, None)`."""
+        self.editor_panel.ensure_current_analysis()
         entry = self.chess_panel.current_entry()
         if entry is None or len(entry.path) < 2:
             return (None, None)
@@ -1432,6 +1437,7 @@ class MainWindow(QMainWindow):
         E a mesma troca, vista do outro lado -- por isso o lance sob o cursor
         precisa ter uma variante para trocar de lugar com ele.
         """
+        self.editor_panel.ensure_current_analysis()
         entry = self.chess_panel.current_entry()
         if entry is None or not entry.node.variations:
             self._report("Ponha o cursor num lance que tenha variante para rebaixar a linha principal.")
@@ -1664,22 +1670,34 @@ class MainWindow(QMainWindow):
             f"não entendidos {counts['nao_entendido']}"
         )
 
+    def _issue_ref(self, issue) -> SpanRef:
+        # O painel de alertas mostra os alertas da analise que esta no editor.
+        return self.editor_panel.span_ref(issue.raw_start, issue.raw_end)
+
+    def _report_changed_span(self, issue) -> None:
+        self.editor_panel.reparse_now()
+        self._report(f"O trecho '{issue.raw_text}' mudou desde a análise; confira o alerta de novo.")
+
     def _accept_issue(self, issue):
         """Grava a correcao no texto bruto -- o alerta some porque a causa sumiu."""
         candidate = issue.best_candidate
         if not candidate:
             return
-        self._set_recognition_action(issue, ReviewAction.ACCEPTED, candidate.san)
         text = candidate.replacement or candidate.san
-        self.editor_panel.replace_span(issue.raw_start, issue.raw_end, text)
+        if not self.editor_panel.replace_ref(self._issue_ref(issue), text):
+            self._report_changed_span(issue)
+            return
+        self._set_recognition_action(issue, ReviewAction.ACCEPTED, candidate.san)
         self.statusBar().showMessage(f"'{issue.raw_text}' substituido por '{text}'.", 4000)
         if candidate.replacement is None:
             # Inserir um lance que faltava nao e correcao de OCR: nada a aprender.
             self._count_acceptance(issue, candidate)
 
     def _comment_issue(self, issue):
+        if not self.editor_panel.wrap_ref_as_comment(self._issue_ref(issue)):
+            self._report_changed_span(issue)
+            return
         self._set_recognition_action(issue, ReviewAction.COMMENTED)
-        self.editor_panel.wrap_span_as_comment(issue.raw_start, issue.raw_end)
         self.statusBar().showMessage(f"'{issue.raw_text}' virou comentário.", 4000)
 
     def _ignore_issue(self, issue):

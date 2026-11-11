@@ -39,6 +39,7 @@ from ..core.notation_detect import detect_notation_locale
 from ..core.parser import GameAST, MoveNode, iter_moves
 from ..core.paste_cleanup import clean_pdf_text
 from ..core.pgn_headers import insert_or_replace_headers, upsert_headers
+from ..core.revision import SpanRef
 from ..core.text_hygiene import replace_lone_surrogates
 from ..core.text_insertion import build_board_move_insertion
 from ..core.text_ops import (
@@ -698,6 +699,38 @@ class EditorPanel(QWidget):
     def set_ignored_tokens(self, tokens):
         self._reconfigure(ignored_tokens=tokens)
 
+    # ------------------------------------------------------------------
+    # Revisao corrente (R-302)
+    # ------------------------------------------------------------------
+
+    def ensure_current_analysis(self) -> None:
+        """Antes de um gesto que le a arvore: a arvore tem de ser do texto que esta na tela.
+
+        Dentro do debounce da digitacao a analise ainda e do texto anterior; um
+        gesto estrutural calculado com os offsets dela edita o lugar errado (U-05).
+        """
+        if self.analysis.raw_text != self.document_text():
+            self.reparse_now()
+
+    def span_ref(self, start_index: int, end_index: int) -> SpanRef:
+        """Referencia a um trecho da analise que esta na tela (alerta, registro)."""
+        return SpanRef(self.analysis.raw_text, start_index, end_index)
+
+    def replace_ref(self, ref: SpanRef, replacement: str) -> bool:
+        """`replace_span` no lugar onde o trecho esta agora; `False` se ele mudou."""
+        located = ref.locate(self.document_text())
+        if located is None:
+            return False
+        self.replace_span(*located, replacement)
+        return True
+
+    def wrap_ref_as_comment(self, ref: SpanRef) -> bool:
+        located = ref.locate(self.document_text())
+        if located is None:
+            return False
+        self.wrap_span_as_comment(*located)
+        return True
+
     def wrap_span_as_comment(self, start_index: int, end_index: int):
         """Envolve um trecho do texto bruto em chaves, de forma undoavel."""
         text = self.text_edit.toPlainText()
@@ -741,6 +774,7 @@ class EditorPanel(QWidget):
         return self.apply_operation(wrap_as_comment(self.document_text(), start, end))
 
     def action_wrap_variation(self) -> str:
+        self.ensure_current_analysis()
         start, end = self._selection()
         return self.apply_operation(wrap_as_variation(self.document_text(), start, end, self.current_ast))
 
@@ -748,6 +782,7 @@ class EditorPanel(QWidget):
         return self.apply_operation(unwrap_at(self.document_text(), self.cursor_position()))
 
     def action_paragraph_to_comment(self) -> str:
+        self.ensure_current_analysis()
         return self.apply_operation(
             paragraph_to_comment(self.document_text(), self.cursor_position(), self.current_ast)
         )
@@ -763,6 +798,7 @@ class EditorPanel(QWidget):
         todos da mesma convencao (`move_tree.build_move_entries`), e e por isso
         que este caminho existe uma vez so.
         """
+        self.ensure_current_analysis()
         by_node_id, _by_identity = build_entry_maps(build_move_entries(self.current_ast))
         entry = by_node_id.get(node_id)
         return entry.node if entry else None
@@ -977,6 +1013,7 @@ class EditorPanel(QWidget):
 
     def board_at_cursor(self) -> chess.Board | None:
         """A posicao do tabuleiro no ponto do cursor, se der para saber."""
+        self.ensure_current_analysis()
         position = self.cursor_position()
         board = chess.Board(self.current_start_fen)
 
@@ -996,6 +1033,7 @@ class EditorPanel(QWidget):
 
     def move_at_cursor(self):
         """O lance sobre o qual o cursor esta, se houver um."""
+        self.ensure_current_analysis()
         position = self.cursor_position()
         for move in iter_moves(self.current_ast.moves):
             if move.san_start_index <= position <= move.san_end_index:

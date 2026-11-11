@@ -121,6 +121,9 @@ class ReviewPanel(QWidget):
         )
 
     def _rebuild_table(self):
+        # A selecao segue o registro, nao a linha (U-15): depois de uma decisao
+        # a lista muda, e a linha selecionada passaria a ser outro registro.
+        selected_ids = {record.source_id for record in self.selected_records()} if self.visible_records else set()
         self.visible_records = filter_records(self.records, self._criteria())
         self.lbl_count.setText(f"{len(self.visible_records)} item(ns)")
         self.table.setRowCount(len(self.visible_records))
@@ -139,7 +142,21 @@ class ReviewPanel(QWidget):
                 item = QTableWidgetItem(value)
                 item.setData(Qt.ItemDataRole.UserRole, record.source_id)
                 self.table.setItem(row, column, item)
+        self._reselect(selected_ids)
         self._update_buttons()
+
+    def _reselect(self, source_ids: set[str]) -> None:
+        model = self.table.selectionModel()
+        if model is None:
+            return
+        blocked = model.blockSignals(True)
+        try:
+            self.table.clearSelection()
+            for row, record in enumerate(self.visible_records):
+                if record.source_id in source_ids:
+                    self.table.selectRow(row)
+        finally:
+            model.blockSignals(blocked)
 
     def selected_records(self) -> list[RecognitionRecord]:
         ids = {

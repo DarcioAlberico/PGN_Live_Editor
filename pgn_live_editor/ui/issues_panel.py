@@ -98,8 +98,9 @@ class IssuesPanel(QWidget):
     # ------------------------------------------------------------------
 
     def set_issues(self, issues: list[Issue]):
+        selected = self.selected_issue()
         self.issues = sort_issues(list(issues))
-        self._rebuild_table()
+        self._rebuild_table(selected)
 
     def _visible_issues(self) -> list[Issue]:
         if self._show_cascade:
@@ -107,10 +108,12 @@ class IssuesPanel(QWidget):
         return [issue for issue in self.issues if not issue.is_cascade]
 
     def _on_cascade_toggled(self, checked: bool):
+        selected = self.selected_issue()
         self._show_cascade = checked
-        self._rebuild_table()
+        self._rebuild_table(selected)
 
-    def _rebuild_table(self):
+    def _rebuild_table(self, selected: Issue | None = None):
+        """Refaz a tabela; `selected` e o alerta selecionado **antes** da lista mudar."""
         visible = self._visible_issues()
         counts = count_by_severity(self.issues)
         hidden = len(self.issues) - len(visible)
@@ -149,7 +152,33 @@ class IssuesPanel(QWidget):
             self.table.setItem(row, 1, snippet_item)
             self.table.setItem(row, 2, message_item)
 
+        self._reselect(selected, visible)
         self._update_buttons()
+
+    def _reselect(self, previous: Issue | None, visible: list[Issue]) -> None:
+        """A selecao segue o alerta, nao a linha (U-15).
+
+        O mesmo alerta e o de mesmo codigo e mesmo trecho; havendo varios, o
+        mais perto de onde estava. Se ele sumiu, nada fica selecionado -- e o
+        botao Aceitar nao age sobre outro alerta que caiu naquela linha.
+        Sem sinal: reconstruir a lista nao pode mover o cursor do editor.
+        """
+        model = self.table.selectionModel()
+        if model is None:
+            return
+        same = [
+            row
+            for row, issue in enumerate(visible)
+            if previous is not None and (issue.code, issue.raw_text) == (previous.code, previous.raw_text)
+        ]
+        blocked = model.blockSignals(True)
+        try:
+            self.table.clearSelection()
+            if same and previous is not None:
+                row = min(same, key=lambda r: abs(visible[r].raw_start - previous.raw_start))
+                self.table.selectRow(row)
+        finally:
+            model.blockSignals(blocked)
 
     # ------------------------------------------------------------------
 
