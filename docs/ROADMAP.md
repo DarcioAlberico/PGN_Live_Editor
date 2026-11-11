@@ -29,7 +29,7 @@ defeito que contradiz o aceite da fase; o item que o fecha está no
 | 1 · Não perder trabalho | ✅ concluída de novo (2026-11-10) | `test_durable_io`, `test_recovery`, `test_schemas`, `test_session_switch` — S-01 e S-02 fechados na fase 15 do roadmap v3 |
 | 2 · Parar a corrupção silenciosa | ✅ concluída de novo (2026-11-10) | `test_properties` (2.000 partidas sem lance perdido), `test_citations`, `test_parser_comments`, `test_silent_losses` — N-02, N-03 e N-04 fechados na fase 16 do roadmap v3 |
 | 3 · Gestos de edição | ✅ concluída de novo (2026-11-10) | `test_move_extent`, `test_delimiters` — N-05, N-06, N-07, N-08 fechados na fase 16 |
-| 4 · Escala de livro | ✅ concluída de novo (2026-11-10) | `test_quick_wins` (N-01), `test_parser_comments` (N-16: 400 mil palavras em 0,26 s no parser) |
+| 4 · Escala de livro | ✅ concluída de novo (2026-11-11) | `test_quick_wins` (N-01), `test_parser_comments` (N-16), `test_variation_scale`, `test_book_open_budget`; `test_performance_budgets` (`-m slow`): abrir 1 MB em < 1 s |
 | 5 · Assistentes | ✅ concluída | `test_engine`, `test_stockfish_integration` (determinístico desde 2026-11-09, Q-03), `test_dictionary`, `test_pdf_panel` |
 | 6 · Polimento | ✅ concluída | `test_preferences`, `test_ui_smoke` |
 | 7 · Livro de repertório | ✅ concluída de novo (2026-11-10) | `test_blank_lines`, `test_book_regression` (o python-chess lê o texto convertido), `test_descriptive_context` — L-01, L-02, L-03, L-16, L-18 fechados |
@@ -37,7 +37,7 @@ defeito que contradiz o aceite da fase; o item que o fecha está no
 | 9 · Pipeline PDF profissional | ⚠️ reaberta | `□` lido como "brancas jogam" (O-01); lado chutado sai como aceito (O-02); colunas não separam (L-05) → R-504–R-506, R-801 |
 | 10 · Edição estrutural acelerada | ✅ concluída de novo (2026-11-11) | `test_span_ref` — U-05 e U-15 fechados na fase 17 |
 | 11 · Qualidade chess-first | ✅ concluída | `test_quality_and_diff`, `test_search_and_html` (contagem dupla L-12 fica para R-503) |
-| 12 · Escala e observabilidade | ✅ concluída de novo (2026-11-11) | `test_document_revision` (S-12), `test_worker_host` (S-08, S-09), `test_editor_hygiene` (U-07, U-10) |
+| 12 · Escala e observabilidade | ✅ concluída de novo (2026-11-11) | `test_document_revision` (S-12), `test_worker_host` (S-08, S-09), `test_editor_hygiene` (U-07, U-10), `test_metrics_off_hot_path` (S-04) |
 | 13 · Operação e suporte pós-produção | ✅ núcleo concluído | `test_diagnostics`, `test_crash_safety` (excepthook desde 2026-11-09) |
 
 Lint, formatação e tipos limpos; cobertura de `core/` acima de 90 %. O CI roda os

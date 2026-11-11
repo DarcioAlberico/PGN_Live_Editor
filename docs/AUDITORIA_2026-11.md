@@ -29,7 +29,12 @@
 > L-15 — a premissa **P1** ("o resultado que chegou ainda vale") passa a ser conferida
 > em todos os workers, no editor, no painel de alertas e na fila de revisão. Fica para
 > verificar no executável empacotado o S-11 (o teste cobre o ponto de entrada).
-> Os demais achados seguem abertos nas fases 18–22.
+> **Fase 18 (2026-11-11):** N-01 e N-16 fechados de vez (normalizador com regiões de
+> comentário calculadas uma vez; âncora de variante sem refazer a partida), S-04 fechado
+> (métrica fora do caminho quente) e O-11 resolvido (a janela não importa o OCR; `pymupdf`
+> no lugar de `fitz`; aquecimento opcional). O orçamento de throughput da SPEC §8 foi
+> revisto com medição — ver o roadmap v3, Fase 18.
+> Os demais achados seguem abertos nas fases 19–22.
 
 ## 0. Resumo
 

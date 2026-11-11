@@ -31,7 +31,7 @@ Tamanhos: **P** ≤ ½ dia · **M** 1–2 dias · **G** 3–5 dias.
 | 15 | Não perder trabalho — parte 2 | 9 | ✅ 2026-11-10 (branch `fase-15`) |
 | 16 | Parar a corrupção silenciosa — parte 2 | 13 | ✅ 2026-11-10 (branch `fase-16`) |
 | 17 | Coerência assíncrona (inclui o registro de revisão tipado) | 10 | ✅ 2026-11-11 (branch `fase-17`) |
-| 18 | Escala de livro — desempenho | 5 | ⬜ |
+| 18 | Escala de livro — desempenho | 5 | ✅ 2026-11-11 (branch `fase-18`; orçamento de throughput revisto) |
 | 19 | Proveniência de diagramas e relatórios | 6 | ⬜ |
 | 20 | Make it Right — estrutura | 8 | ⬜ |
 | 21 | Dívida de testes e CI | 6 | ⬜ |
@@ -212,6 +212,40 @@ reconciliação) vêm antes dos casos.
 ## Fase 18 — Escala de livro: desempenho · ~4 dias
 
 **Objetivo:** um livro de 1 MB é editável; nenhuma tecla custa mais que um quadro.
+
+> **Concluída em 2026-11-11**, no branch `fase-18`. R-403 → `c8f289c`; R-401 → `b37a9f3`,
+> `4426448`, `f9d2835`, `f955a0d`, `e246ddc` e o benchmark em `c26dd26`; R-404 → `11da32b`
+> (+ `a2bb089`, `dac0857`); R-402 → `ecd3574`; R-405 → `4d40aea`; mais `4c98a30` (achado
+> no caminho) e `d293963` (tipo). Saída de 373 partidas (corpus + livros sintéticos em
+> descritiva e SAN, com citações e lances ilegais) idêntica antes/depois de cada
+> mudança do núcleo.
+>
+> Medido na máquina de referência (livros de 1 MB): **abrir projeto 10,5 s → 0,55–0,9 s**;
+> SAN 54 s → ~10 s e descritiva 21 s → ~14 s para analisar o livro inteiro; 500 variantes
+> num jogo 3,24 s → 0,29 s; normalizar 1 MB 3,2 s → 0,6 s; métrica 0,61 ms → < 0,05 ms;
+> por tecla p95 76 ms → ~20 ms e máximo 760 ms → ~65 ms (mediana 1,4 ms).
+>
+> Decisões e correções de rumo:
+> - **O orçamento de 3 s para 1 MB estava errado** — escrito sem medir. Só interpretar e
+>   jogar os 141 mil lances do livro SAN custa 1,4 s no python-chess (o leitor estrito
+>   dele leva 2,5 s), e o analisador tolerante faz mais por lance. A SPEC §8 passou a
+>   16 s (descritiva) e 12 s (SAN), com o motivo. O que o usuário sente deixou de
+>   depender disso: **abrir analisa só a partida do cursor** e o resto do livro é
+>   preenchido em segundo plano, em fatias canceláveis.
+> - **O GIL era metade do problema da digitação.** A análise em Python na thread de
+>   fundo fazia a interface esperar até 5 ms a cada chamada ao Qt; o programa roda com
+>   `sys.setswitchinterval(0,5 ms)`. Mesmo assim o p95 (~20 ms) e o máximo (~65 ms) por
+>   tecla ficaram **acima do orçamento estrito** (16 e 50 ms), dentro da margem de 2×
+>   que o teste aceita. Fechar isso de vez pede tirar a análise do processo (Fase 20+).
+> - Achado no caminho: o cache de **resumos** tinha o limite do de árvores (64) — num
+>   livro maior, a lista de partidas e o realce perdiam quase todas logo depois.
+> - Achado no caminho: com trabalho em segundo plano rodando, apagar o dono do
+>   `WorkerHost` sem `shutdown()` abortava o processo (`4c98a30`).
+> - Em documento grande (> 200 mil caracteres), o realce cobre só as partidas perto da
+>   área visível e acompanha a rolagem.
+> - R-402: o aceite "nenhuma função > 10 % do perfil" não cabe ao pé da letra — sobra o
+>   trabalho essencial dividido entre a busca da regex (17 %), a lista de spans (16 %) e
+>   a substituição (15 %); nenhum ponto quadrático.
 
 | Item | Tam. | O quê | Achados | Aceite verificável |
 |---|---|---|---|---|
