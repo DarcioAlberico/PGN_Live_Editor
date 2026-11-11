@@ -99,15 +99,14 @@ class S04MetricsTests(unittest.TestCase):
     """S-04: cada medida relia e reescrevia o metrics.jsonl inteiro."""
 
     def setUp(self):
+        observability.flush_metrics()
         self.path = observability.metrics_path()
         self.path.unlink(missing_ok=True)
         for rotated in self.path.parent.glob(self.path.name + ".*"):
             rotated.unlink()
 
     def test_recording_a_metric_does_not_read_the_file_back(self):
-        self.path.write_text(
-            '{"operation": "x", "duration_ms": 1}\n' * observability.MAX_METRIC_LINES, encoding="utf-8"
-        )
+        self.path.write_text('{"operation": "x", "duration_ms": 1}\n' * 5000, encoding="utf-8")
 
         started = time.perf_counter()
         for _ in range(200):
@@ -125,15 +124,14 @@ class S04MetricsTests(unittest.TestCase):
         self.assertIsInstance(observability.read_metrics(), list)
 
     def test_the_file_stays_bounded(self):
-        for _ in range(observability.MAX_METRIC_LINES * 3):
+        for _ in range(15_000):
             observability.record_metric("parse", 1.0)
+        observability.flush_metrics()
 
         total = sum(
-            len(path.read_text(encoding="utf-8").splitlines())
-            for path in [self.path, *self.path.parent.glob(self.path.name + ".*")]
-            if path.exists()
+            path.stat().st_size for path in [self.path, *self.path.parent.glob(self.path.name + ".*")] if path.exists()
         )
-        self.assertLessEqual(total, 2 * observability.MAX_METRIC_LINES + 1)
+        self.assertLessEqual(total, 2 * observability.MAX_METRIC_BYTES)
         self.assertTrue(observability.read_metrics())
 
 
