@@ -19,3 +19,4 @@ wheels/
 /pdf/
 /engine/
 *.plez.bak*
+performance-report.txt

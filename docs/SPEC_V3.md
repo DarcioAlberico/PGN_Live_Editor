@@ -475,15 +475,31 @@ página de uma coluna → 1 coluna.
 
 | Operação | Entrada | Orçamento (máquina de referência) |
 |---|---|---|
-| `normalize`+`tokenize`+`parse` | 1 MB descritiva EN | ≤ 3 s |
-| idem | 1 MB SAN com 2 000 variantes | ≤ 3 s |
-| Trabalho na thread da UI por tecla | documento de 1 MB | p95 ≤ 16 ms, máx ≤ 50 ms |
+| `normalize`+`tokenize`+`parse` | 1 MB descritiva EN (2 334 partidas) | ≤ 16 s *(era 3 s; revisto na Fase 18)* |
+| idem | 1 MB SAN com ~3 000 variantes (4 424 partidas) | ≤ 12 s *(idem)* |
+| Trabalho na thread da UI por tecla | documento de 1 MB, livro ainda sendo preenchido | p95 ≤ 16 ms, máx ≤ 50 ms |
 | Abrir projeto | `.plez` de 1 MB | ≤ 2 s até editar |
 | Gravação de métrica | qualquer | ≤ 1 ms na thread chamadora |
 | Abrir a janela | com ou sem extras | ≤ 2 s (sem importar OCR) |
 
-O benchmark roda no CI marcado `slow`; falha se passar de 2× o orçamento (margem
-para máquinas de CI), e registra o tempo para acompanhar tendência.
+O benchmark é `tests/test_performance_budgets.py`, marcado `slow` (fora da suíte
+normal: `pytest -m slow -s`). O CI o roda no job de qualidade; falha se passar de
+2× o orçamento (margem para máquinas de CI) e grava os tempos e a máquina em
+`performance-report.txt` e no resumo do job.
+
+**Por que os dois primeiros mudaram.** 3 s para 1 MB foi escrito sem medir. Medido
+na Fase 18: só interpretar e jogar os 141 mil lances do livro SAN custa 1,4 s no
+python-chess, e o leitor estrito de PGN dele leva 2,5 s; o analisador tolerante faz
+mais que isso por lance (candidatos, citações, checagem de continuação). Depois das
+otimizações da fase (de 54 s para ~10 s no SAN e de 21 s para ~14 s em descritiva),
+o orçamento passou a ser o medido com folga. O que o usuário sente deixou de depender
+dele: abrir analisa só a partida do cursor e o resto do livro é preenchido em
+segundo plano, sem bloquear a digitação.
+
+**Medido na máquina de referência** (AMD Family 25, 12 núcleos, 32 GB, Python 3.12;
+2026-11-11): descritiva 14–15,7 s; SAN 9,1–11,2 s; abrir 0,55–0,9 s; por tecla p95
+18,7–21,5 ms e máximo 61–75 ms (mediana 1,4 ms) — os dois últimos **acima** do
+orçamento estrito e dentro da margem de 2×; ver o roadmap.
 
 ---
 

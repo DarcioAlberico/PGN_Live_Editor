@@ -83,6 +83,15 @@ jobs:
             --tests tests/test_core.py tests/test_regressions.py tests/test_roundtrip.py tests/test_historic_guards.py tests/test_quick_wins.py \
             >> mutation.txt
 
+      # Orcamentos da SPEC_V3 §8 (R-401): os tempos vao para o resumo do job e
+      # para o relatorio; falha so acima de 2x o orcamento.
+      - name: Orcamentos de desempenho
+        if: always()
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PERFORMANCE_REPORT: performance-report.txt
+        run: uv run pytest -m slow -s -q tests/test_performance_budgets.py
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -91,3 +100,4 @@ jobs:
             crap.txt
             dry.txt
             mutation.txt
+            performance-report.txt

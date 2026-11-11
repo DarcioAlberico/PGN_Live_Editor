@@ -56,6 +56,9 @@ pgn_live_editor = ["data/*.json", "models/*.pt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Os orcamentos de desempenho (R-401) levam ~1 min e rodam a parte: `pytest -m slow -s`.
+addopts = "-m 'not slow'"
+markers = ["slow: orcamento de desempenho (SPEC_V3 §8); roda no job de qualidade do CI"]
 
 [tool.ruff]
 line-length = 120
