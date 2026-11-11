@@ -15,6 +15,7 @@ from collections.abc import Sequence
 WORKER_MODULES = {
     "diagram-ocr": "pgn_live_editor.services.diagram_ocr_process",
     "full-pdf": "pgn_live_editor.services.full_pdf_recognition_process",
+    "warm-up": "pgn_live_editor.services.ocr_warm_up",
 }
 
 

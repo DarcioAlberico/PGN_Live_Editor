@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
-    import fitz  # extra `diagram-ocr`; importado aqui para o modulo carregar sem ele
+    import pymupdf as fitz  # extra `diagram-ocr`; importado aqui para o modulo carregar sem ele
 
     adapter = DiagramOcrAdapter()
     diagrams_total = 0

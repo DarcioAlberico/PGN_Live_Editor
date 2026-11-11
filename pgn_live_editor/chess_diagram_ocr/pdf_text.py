@@ -63,7 +63,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, Protocol, runtime_checkable
 
 import chess
-import fitz
+import pymupdf as fitz
 
 from .pdf_io import PdfSource
 from .procedencias import DA_CAMADA, DE_TERCEIROS, LineOrigin, SideOrigin, escopo_de_pagina

@@ -18,8 +18,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import fitz
 import numpy as np
+import pymupdf as fitz
 
 logger = logging.getLogger(__name__)
 

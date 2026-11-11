@@ -111,6 +111,7 @@ analysis = Analysis(
         "pgn_live_editor.services.worker_commands",
         "pgn_live_editor.services.diagram_ocr_process",
         "pgn_live_editor.services.full_pdf_recognition_process",
+        "pgn_live_editor.services.ocr_warm_up",
         *diagram_ocr_modules,
         *text_ocr_modules,
     ],

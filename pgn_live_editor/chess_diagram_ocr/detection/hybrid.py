@@ -35,8 +35,8 @@ import logging
 from dataclasses import dataclass
 
 import cv2
-import fitz
 import numpy as np
+import pymupdf as fitz
 
 from ..board_detection import MIN_CHECKER_CONTRAST as _MIN_CHECKER_CONTRAST
 from ..board_detection import RejectedQuad as RejectedQuad

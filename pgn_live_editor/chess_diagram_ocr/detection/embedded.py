@@ -53,8 +53,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 import cv2
-import fitz
 import numpy as np
+import pymupdf as fitz
 
 logger = logging.getLogger(__name__)
 

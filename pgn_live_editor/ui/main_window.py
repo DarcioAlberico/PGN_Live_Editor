@@ -43,6 +43,7 @@ from ..core.text_ops import (
     reanchor_variation,
     set_move_annotations,
 )
+from ..services import ocr_warm_up
 from ..services.clipboard_service import COPY_FORMATS
 from ..services.diagnostics import build_diagnostic_report
 from ..services.diagram_generator import render_diagram_svg, write_png, write_svg
@@ -230,6 +231,10 @@ class MainWindow(QMainWindow):
         self._engine_findings: ScanFindings | None = None
         self._pending_engine_segment: tuple[str, int] = ("", 0)
         self._diagram_destination: _DiagramDestination | None = None
+        self._warm_up_timer = QTimer(self)
+        self._warm_up_timer.setSingleShot(True)
+        self._warm_up_timer.setInterval(3000)
+        self._warm_up_timer.timeout.connect(lambda: ocr_warm_up.warm_up_diagram_ocr())
         # Marcas de partida concluida e template do livro nao estao no texto
         # bruto -- sem isto elas sumiriam sem aviso ao fechar a janela.
         self._state_dirty = False
@@ -942,6 +947,10 @@ class MainWindow(QMainWindow):
             self._state_dirty = True
 
     def _on_pdf_opened(self, path: str):
+        # Com PDF aberto, a leitura de diagramas e provavel: aquecer o OCR
+        # depois de a janela assentar (R-405). Uma vez por sessao, e so com o
+        # extra instalado -- `warm_up_diagram_ocr` decide.
+        self._warm_up_timer.start()
         self.project.state.pdf_path = path
         try:
             self.project.state.pdf_sha256 = hashlib.sha256(Path(path).read_bytes()).hexdigest()

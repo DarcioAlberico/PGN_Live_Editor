@@ -276,7 +276,7 @@ class PdfPanel(QWidget):
         if not self.has_document():
             return
         try:
-            import fitz
+            import pymupdf as fitz
 
             from ..core.pdf_columns import PdfTextBlock, detect_columns
             from .pdf_columns_dialog import PdfColumnsDialog

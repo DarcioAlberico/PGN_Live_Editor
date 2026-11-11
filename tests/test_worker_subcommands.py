@@ -67,7 +67,8 @@ class DispatchTests(unittest.TestCase):
                 completed = self.run_entry_point("--worker", name, "--help")
 
                 self.assertEqual(0, completed.returncode, completed.stderr[-500:])
-                self.assertIn("--output", completed.stdout)
+                if name != "warm-up":  # o aquecimento nao recebe argumentos
+                    self.assertIn("--output", completed.stdout)
                 self.assertIn("QT=False", completed.stdout)
 
     def test_an_unknown_worker_fails_without_a_window(self):
