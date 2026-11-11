@@ -32,16 +32,20 @@ _FILE_LOCK = threading.Lock()
 _pending: deque[tuple[Path, dict[str, object]]] = deque(maxlen=MAX_PENDING_METRICS)
 _flusher: threading.Thread | None = None
 _flusher_lock = threading.Lock()
-_known_dirs: set[Path] = set()
+_paths: dict[tuple[str, str], Path] = {}
 
 
 def metrics_path() -> Path:
-    override = os.environ.get("PGN_LIVE_EDITOR_HOME", "").strip()
-    root = Path(override) if override else Path(os.environ.get("APPDATA") or Path.home()) / "PGN Live Editor"
-    if root not in _known_dirs:
+    # Montar `Path` custa microssegundos que, por medida, viravam a maior parte
+    # do custo de medir: o caminho fica guardado por ambiente.
+    key = (os.environ.get("PGN_LIVE_EDITOR_HOME", ""), os.environ.get("APPDATA", ""))
+    path = _paths.get(key)
+    if path is None:
+        override = key[0].strip()
+        root = Path(override) if override else Path(key[1] or Path.home()) / "PGN Live Editor"
         root.mkdir(parents=True, exist_ok=True)
-        _known_dirs.add(root)
-    return root / "metrics.jsonl"
+        path = _paths[key] = root / "metrics.jsonl"
+    return path
 
 
 def _rotated(path: Path) -> Path:
@@ -101,6 +105,7 @@ def flush_metrics() -> None:
 
 def _append_rotating(path: Path, lines: list[str]) -> None:
     """Append em lote; ao passar de `MAX_METRIC_BYTES`, o arquivo vira `.1` e recomeca."""
+    path.parent.mkdir(parents=True, exist_ok=True)  # na thread de fundo: a pasta pode ter sumido
     size = path.stat().st_size if path.exists() else 0
     chunk: list[str] = []
     for line in lines:
