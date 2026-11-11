@@ -14,6 +14,7 @@ e `Cada` em `Nada`.
 
 from __future__ import annotations
 
+import itertools
 import re
 import unicodedata
 from collections.abc import Callable
@@ -42,6 +43,37 @@ def comment_span_end(text: str, start: int) -> int:
     """Fim (exclusivo) do comentario aberto em `start`."""
     match = COMMENT_RE.match(text, start)
     return match.end() if match else start + 1
+
+
+#: Um caractere que a normalizacao Unicode pode mudar: fora do ASCII, ou a crase.
+_NOT_PLAIN_ASCII_RE = re.compile(r"[^\x00-\x7f]|`")
+
+#: (e comentario?, texto, spans) -- um pedaco do texto entre comentarios, ou um comentario.
+_Piece = tuple[bool, str, list[tuple[int, int]]]
+
+
+def _split_comments(text: str, raw_spans: list[tuple[int, int]]) -> list[_Piece]:
+    """O texto em pedacos alternados: fora de comentario / comentario (`comment_span_end`)."""
+    pieces: list[_Piece] = []
+    cursor = 0
+    index = text.find("{")
+    while index != -1:
+        if cursor < index:
+            pieces.append((False, text[cursor:index], raw_spans[cursor:index]))
+        end = comment_span_end(text, index)
+        pieces.append((True, text[index:end], raw_spans[index:end]))
+        cursor = end
+        index = text.find("{", cursor)
+    if cursor < len(text):
+        pieces.append((False, text[cursor:], raw_spans[cursor:]))
+    return pieces
+
+
+def _join(pieces: list[_Piece]) -> NormalizedText:
+    spans: list[tuple[int, int]] = []
+    for _is_comment, _text, piece_spans in pieces:
+        spans.extend(piece_spans)
+    return NormalizedText("".join(text for _is_comment, text, _spans in pieces), spans)
 
 
 @dataclass
@@ -185,7 +217,9 @@ class LiveTextNormalizer:
             return [(source_spans[0][0], source_spans[-1][1])]
 
         source_length = len(source_spans)
-        if output_length <= source_length:
+        if output_length == source_length:
+            return list(source_spans)
+        if output_length < source_length:
             spans: list[tuple[int, int]] = []
             for index in range(output_length):
                 chunk_start = int(index * source_length / output_length)
@@ -200,11 +234,26 @@ class LiveTextNormalizer:
         return spans
 
     def _normalize_unicode(self, text: str, raw_spans: list[tuple[int, int]]) -> NormalizedText:
+        # Texto ASCII sem nada a trocar sai como entrou: o NFKC de ASCII e ele
+        # mesmo, e o laco por caractere era um terco do custo do normalizador.
+        if text.isascii() and "`" not in text:
+            return NormalizedText(text, raw_spans)
+
         normalized_chars: list[str] = []
         normalized_spans: list[tuple[int, int]] = []
+        replacements = self.UNICODE_REPLACEMENTS
+        cursor = 0
 
-        for char, raw_span in zip(text, raw_spans, strict=False):
-            translated = self.UNICODE_REPLACEMENTS.get(char, char)
+        # So os caracteres que podem mudar passam pelo laco; os trechos ASCII
+        # entre eles sao copiados de uma vez.
+        for match in _NOT_PLAIN_ASCII_RE.finditer(text):
+            index = match.start()
+            if cursor < index:
+                normalized_chars.append(text[cursor:index])
+                normalized_spans.extend(raw_spans[cursor:index])
+            cursor = index + 1
+            char, raw_span = text[index], raw_spans[index]
+            translated = replacements.get(char, char)
             if not translated:
                 continue
 
@@ -213,18 +262,30 @@ class LiveTextNormalizer:
                 continue
 
             normalized_chars.append(normalized_char)
-            normalized_spans.extend(self._expand_spans([raw_span], len(normalized_char)))
+            if len(normalized_char) == 1:
+                normalized_spans.append(raw_span)
+            else:
+                normalized_spans.extend(self._expand_spans([raw_span], len(normalized_char)))
 
+        if cursor < len(text):
+            normalized_chars.append(text[cursor:])
+            normalized_spans.extend(raw_spans[cursor:])
         return NormalizedText("".join(normalized_chars), normalized_spans)
 
     def _replace_pattern(
         self, text: str, raw_spans: list[tuple[int, int]], pattern: str, replacement
     ) -> NormalizedText:
+        matches = re.finditer(pattern, text)
+        first = next(matches, None)
+        if first is None:
+            # A maioria das passadas nao acha nada num trecho: sem reconstruir a lista de spans.
+            return NormalizedText(text, raw_spans)
+
         parts: list[str] = []
         spans: list[tuple[int, int]] = []
         cursor = 0
 
-        for match in re.finditer(pattern, text):
+        for match in itertools.chain((first,), matches):
             start, end = match.span()
             parts.append(text[cursor:start])
             spans.extend(raw_spans[cursor:start])
@@ -246,34 +307,18 @@ class LiveTextNormalizer:
         ocupar varias linhas; aberto, para no fim da linha, para que digitar `{`
         nao faca o resto do capítulo parar de ser analisado.
         """
-        parts: list[str] = []
-        spans: list[tuple[int, int]] = []
-        cursor = 0
-        index = 0
+        return _join(self._transform_outside(_split_comments(text, raw_spans), transform))
 
-        while index < len(text):
-            if text[index] != "{":
-                index += 1
-                continue
-
-            if cursor < index:
-                normalized = transform(text[cursor:index], raw_spans[cursor:index])
-                parts.append(normalized.text)
-                spans.extend(normalized.raw_spans)
-
-            comment_slice_end = comment_span_end(text, index)
-
-            parts.append(text[index:comment_slice_end])
-            spans.extend(raw_spans[index:comment_slice_end])
-            index = comment_slice_end
-            cursor = comment_slice_end
-
-        if cursor < len(text):
-            normalized = transform(text[cursor:], raw_spans[cursor:])
-            parts.append(normalized.text)
-            spans.extend(normalized.raw_spans)
-
-        return NormalizedText("".join(parts), spans)
+    @staticmethod
+    def _transform_outside(pieces: list[_Piece], transform) -> list[_Piece]:
+        result: list[_Piece] = []
+        for is_comment, text, spans in pieces:
+            if is_comment or not text:
+                result.append((is_comment, text, spans))
+            else:
+                normalized = transform(text, spans)
+                result.append((False, normalized.text, normalized.raw_spans))
+        return result
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -297,8 +342,8 @@ class LiveTextNormalizer:
 
     def _format_undotted_move_number(self, match: re.Match, whole: str) -> str:
         number = match.group(1)
-        # So a vizinhanca imediata decide ("diagrama 12"). Buscar em
-        # `whole[:start]` custava o texto inteiro por numero e deixava um livro
+        # So a vizinhanca imediata decide ("diagrama 12"). Buscar no prefixo
+        # inteiro do texto custava o texto inteiro por numero e deixava um livro
         # em descritiva quadratico (N-01). `search(texto, pos, endpos)` mantem o
         # `$` no fim da janela e o lookbehind enxergando antes dela.
         window_start = max(0, match.start() - self.NOT_A_MOVE_NUMBER_WINDOW)
@@ -313,7 +358,13 @@ class LiveTextNormalizer:
         return f"{number}... " if dots >= 2 else f"{number}. "
 
     def normalize_with_mapping(self, raw_text: str, base_offset: int = 0) -> NormalizedText:
-        raw_spans = [(base_offset + index, base_offset + index + 1) for index in range(len(raw_text))]
+        raw_spans = list(
+            zip(
+                range(base_offset, base_offset + len(raw_text)),
+                range(base_offset + 1, base_offset + len(raw_text) + 1),
+                strict=True,
+            )
+        )
 
         # Simbolo de livro **antes** do NFKC, e nao depois: a fonte de simbolos
         # da Thinkers/Quality/Everyman reaproveita codepoints latinos, e o NFKC
@@ -325,26 +376,31 @@ class LiveTextNormalizer:
         normalized = self._normalize_unicode(text, raw_spans)
         text, raw_spans = normalized.text, normalized.raw_spans
 
-        glyph_chars: list[str] = []
-        glyph_spans: list[tuple[int, int]] = []
-        for char, raw_span in zip(text, raw_spans, strict=False):
-            replacement = self.PIECE_GLYPHS.get(char, char)
-            if not replacement:
-                continue
-            glyph_chars.append(replacement)
-            glyph_spans.extend(self._expand_spans([raw_span], len(replacement)))
-        text = "".join(glyph_chars)
-        raw_spans = glyph_spans
+        if any(glyph in text for glyph in self.PIECE_GLYPHS):
+            glyph_chars: list[str] = []
+            glyph_spans: list[tuple[int, int]] = []
+            for char, raw_span in zip(text, raw_spans, strict=False):
+                replacement = self.PIECE_GLYPHS.get(char, char)
+                if not replacement:
+                    continue
+                glyph_chars.append(replacement)
+                glyph_spans.extend(self._expand_spans([raw_span], len(replacement)))
+            text = "".join(glyph_chars)
+            raw_spans = glyph_spans
+
+        # Daqui em diante as regioes de comentario sao calculadas **uma vez**
+        # (R-402): nenhuma passada cria nem apaga chave, e cada uma so mexe
+        # fora dos comentarios -- as regioes nao mudam. Antes, cada uma das 12
+        # passadas reprocurava `{` caractere a caractere, em Python.
+        pieces = _split_comments(text, raw_spans)
 
         for pattern, replacement in self.SYMBOL_PATTERNS:
-            normalized = self._apply_outside_comments(
-                text,
-                raw_spans,
+            pieces = self._transform_outside(
+                pieces,
                 lambda current_text, current_spans, p=pattern, r=replacement: self._replace_pattern(
                     current_text, current_spans, p, r
                 ),
             )
-            text, raw_spans = normalized.text, normalized.raw_spans
 
         descriptive_steps: tuple[tuple[str, Callable[[re.Match], str]], ...] = (
             (self.DETACHED_CHECK_PATTERN, lambda match: match.group(1)),
@@ -352,18 +408,15 @@ class LiveTextNormalizer:
             (self.DESCRIPTIVE_ORIGIN_PATTERN, self._format_descriptive_origin),
         )
         for step_pattern, step_replacement in descriptive_steps:
-            normalized = self._apply_outside_comments(
-                text,
-                raw_spans,
+            pieces = self._transform_outside(
+                pieces,
                 lambda current_text, current_spans, p=step_pattern, r=step_replacement: self._replace_pattern(
                     current_text, current_spans, p, r
                 ),
             )
-            text, raw_spans = normalized.text, normalized.raw_spans
 
-        normalized = self._apply_outside_comments(
-            text,
-            raw_spans,
+        pieces = self._transform_outside(
+            pieces,
             lambda current_text, current_spans: self._replace_pattern(
                 current_text,
                 current_spans,
@@ -371,17 +424,17 @@ class LiveTextNormalizer:
                 lambda match: self._format_undotted_move_number(match, current_text),
             ),
         )
-        text, raw_spans = normalized.text, normalized.raw_spans
 
-        return self._apply_outside_comments(
-            text,
-            raw_spans,
-            lambda current_text, current_spans: self._replace_pattern(
-                current_text,
-                current_spans,
-                self.MOVE_NUMBER_PATTERN,
-                self._format_move_number,
-            ),
+        return _join(
+            self._transform_outside(
+                pieces,
+                lambda current_text, current_spans: self._replace_pattern(
+                    current_text,
+                    current_spans,
+                    self.MOVE_NUMBER_PATTERN,
+                    self._format_move_number,
+                ),
+            )
         )
 
     def normalize(self, raw_text: str) -> str:
