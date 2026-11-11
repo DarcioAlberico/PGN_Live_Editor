@@ -27,6 +27,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QThread
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtCore import pyqtSlot as Slot
@@ -134,9 +135,12 @@ class WorkerHost(QObject):
 
     _request_signal = Signal(int, object, object)
 
-    # Threads que nao terminaram a tempo no `shutdown`: mantidas vivas aqui,
-    # nunca apagadas rodando. `drain_abandoned` espera por elas no fim.
-    _abandoned: list[QThread] = []
+    # Toda thread iniciada fica aqui ate um `shutdown()` a ver parada. Uma
+    # thread cujo dono sumiu sem `shutdown()`, ou que nao parou a tempo, segue
+    # referenciada -- nunca e destruida rodando -- e `drain_abandoned` espera
+    # por ela no fim do programa.
+    _live: list[tuple[QThread, WorkerHost]] = []
+    _stuck: list[QThread] = []
 
     def __init__(self, job: Job, parent: QObject | None = None):
         super().__init__(parent)
@@ -194,6 +198,12 @@ class WorkerHost(QObject):
         # thread sao entregues quando o laco de eventos dela termina.
         self._thread.finished.connect(self._runner.deleteLater)
         self._thread.start()
+        WorkerHost._live.append((self._thread, self))
+        # Dono destruido sem `shutdown()` (janela apagada com trabalho rodando):
+        # a thread recebe `quit` por uma conexao so do Qt -- um slot Python no
+        # `destroyed` rodaria com o objeto ja meio destruido -- e continua
+        # referenciada em `_live`, entao o QThread nunca e destruido rodando.
+        self.destroyed.connect(self._thread.quit)
 
     @Slot(int, object, object)
     def _on_done(self, request_id: int, result: object, failure: object) -> None:
@@ -222,20 +232,26 @@ class WorkerHost(QObject):
         self._thread, self._runner, self._running = None, None, None
         if thread is None:
             return True
+        self.destroyed.disconnect(thread.quit)
         thread.quit()
+        WorkerHost._live = [(live, host) for live, host in WorkerHost._live if live is not thread]
         if thread.wait(timeout_ms):
             thread.deleteLater()
             return True
         logger.warning("Thread de trabalho nao terminou em %d ms; mantida ate o fim do programa", timeout_ms)
-        WorkerHost._abandoned.append(thread)
+        WorkerHost._stuck.append(thread)
         return False
 
     @classmethod
     def drain_abandoned(cls, timeout_ms: int = 5000) -> bool:
-        """Espera as threads abandonadas no `shutdown`. `False` se alguma ainda roda."""
-        still_running = [thread for thread in cls._abandoned if not thread.wait(timeout_ms)]
-        cls._abandoned = still_running
-        return not still_running
+        """Espera as threads sem dono (dono destruido, ou `shutdown()` que estourou o prazo).
+
+        `False` se alguma ainda roda. As threads de hosts vivos nao sao tocadas.
+        """
+        orphans = [thread for thread, host in cls._live if sip.isdeleted(host)]
+        cls._live = [(thread, host) for thread, host in cls._live if not sip.isdeleted(host)]
+        cls._stuck = [thread for thread in cls._stuck + orphans if not thread.wait(timeout_ms)]
+        return not cls._stuck
 
 
 def run_process(

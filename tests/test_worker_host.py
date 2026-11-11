@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import unittest
+from pathlib import Path
 
 import _isolation  # noqa: F401
 from PyQt6.QtWidgets import QApplication
@@ -140,6 +141,41 @@ class HostTests(unittest.TestCase):
             self.app.processEvents()  # um deleteLater pendente seria entregue aqui
         release.set()
         self.assertTrue(WorkerHost.drain_abandoned(timeout_ms=3000))
+
+
+class OwnerDestroyedTests(unittest.TestCase):
+    def test_destroying_the_owner_with_work_running_does_not_abort(self):
+        # Rodado em subprocesso: o defeito e o Qt abortar o processo inteiro.
+        probe = (
+            "import sys, threading, time\n"
+            "sys.path.insert(0, 'tests')\n"
+            "import _isolation\n"
+            "from PyQt6.QtCore import QObject\n"
+            "from PyQt6.QtWidgets import QApplication\n"
+            "from PyQt6 import sip\n"
+            "from pgn_live_editor.services.worker_host import WorkerHost\n"
+            "app = QApplication([])\n"
+            "owner = QObject()\n"
+            "host = WorkerHost(lambda payload, context: time.sleep(0.3), owner)\n"
+            "host.submit(None)\n"
+            "time.sleep(0.05)\n"
+            "sip.delete(owner)\n"
+            "del host, owner\n"
+            "import gc; gc.collect()\n"
+            "WorkerHost.drain_abandoned(3000)\n"
+            "print('fim limpo')\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr[-800:])
+        self.assertIn("fim limpo", completed.stdout)
 
 
 class RunProcessTests(unittest.TestCase):
