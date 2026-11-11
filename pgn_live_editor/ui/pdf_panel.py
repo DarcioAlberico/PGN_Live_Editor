@@ -330,7 +330,11 @@ class PdfPanel(QWidget):
             return f"Não foi possível abrir {path.name}: o arquivo não parece um PDF válido."
 
         # O leitor le do buffer enquanto o documento existir: ele precisa
-        # sobreviver a esta funcao.
+        # sobreviver a esta funcao. O anterior, se havia, sai agora.
+        self._forget_document_reading()
+        if self._buffer is not None:
+            self._buffer.close()
+            self._buffer.deleteLater()
         self._buffer = buffer
         self._path = path
         self.spn_page.setMaximum(max(1, self.page_count))
@@ -343,6 +347,18 @@ class PdfPanel(QWidget):
         self.document_opened_signal.emit(str(path))
         return ""
 
+    def _forget_document_reading(self) -> None:
+        """O que foi lido (ou esta sendo lido) do documento que sai.
+
+        Vale para fechar **e** para abrir outro por cima: antes so o fechar
+        limpava, e a pagina 2 do livro B mostrava o OCR da pagina 2 do A (U-11).
+        """
+        self._ocr_cache.clear()
+        self._page_ocr.cancel()
+        self._ocr_pending_page = None
+        self._append_when_read = None
+        self._stop_range_reading()
+
     def close_pdf(self):
         self.document.close()
         if self._buffer is not None:
@@ -350,12 +366,7 @@ class PdfPanel(QWidget):
             self._buffer.deleteLater()
             self._buffer = None
         self._path = None
-        self._ocr_cache.clear()
-        # O OCR em andamento era da pagina de outro documento.
-        self._page_ocr.cancel()
-        self._ocr_pending_page = None
-        self._append_when_read = None
-        self._stop_range_reading()
+        self._forget_document_reading()
         self.txt_page.clear()
         self.clear_full_progress()
         self._update_enabled()
@@ -410,7 +421,13 @@ class PdfPanel(QWidget):
 
         navigator = self.view.pageNavigator()
         if navigator is not None:
-            navigator.jump(page, QPointF())
+            # O salto avisa `currentPageChanged`, que voltava aqui e anunciava
+            # a mesma pagina outra vez -- dois renders, dois OCRs (U-12).
+            self._loading = True
+            try:
+                navigator.jump(page, QPointF())
+            finally:
+                self._loading = False
 
         text = self.page_text(page)
         if not text.strip() and page in self._ocr_cache:
