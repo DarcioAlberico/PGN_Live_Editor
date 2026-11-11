@@ -2,7 +2,7 @@ import hashlib
 import logging
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import chess
@@ -105,6 +105,22 @@ logger = logging.getLogger(__name__)
 
 AUTOSAVE_INTERVAL_MS = 30_000
 AUTOSAVE_CHAR_THRESHOLD = 200
+
+
+@dataclass(frozen=True)
+class _DiagramDestination:
+    """Para onde vai o resultado de uma leitura de diagramas (R-306).
+
+    Guardado no pedido: o resultado chega segundos depois, e o PDF, o projeto
+    e o cursor do momento da chegada podem ser outros (U-14).
+    """
+
+    project: object
+    pdf_path: Path
+    page: int
+    insert_at: SpanRef
+    batch: bool
+    clicks: tuple[tuple[float, float], ...] = ()
 
 
 def _point_in_bbox(x: float, y: float, bbox: object, padding: float = 8.0) -> bool:
@@ -213,7 +229,7 @@ class MainWindow(QMainWindow):
         self.full_pdf_recognition = AsyncFullPdfRecognition(self)
         self._engine_findings: ScanFindings | None = None
         self._pending_engine_segment: tuple[str, int] = ("", 0)
-        self._pending_diagram_click: tuple[int, float, float] | None = None
+        self._diagram_destination: _DiagramDestination | None = None
         # Marcas de partida concluida e template do livro nao estao no texto
         # bruto -- sem isto elas sumiriam sem aviso ao fechar a janela.
         self._state_dirty = False
@@ -636,6 +652,7 @@ class MainWindow(QMainWindow):
     def _cancel_background_work(self) -> None:
         """O que estava rodando para o projeto anterior nao tem onde cair no novo."""
         self.diagram_ocr.cancel()
+        self._diagram_destination = None
         self.full_pdf_recognition.cancel()
 
     def _restore_pdf(self, project):
@@ -939,15 +956,30 @@ class MainWindow(QMainWindow):
         não altera o texto sem a solicitação do usuário. O adapter mantém o
         OCR pesado opcional; quando indisponível, a mensagem explica como ativá-lo.
         """
+        self._start_diagram_reading(batch=True)
+
+    def _start_diagram_reading(self, *, batch: bool, click: tuple[float, float] | None = None) -> None:
         pdf_path = self.pdf_panel.path
         if pdf_path is None:
             self._report("Abra um PDF antes de ler os diagramas.")
             return
+        if self.diagram_ocr.busy:
+            self._report("Os diagramas de uma página já estão sendo lidos; aguarde ou cancele.")
+            return
 
+        position = self.editor_panel.cursor_position()
+        self._diagram_destination = _DiagramDestination(
+            project=self.project,
+            pdf_path=pdf_path,
+            page=self.pdf_panel.current_page(),
+            insert_at=SpanRef(self.editor_panel.document_text(), position, position),
+            batch=batch,
+            clicks=(click,) if click is not None else (),
+        )
         self.pdf_panel.btn_ocr.setEnabled(False)
         self.pdf_panel.btn_cancel_ocr.setVisible(True)
         self._report("Lendo diagramas da página em segundo plano…")
-        self.diagram_ocr.request(pdf_path, self.pdf_panel.current_page())
+        self.diagram_ocr.request(pdf_path, self._diagram_destination.page)
 
     def _recognize_full_pdf(self):
         pdf_path = self.pdf_panel.path
@@ -1062,8 +1094,16 @@ class MainWindow(QMainWindow):
         if len(page_records) == 1:
             self._open_diagram_record(page_records[0])
             return
-        self._pending_diagram_click = (page, x, y)
-        self._read_diagrams_from_pdf()
+        destination = self._diagram_destination
+        if self.diagram_ocr.busy and destination is not None:
+            # Um pedido novo substituiria a leitura do botao, e o lote sumiria.
+            if destination.page == page and destination.pdf_path == path:
+                self._diagram_destination = replace(destination, clicks=(*destination.clicks, (x, y)))
+                self._report("O diagrama abre assim que a leitura desta página terminar.")
+            else:
+                self._report("Os diagramas de outra página estão sendo lidos; aguarde.")
+            return
+        self._start_diagram_reading(batch=False, click=(x, y))
 
     def _open_diagram_record(self, record: dict[str, object]):
         fen = str(record.get("fen", ""))
@@ -1097,76 +1137,99 @@ class MainWindow(QMainWindow):
 
     def _on_diagrams_read(self, payload):
         page_index, results = payload
+        destination, self._diagram_destination = self._diagram_destination, None
         try:
+            if destination is None:
+                return
+            if not self._diagram_destination_holds(destination):
+                return
             if not results:
-                self._pending_diagram_click = None
                 self._report(f"Nenhum diagrama reconhecido na página {page_index + 1}.")
                 return
-
-            if self._pending_diagram_click is not None:
-                pending_page, x, y = self._pending_diagram_click
-                self._pending_diagram_click = None
-                if pending_page == page_index:
-                    clicked = next((item for item in results if _point_in_bbox(x, y, item.bbox_pdf)), None)
-                    if clicked is not None:
-                        record = clicked.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1)
-                        upsert_record(self.project.state.diagram_records, record)
-                        self._open_diagram_record(record)
-                        return
-                self._pending_diagram_click = None
-                self._report("Nenhum diagrama foi detectado exatamente no ponto clicado.")
-                return
-
-            blocks = []
-            for result in results:
-                if result.needs_review:
-                    dialog = DiagramReviewDialog(
-                        result.fen,
-                        uncertain_squares=result.uncertain_squares,
-                        title=f"Revisar diagrama {result.index}",
-                        parent=self,
-                    )
-                    if dialog.exec() == DiagramReviewDialog.DialogCode.Accepted:
-                        placement, fen, is_legal, problems = dialog.result_data()
-                        result = replace(
-                            result,
-                            placement=placement,
-                            fen=fen,
-                            side_to_move=fen.split()[1],
-                            is_legal=is_legal,
-                            problems=problems,
-                            uncertain_squares=(),
-                            orientation_ambiguous=False,
-                        )
-                upsert_record(
-                    self.project.state.diagram_records,
-                    result.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1),
-                )
-                review = " revisão necessária" if result.needs_review else ""
-                blocks.append(
-                    "{ Diagrama OCR "
-                    f"{result.index}: confiança {result.min_confidence:.1%}{review} "
-                    f"| problemas: {', '.join(result.problems) or 'nenhum'} "
-                    f"| origem: página {page_index + 1} }}\n"
-                    + _diagram_header_block(result.to_record(pdf_path=str(self.pdf_panel.path), page=page_index + 1))
-                    + "\n"
-                )
-            self.editor_panel.insert_text_at_cursor("\n".join(blocks))
-            self._state_dirty = True
-            pendentes = sum(result.needs_review for result in results)
-            suffix = f", {pendentes} pendente(s) de revisão" if pendentes else ""
-            self._report(f"{len(results)} diagrama(s) convertido(s) em FEN{suffix}.")
+            pdf_path, page_number = str(destination.pdf_path), destination.page + 1
+            if destination.batch:
+                self._insert_diagram_batch(destination, results)
+            for x, y in destination.clicks:
+                clicked = next((item for item in results if _point_in_bbox(x, y, item.bbox_pdf)), None)
+                if clicked is None:
+                    self._report("Nenhum diagrama foi detectado exatamente no ponto clicado.")
+                    continue
+                record = clicked.to_record(pdf_path=pdf_path, page=page_number)
+                upsert_record(self.project.state.diagram_records, record)
+                self._open_diagram_record(record)
         finally:
             self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
             self.pdf_panel.btn_cancel_ocr.setVisible(False)
 
+    def _diagram_destination_holds(self, destination: _DiagramDestination) -> bool:
+        """O projeto e o PDF do pedido ainda estao na tela -- ou o usuario aceita o atual."""
+        current = self.pdf_panel.path
+        same_pdf = current is not None and current.resolve() == destination.pdf_path.resolve()
+        if destination.project is self.project and same_pdf:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Diagramas de outro documento",
+            f"Os diagramas lidos são da página {destination.page + 1} de {destination.pdf_path.name}, "
+            "mas o documento aberto mudou desde o pedido.\n\nInserir mesmo assim no texto atual?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._report("Diagramas descartados: o documento mudou durante a leitura.")
+            return False
+        return True
+
+    def _insert_diagram_batch(self, destination: _DiagramDestination, results) -> None:
+        pdf_path, page_number = str(destination.pdf_path), destination.page + 1
+        blocks = []
+        for result in results:
+            if result.needs_review:
+                dialog = DiagramReviewDialog(
+                    result.fen,
+                    uncertain_squares=result.uncertain_squares,
+                    title=f"Revisar diagrama {result.index}",
+                    parent=self,
+                )
+                if dialog.exec() == DiagramReviewDialog.DialogCode.Accepted:
+                    placement, fen, is_legal, problems = dialog.result_data()
+                    result = replace(
+                        result,
+                        placement=placement,
+                        fen=fen,
+                        side_to_move=fen.split()[1],
+                        is_legal=is_legal,
+                        problems=problems,
+                        uncertain_squares=(),
+                        orientation_ambiguous=False,
+                    )
+            record = result.to_record(pdf_path=pdf_path, page=page_number)
+            upsert_record(self.project.state.diagram_records, record)
+            review = " revisão necessária" if result.needs_review else ""
+            blocks.append(
+                "{ Diagrama OCR "
+                f"{result.index}: confiança {result.min_confidence:.1%}{review} "
+                f"| problemas: {', '.join(result.problems) or 'nenhum'} "
+                f"| origem: página {page_number} }}\n" + _diagram_header_block(record) + "\n"
+            )
+        # Onde estava o cursor ao pedir -- o usuario pode ter seguido digitando.
+        located = destination.insert_at.locate(self.editor_panel.document_text())
+        if located is not None:
+            self.editor_panel.insert_text_at(located[0], "\n".join(blocks))
+        else:
+            self.editor_panel.insert_text_at_cursor("\n".join(blocks))
+        self._state_dirty = True
+        pendentes = sum(result.needs_review for result in results)
+        suffix = f", {pendentes} pendente(s) de revisão" if pendentes else ""
+        self._report(f"{len(results)} diagrama(s) convertido(s) em FEN{suffix}.")
+
     def _cancel_diagram_ocr(self):
         self.diagram_ocr.cancel()
+        self._diagram_destination = None
         self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
         self.pdf_panel.btn_cancel_ocr.setVisible(False)
         self._report("Leitura de diagramas cancelada.")
 
     def _on_diagram_ocr_failed(self, message: str):
+        self._diagram_destination = None
         self.pdf_panel.btn_ocr.setEnabled(self.pdf_panel.has_document())
         self.pdf_panel.btn_cancel_ocr.setVisible(False)
         QMessageBox.warning(self, "OCR de diagramas indisponível", message)

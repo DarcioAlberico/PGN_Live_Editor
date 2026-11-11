@@ -437,6 +437,13 @@ class EditorPanel(QWidget):
         self.text_edit.setTextCursor(cursor)
         self.text_edit.setFocus()
 
+    def insert_text_at(self, position: int, text: str):
+        """Insere em `position` (e deixa o cursor depois do texto inserido)."""
+        cursor = self.text_edit.textCursor()
+        cursor.setPosition(max(0, min(position, len(self.document_text()))))
+        self.text_edit.setTextCursor(cursor)
+        self.insert_text_at_cursor(text)
+
     def insert_text_at_cursor(self, text: str):
         if not text:
             return
