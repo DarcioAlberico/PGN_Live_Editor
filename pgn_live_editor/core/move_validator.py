@@ -97,4 +97,6 @@ class MoveValidator:
 
     def push_null(self) -> chess.Move:
         """Lance nulo (`--`), usado em posicoes de estudo."""
-        return self.board.push(chess.Move.null())
+        move = chess.Move.null()
+        self.board.push(move)
+        return move
