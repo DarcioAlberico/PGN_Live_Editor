@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from functools import lru_cache
 
 import chess
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QPoint, Qt, QTimer
 from PyQt6.QtCore import pyqtSignal as Signal
 from PyQt6.QtGui import (
     QColor,
@@ -198,6 +198,11 @@ class EditorPanel(QWidget):
     # centenas de milhares de ranges. A partida ativa é suficiente para editar;
     # as outras entram no cache quando o cursor chega nelas.
     LAZY_DELIMITER_TEXT_CHARS = 500_000
+    # Acima disto, o realce cobre so as partidas perto do que esta na tela, e
+    # acompanha a rolagem (R-401): realcar um livro de 1 MB inteiro eram 150
+    # mil intervalos e ~1 s na thread da interface a cada analise que chegava.
+    HIGHLIGHT_WINDOW_TEXT_CHARS = 200_000
+    HIGHLIGHT_WINDOW_MARGIN_CHARS = 30_000
 
     text_parsed_signal = Signal(object)
     #: O usuario (ou um gesto) mudou o texto. Recolorir e carregar um
@@ -232,6 +237,14 @@ class EditorPanel(QWidget):
         self._delimiter_pairs: dict[int, int] = {}
         self._delimiter_cache: OrderedDict[tuple[str, str], tuple[list, dict[int, int]]] = OrderedDict()
         self._loading_document = False
+        self._edited_since_analysis = False
+        # O que a arvore e o tabuleiro mostram agora (ver `_apply_analysis`).
+        self._applied_game_key: tuple | None = None
+        self._highlight_window: tuple[int, int] | None = None
+        self._scroll_highlight_timer = QTimer(self)
+        self._scroll_highlight_timer.setSingleShot(True)
+        self._scroll_highlight_timer.setInterval(60)
+        self._scroll_highlight_timer.timeout.connect(self._on_scrolled)
         self._parse_schedule_timer = QTimer(self)
         self._parse_schedule_timer.setSingleShot(True)
         self._parse_schedule_timer.timeout.connect(self._dispatch_scheduled_parse)
@@ -323,6 +336,7 @@ class EditorPanel(QWidget):
         layout.addWidget(self.nag_bar)
 
         self.text_edit.textChanged.connect(self._on_text_changed)
+        self.text_edit.verticalScrollBar().valueChanged.connect(lambda _value: self._scroll_highlight_timer.start())
         self.text_edit.cursorPositionChanged.connect(self._on_cursor_position_changed)
 
     def toggle_pgn_tree(self) -> bool:
@@ -522,6 +536,9 @@ class EditorPanel(QWidget):
     def _on_text_changed(self):
         if self.highlighter.applying or self._loading_document:
             return
+        # A analise na tela deixou de ser a do texto. Saber isto sem comparar o
+        # documento inteiro (uma copia de 1 MB por movimento do cursor).
+        self._edited_since_analysis = True
         self.edited_signal.emit()
         # A analise sai da thread de UI enquanto se digita; o resultado so e
         # aplicado se ainda corresponder ao texto que esta na tela. Nao copie o
@@ -550,7 +567,7 @@ class EditorPanel(QWidget):
         # ja traz a partida certa.
         if (
             self.analysis.segments
-            and self.analysis.raw_text == self.document_text()
+            and not self._edited_since_analysis
             and self.analysis.active_index != self._segment_index_at(position)
         ):
             self._do_reparse()
@@ -580,18 +597,36 @@ class EditorPanel(QWidget):
         self._apply_analysis(analysis)
 
     def _apply_analysis(self, analysis: DocumentAnalysis):
+        # Quem chama garante que a analise e do texto que esta na tela.
+        self._edited_since_analysis = False
         self.analysis = analysis
-        self.current_ast = analysis.ast
-        self.current_start_fen = analysis.start_fen
+        # A mesma partida, no mesmo lugar e com a mesma configuracao (o
+        # preenchimento do livro chegando, por exemplo): arvore, tabuleiro e
+        # alertas ja mostram exatamente isto. Refaze-los era o maior pico na
+        # thread da interface a cada analise que chegava (R-401).
+        active = analysis.active
+        game_key = (
+            (active.segment.raw_offset, active.segment.body, tuple(active.segment.headers.items()), active.start_fen)
+            if active is not None
+            else None,
+            self.async_parser.config,
+        )
+        same_game = game_key == self._applied_game_key and analysis.raw_text.strip() != ""
+        self._applied_game_key = game_key
+        if not same_game:
+            self.current_ast = analysis.ast
+            self.current_start_fen = analysis.start_fen
 
         if not analysis.raw_text.strip():
             self.current_move_span = None
 
         self._apply_highlights(analysis)
-        self.pgn_tree.set_game(self.current_ast)
-        self.pgn_tree.select_at(self.cursor_position())
+        if not same_game:
+            self.pgn_tree.set_game(self.current_ast)
+            self.pgn_tree.select_at(self.cursor_position())
         self.document_analyzed_signal.emit(analysis)
-        self.text_parsed_signal.emit(self.current_ast)
+        if not same_game:
+            self.text_parsed_signal.emit(self.current_ast)
 
     # ------------------------------------------------------------------
     # Segmentos (fase 4)
@@ -1006,13 +1041,21 @@ class EditorPanel(QWidget):
         # Corrigido, duvidoso e nao entendido mantem a **sua** cor, e nao a da
         # profundidade: "o programa mexeu aqui" vale mais do que "isto e uma
         # sub-variante", e o recuo do texto continua dizendo a profundidade.
+        if len(analysis.raw_text) > self.HIGHLIGHT_WINDOW_TEXT_CHARS and analysis.segments:
+            low, high = self._visible_range()
+            low = max(0, low - self.HIGHLIGHT_WINDOW_MARGIN_CHARS)
+            high = min(len(analysis.raw_text), high + self.HIGHLIGHT_WINDOW_MARGIN_CHARS)
+            self._highlight_window = (low, high)
+            spans = analysis.highlight_spans_between(low, high)
+            delimiter_segments = analysis.segments_between(low, high)
+        else:
+            self._highlight_window = None
+            spans = analysis.highlight_spans
+            delimiter_segments = analysis.segments
         ranges = [
             (start, end, valid_format(depth) if kind == "valid" else touched[(kind, depth > 0)])
-            for start, end, kind, depth in analysis.highlight_spans
+            for start, end, kind, depth in spans
         ]
-        delimiter_segments = analysis.segments
-        if len(analysis.raw_text) > self.LAZY_DELIMITER_TEXT_CHARS and analysis.segments:
-            delimiter_segments = [analysis.segments[analysis.active_index]]
         delimiter_ranges, self._delimiter_pairs = _delimiter_highlight_data(
             analysis.raw_text, delimiter_segments, self.theme, self._delimiter_cache
         )
@@ -1021,6 +1064,28 @@ class EditorPanel(QWidget):
         self._apply_current_selection()
 
     # ------------------------------------------------------------------
+
+    def _visible_range(self) -> tuple[int, int]:
+        """Do primeiro ao ultimo caractere visivel no editor."""
+        viewport = self.text_edit.viewport()
+        top = self.text_edit.cursorForPosition(QPoint(0, 0)).position()
+        bottom = self.text_edit.cursorForPosition(QPoint(viewport.width(), viewport.height())).position()
+        return (min(top, bottom), max(top, bottom))
+
+    def _on_scrolled(self) -> None:
+        window = self._highlight_window
+        if window is None:
+            return
+        low, high = self._visible_range()
+        # So refaz quando a tela chega perto da borda do que ja esta realcado.
+        margin = self.HIGHLIGHT_WINDOW_MARGIN_CHARS // 3
+        if (
+            low - margin < window[0]
+            and window[0] > 0
+            or high + margin > window[1]
+            and window[1] < len(self.analysis.raw_text)
+        ):
+            self._apply_highlights(self.analysis)
 
     def _renumber_pasted_movetext(self, text: str) -> str:
         """Renumera o trecho colado a partir da posicao do tabuleiro no cursor."""
@@ -1127,9 +1192,12 @@ class EditorPanel(QWidget):
 
     def _delimiter_at_cursor(self) -> int | None:
         position = self.cursor_position()
-        text = self.document_text()
+        document = self.text_edit.document()
+        # Um caractere do documento, sem copiar o documento inteiro (era um
+        # `toPlainText()` de 1 MB por movimento do cursor).
+        length = document.characterCount() - 1
         for candidate in (position, position - 1):
-            if 0 <= candidate < len(text) and text[candidate] in "(){}":
+            if 0 <= candidate < length and document.characterAt(candidate) in "(){}":
                 return candidate
         return None
 

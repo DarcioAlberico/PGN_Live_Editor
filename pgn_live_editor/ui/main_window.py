@@ -2225,8 +2225,9 @@ class MainWindow(QMainWindow):
         # `toPlainText()` copia o livro inteiro; usar o estado O(1) do Qt para
         # que atualizar o título não custe 7 MB a cada tecla.
         dirty = self._state_dirty or self.editor_panel.text_edit.document().isModified()
-        name = self.project.display_name
-        self.setWindowTitle(f"{'*' if dirty else ''}{name} - PGN Live Editor")
+        title = f"{'*' if dirty else ''}{self.project.display_name} - PGN Live Editor"
+        if title != self.windowTitle():
+            self.setWindowTitle(title)
         self._chars_since_autosave += 1
         if self._chars_since_autosave >= AUTOSAVE_CHAR_THRESHOLD:
             self._autosave()

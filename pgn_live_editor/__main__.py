@@ -1,6 +1,9 @@
 import sys
 from pathlib import Path
 
+#: Intervalo de troca do GIL com a interface aberta (ver `main`).
+UI_SWITCH_INTERVAL_S = 0.0005
+
 
 def main() -> None:
     # Processo filho de OCR (R-304): despachado antes de qualquer import de Qt,
@@ -32,6 +35,11 @@ def main() -> None:
 
     from .ui.main_window import MainWindow
 
+    # A analise roda em Python numa thread de fundo e disputa o GIL com a
+    # interface. Com o intervalo padrao (5 ms) cada volta do laco de eventos
+    # esperava o GIL varias vezes: mediana de 15 ms por volta digitando num
+    # livro de 1 MB, contra 1,4 ms com 0,5 ms (R-401).
+    sys.setswitchinterval(UI_SWITCH_INTERVAL_S)
     app = QApplication(sys.argv)
     window = MainWindow()
     crash_safety.add_emergency_action(window.emergency_snapshot)

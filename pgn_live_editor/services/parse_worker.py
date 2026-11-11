@@ -14,6 +14,7 @@ Pedidos pendentes colapsam: existe no maximo um em voo, e o mais recente vence.
 
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -202,6 +203,22 @@ class DocumentAnalysis:
             spans.extend(self.digests[index].spans)
         return spans
 
+    def highlight_spans_between(self, start: int, end: int) -> list[tuple[int, int, str, int]]:
+        """O realce so das partidas que tocam `[start, end)` -- a janela visivel de um livro grande."""
+        spans: list[tuple[int, int, str, int]] = []
+        for segment in self.segments_between(start, end):
+            digest = self.digests.get(segment.index)
+            if digest is not None:
+                spans.extend(digest.spans)
+        return spans
+
+    def segments_between(self, start: int, end: int) -> list[GameSegment]:
+        if not self.segments:
+            return []
+        first = index_at(self.segments, start)
+        last = index_at(self.segments, end)
+        return self.segments[first : last + 1]
+
     @property
     def ast(self) -> GameAST:
         return self.active.ast if self.active else GameAST()
@@ -320,6 +337,7 @@ class ParsePipeline:
                 return False
             if self.digest_for(segment) is None:
                 self.analyze_segment(raw_text, segment)
+                time.sleep(0)  # devolve o GIL a interface entre uma partida e outra
         return True
 
     def analyze_segment(self, raw_text: str, segment: GameSegment) -> SegmentAnalysis:

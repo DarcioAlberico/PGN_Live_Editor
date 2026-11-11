@@ -39,6 +39,8 @@ class GamesPanel(QWidget):
         self._updating = False
         self._in_row_change = False
         self._rebuild_scheduled = False
+        # O que cada linha mostra agora: (resumo, concluida?, ativa?).
+        self._shown: list[tuple | None] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 6, 0)
@@ -70,15 +72,35 @@ class GamesPanel(QWidget):
     # ------------------------------------------------------------------
 
     def set_completed(self, indexes) -> None:
-        self.completed = {int(index) for index in indexes}
-        self._rebuild()
+        completed = {int(index) for index in indexes}
+        if completed != self.completed:
+            self.completed = completed
+            self._rebuild()
 
     def set_summaries(self, summaries: list[SegmentSummary], active_index: int = 0) -> None:
-        self.summaries = list(summaries)
+        summaries = list(summaries)
+        if summaries == self.summaries and active_index == self.active_index:
+            return
+        self.summaries = summaries
         self.active_index = active_index
         self._rebuild()
 
     # ------------------------------------------------------------------
+
+    def _paint(self, item: QListWidgetItem, summary: SegmentSummary, completed: bool, active: bool) -> None:
+        item.setText(self._label_for(summary))
+        item.setData(Qt.ItemDataRole.UserRole, summary.index)
+        item.setCheckState(Qt.CheckState.Checked if completed else Qt.CheckState.Unchecked)
+        item.setToolTip(summary.title)
+        font = item.font()
+        font.setWeight(QFont.Weight.Bold if active else QFont.Weight.Normal)
+        item.setFont(font)
+        if summary.error_count:
+            item.setForeground(QColor("#ff8c8c"))
+        elif completed:
+            item.setForeground(QColor("#9ce1a5"))
+        else:
+            item.setData(Qt.ItemDataRole.ForegroundRole, None)
 
     def _label_for(self, summary: SegmentSummary) -> str:
         if not summary.analyzed:
@@ -102,27 +124,23 @@ class GamesPanel(QWidget):
             return
         self._updating = True
         try:
-            self.list_widget.clear()
+            if self.list_widget.count() != len(self.summaries):
+                self.list_widget.clear()
+                self._shown = []
+                for _summary in self.summaries:
+                    item = QListWidgetItem()
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    self.list_widget.addItem(item)
+                    self._shown.append(None)
 
-            for summary in self.summaries:
-                item = QListWidgetItem(self._label_for(summary))
-                item.setData(Qt.ItemDataRole.UserRole, summary.index)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(
-                    Qt.CheckState.Checked if summary.index in self.completed else Qt.CheckState.Unchecked
-                )
-                item.setToolTip(summary.title)
-
-                if summary.index == self.active_index:
-                    font = item.font()
-                    font.setWeight(QFont.Weight.Bold)
-                    item.setFont(font)
-                if summary.error_count:
-                    item.setForeground(QColor("#ff8c8c"))
-                elif summary.index in self.completed:
-                    item.setForeground(QColor("#9ce1a5"))
-
-                self.list_widget.addItem(item)
+            # So as linhas que mudaram: num livro de 4 400 partidas, refazer a
+            # lista inteira a cada analise que chegava custava ~0,2 s (R-401).
+            for row, summary in enumerate(self.summaries):
+                state = (summary, summary.index in self.completed, summary.index == self.active_index)
+                if self._shown[row] == state:
+                    continue
+                self._shown[row] = state
+                self._paint(self.list_widget.item(row), *state)
 
             if 0 <= self.active_index < self.list_widget.count():
                 self.list_widget.setCurrentRow(self.active_index)
