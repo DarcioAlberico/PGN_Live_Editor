@@ -46,9 +46,16 @@ class HotPathTests(unittest.TestCase):
             ParsePipeline(ParseConfig.build(locale="en")).analyze_all(BOOK)
 
         analyze()
-        with_metrics = best_of(5, analyze)
-        with mock.patch.object(observability, "record_metric", lambda *a, **k: None):
-            without_metrics = best_of(5, analyze)
+        observability.flush_metrics()
+        # Alternado, o melhor de cada: o ruido da maquina (outras threads da
+        # suite, o coletor de lixo) cai igual nos dois lados.
+        with_runs: list[float] = []
+        without_runs: list[float] = []
+        for _ in range(7):
+            with_runs.append(best_of(1, analyze))
+            with mock.patch.object(observability, "record_metric", lambda *a, **k: None):
+                without_runs.append(best_of(1, analyze))
+        with_metrics, without_metrics = min(with_runs), min(without_runs)
 
         self.assertLessEqual(with_metrics, without_metrics * 1.1, f"{with_metrics:.3f} s x {without_metrics:.3f} s")
 
