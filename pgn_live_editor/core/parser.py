@@ -185,6 +185,8 @@ class TolerantParser:
         self.issues: list[Issue] = []
         self._desynchronized = False
         self._ignored_tokens: set[str] = set()
+        # Posicao depois de cada lance, por analise (ver `_fen_after_move`).
+        self._fen_after_cache: dict[tuple, str | None] = {}
         # Diferenca entre o numero impresso no livro e o do tabuleiro (ver
         # `_check_move_number`), e se o desencontro atual ja foi avisado.
         self._number_offset: int | None = None
@@ -266,6 +268,16 @@ class TolerantParser:
         comments.append(value)
 
     def _fen_after_move(self, move: MoveNode) -> str | None:
+        # Cada variante perguntava isto para **todos** os lances da linha
+        # (tabuleiro novo + push + fen): ~7 ms por variante num jogo de 40
+        # lances (N-16, R-403). A resposta so muda se o lance mudar -- a chave
+        # leva o que ela le, e o cache vive uma analise.
+        key = (id(move), move.parent_fen, move.display_san, move.is_valid, move.is_null_move)
+        if key not in self._fen_after_cache:
+            self._fen_after_cache[key] = self._compute_fen_after_move(move)
+        return self._fen_after_cache[key]
+
+    def _compute_fen_after_move(self, move: MoveNode) -> str | None:
         if not move.parent_fen or not move.is_valid:
             return None
 
@@ -407,14 +419,59 @@ class TolerantParser:
         best_candidate = candidates[-1]
         best_key = (-10_000, -1, -1)
 
-        for move, anchor_after, fen, position_index in candidates:
+        # Poda: o teto da pontuacao de cada candidato sai do FEN sem montar
+        # tabuleiro. Do maior teto para o menor, para no primeiro que nao pode
+        # mais vencer -- o resultado e o mesmo de pontuar todos (R-403).
+        ceilings = sorted(
+            ((*self._score_ceiling(candidate[2], preview_tokens), candidate[3]), candidate) for candidate in candidates
+        )
+        for ceiling, candidate in reversed(ceilings):
+            if ceiling <= best_key:
+                break
+            move, anchor_after, fen, position_index = candidate
             score, legal_san_count = self._score_variant_candidate(fen, preview_tokens)
             key = (score, legal_san_count, position_index)
             if key > best_key:
                 best_key = key
-                best_candidate = (move, anchor_after, fen, position_index)
+                best_candidate = candidate
 
         return (best_candidate[0], best_candidate[1], best_candidate[2])
+
+    def _score_ceiling(self, fen: str | None, preview_tokens: list[Token]) -> tuple[int, int]:
+        """Um teto de `_score_variant_candidate`: nunca menor que ela, lido so do FEN.
+
+        Os numeros de lance antes do primeiro lance da previa sao pontuados de
+        verdade (a posicao ainda e a do FEN); depois, cada numero vale o maximo
+        (+30) e cada lance tambem (+10), como se todos fossem legais.
+        """
+        if not fen:
+            return (-10_000, 0)
+        if not any(token.type == "MOVE_NUMBER" or token.type in MOVE_TOKEN_TYPES for token in preview_tokens):
+            return (-10_000, 0)
+        fields = fen.split()
+        is_black_to_move = fields[1] == "b"
+        fullmove_number = int(fields[5])
+        score = 0
+        moves = 0
+        for token in preview_tokens:
+            if token.type == "MOVE_NUMBER":
+                parsed = self._parse_move_number_value(token.value)
+                if not parsed:
+                    continue
+                if moves:
+                    score += 30
+                    continue
+                number, is_black = parsed
+                if number == fullmove_number and is_black == is_black_to_move:
+                    score += 30
+                elif number == fullmove_number:
+                    score -= 50
+                else:
+                    score -= 50 + min(20, abs(number - fullmove_number) * 5)
+            elif token.type in MOVE_TOKEN_TYPES:
+                score += 10
+                moves += 1
+        return (score, moves)
 
     def _parse_move_number_value(self, value: str | None) -> tuple[int, bool] | None:
         if not value:
@@ -434,8 +491,10 @@ class TolerantParser:
         if not move.parent_fen:
             return None
 
-        board = chess.Board(move.parent_fen)
-        return (board.fullmove_number, board.turn == chess.BLACK)
+        # Do proprio FEN: montar um tabuleiro so para ler dois campos custava
+        # um `set_fen` por numero de lance visto numa citacao.
+        fields = move.parent_fen.split()
+        return (int(fields[5]), fields[1] == "b")
 
     def _is_backward_reference(self, active_list: list[MoveNode], token: Token) -> bool:
         token_identity = self._parse_move_number_value(token.value)
@@ -955,6 +1014,7 @@ class TolerantParser:
         return False
 
     def parse(self, tokens: list[Token], start_fen: str = chess.STARTING_FEN) -> GameAST:
+        self._fen_after_cache = {}
         self.validator.set_board_fen(start_fen)
         self.ast = GameAST()
         self.issues = []
